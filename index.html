@@ -1,0 +1,721 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Control CDA</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+    <!-- ==================== PANTALLA DE LOGIN ==================== -->
+    <div id="login-screen">
+        <div class="login-bg">
+            <div class="login-box">
+                <div class="login-logo">
+                    <img src="logo_cda.png" alt="Logo CDA" class="login-logo-img">
+                </div>
+                <h1 class="login-title">Sistema de Control CDA</h1>
+                <p class="login-subtitle">Sistema de Gestión de Competencias de Automovilismo</p>
+
+                <form id="form-login" onsubmit="handleLogin(event)" autocomplete="off">
+                    <div class="login-form-group">
+                        <label for="login-username">Usuario</label>
+                        <div class="login-input-wrapper">
+                            <i class="fa-solid fa-user"></i>
+                            <input type="text" id="login-username" placeholder="Ingrese su usuario" required autofocus>
+                        </div>
+                    </div>
+                    <div class="login-form-group">
+                        <label for="login-password">Contraseña</label>
+                        <div class="login-input-wrapper">
+                            <i class="fa-solid fa-lock"></i>
+                            <input type="password" id="login-password" placeholder="Ingrese su contraseña" required>
+                            <button type="button" class="toggle-pass" onclick="togglePasswordVisibility()">
+                                <i class="fa-solid fa-eye" id="toggle-pass-icon"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="login-error" class="login-error" style="display:none;">
+                        <i class="fa-solid fa-triangle-exclamation"></i> Usuario o contraseña incorrectos.
+                    </div>
+                    <button type="submit" class="btn login-btn" id="login-submit-btn">
+                        <i class="fa-solid fa-right-to-bracket"></i> Ingresar
+                    </button>
+                </form>
+
+                <p class="login-hint">Credenciales iniciales: <strong>admin</strong> / <strong>admin123</strong></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== APLICACIÓN PRINCIPAL ==================== -->
+    <div id="app-main" style="display:none; width:100%; min-height:100vh; display:none; flex-direction:row;">
+
+        <!-- SIDEBAR -->
+        <aside>
+            <div class="brand">
+                <img src="logo_cda.png" alt="Logo CDA" class="sidebar-logo-img">
+                <span class="brand-name">Control CDA</span>
+            </div>
+            <ul class="menu-list">
+                <li>
+                    <div class="menu-item active" onclick="switchView('dashboard')">
+                        <i class="fa-solid fa-chart-line"></i>
+                        <span>Dashboard</span>
+                    </div>
+                </li>
+                <li>
+                    <div class="menu-item" onclick="switchView('calendario')">
+                        <i class="fa-solid fa-calendar-days"></i>
+                        <span>Calendario</span>
+                    </div>
+                </li>
+                <li>
+                    <div class="menu-item" onclick="switchView('gastos')">
+                        <i class="fa-solid fa-receipt"></i>
+                        <span>Gastos</span>
+                    </div>
+                </li>
+                <li>
+                    <div class="menu-item" onclick="switchView('staff')">
+                        <i class="fa-solid fa-users"></i>
+                        <span>Staff</span>
+                    </div>
+                </li>
+                <li>
+                    <div class="menu-item" onclick="switchView('configuracion')">
+                        <i class="fa-solid fa-sliders"></i>
+                        <span>Configuración</span>
+                    </div>
+                </li>
+            </ul>
+
+            <!-- Info del usuario logueado + logout -->
+            <div class="sidebar-user">
+                <div class="sidebar-user-info">
+                    <div class="sidebar-avatar" id="sidebar-avatar">A</div>
+                    <div class="sidebar-user-text">
+                        <p class="sidebar-user-name" id="sidebar-user-name">Admin</p>
+                        <p class="sidebar-user-role" id="sidebar-user-role">Administrador</p>
+                    </div>
+                </div>
+                <button class="logout-btn" onclick="handleLogout()" title="Cerrar sesión">
+                    <i class="fa-solid fa-right-from-bracket"></i>
+                </button>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT -->
+        <main>
+            <!-- VIEW: DASHBOARD -->
+            <section id="view-dashboard" class="view active">
+                <header>
+                    <div>
+                        <h1 class="page-title">Dashboard General</h1>
+                        <p class="page-subtitle">Monitoreo de costos y competencias en tiempo real</p>
+                    </div>
+                    <div class="editor-only">
+                        <button class="btn" onclick="openModalGasto()"><i class="fa-solid fa-plus"></i> Registrar Gasto</button>
+                    </div>
+                </header>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-info">
+                            <h3>Gasto Total Anual</h3>
+                            <p id="stat-gasto-total">$0.00</p>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="fa-solid fa-dollar-sign"></i>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-info">
+                            <h3>Competencias</h3>
+                            <p id="stat-competencias-count">0</p>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="fa-solid fa-trophy"></i>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-info">
+                            <h3>Staff Registrado</h3>
+                            <p id="stat-staff-count">0</p>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="fa-solid fa-user-gear"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <h3>Gastos por Categoría</h3>
+                        <div class="chart-container">
+                            <canvas id="chart-categorias"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <h3>
+                            Evolución de Gastos
+                            <select id="dashboard-gastos-interval" style="margin-left:12px; font-size:0.9rem;" onchange="dashboardDirty=true; renderDashboard();">
+                                <option value="monthly">Mensual</option>
+                                <option value="yearly">Anual</option>
+                            </select>
+                        </h3>
+                        <div class="chart-container">
+                            <canvas id="chart-mensual"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="charts-grid">
+                    <div class="chart-card" style="grid-column: 1 / -1;">
+                        <h3>Distribución de Gastos por Concepto</h3>
+                        <div class="chart-container" style="height: 250px;">
+                            <canvas id="chart-concepto"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: CALENDARIO -->
+            <section id="view-calendario" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Calendario de Competencias</h1>
+                        <p class="page-subtitle">Planificación de carreras y categorías asociadas</p>
+                    </div>
+                    <div class="editor-only">
+                        <div style="display:flex;gap:0.5rem;align-items:center;">
+                                <button id="btn-toggle-calendario" class="btn btn-secondary" onclick="toggleCalendarioView()"><i class="fa-solid fa-list"></i> Ver lista</button>
+                                <button id="btn-toggle-filtros" class="btn btn-secondary" onclick="toggleCalendarioFilters()" title="Mostrar/ocultar filtros"><i class="fa-solid fa-filter"></i> Filtros</button>
+                            <button class="btn" onclick="openModalCompetencia()"><i class="fa-solid fa-plus"></i> Agregar Carrera</button>
+                        </div>
+                    </div>
+                </header>
+
+                <div id="calendario-filters-container" class="table-header-tools" style="margin: 1rem 0; display:flex; gap:0.75rem; align-items:center;">
+                    <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
+                        <label for="calendario-filtro-categoria">Categoría:</label>
+                        <select id="calendario-filtro-categoria" onchange="listarCompetencias()">
+                            <option value="todos">Todas</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
+                        <label for="calendario-filtro-mes">Mes:</label>
+                        <select id="calendario-filtro-mes" onchange="listarCompetencias()">
+                            <option value="todos">Todos</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
+                        <label for="calendario-filtro-ano">Año:</label>
+                        <select id="calendario-filtro-ano" onchange="listarCompetencias()">
+                            <option value="todos">Todos</option>
+                        </select>
+                    </div>
+                    <div style="margin-left:auto;">
+                        <button class="btn btn-secondary" onclick="(function(){document.getElementById('calendario-filtro-categoria').value='todos';document.getElementById('calendario-filtro-mes').value='todos';document.getElementById('calendario-filtro-ano').value='todos';listarCompetencias();})();">Limpiar filtros</button>
+                    </div>
+                </div>
+
+                <div class="card-list" id="calendario-list"></div>
+            </section>
+
+            <!-- VIEW: GASTOS -->
+            <section id="view-gastos" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Control de Gastos</h1>
+                        <p class="page-subtitle">Detalle de costos asociados por carrera y categoría</p>
+                    </div>
+                    <div class="editor-only">
+                        <button class="btn" onclick="openModalGasto()"><i class="fa-solid fa-plus"></i> Cargar Gasto</button>
+                    </div>
+                </header>
+
+                <div class="table-card">
+                    <div class="table-header-tools">
+                        <div class="form-group" style="flex-direction: row; align-items: center; gap: 0.5rem; margin-bottom: 0;">
+                            <label for="filtro-categoria-gastos">Categoría:</label>
+                            <select id="filtro-categoria-gastos" onchange="listarGastos()">
+                                <option value="todos">Todas las categorías</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex-direction: row; align-items: center; gap: 0.5rem; margin-bottom: 0;">
+                            <label for="filtro-competencia-gastos">Carrera:</label>
+                            <select id="filtro-competencia-gastos" onchange="listarGastos()">
+                                <option value="todos">Todas las competencias</option>
+                            </select>
+                        </div>
+                        <input type="text" id="buscar-gastos" class="search-input" placeholder="Buscar concepto o notas..." oninput="listarGastos()">
+                    </div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Fecha Carga</th>
+                                    <th>Competencia</th>
+                                    <th>Categoría</th>
+                                    <th>Personal</th>
+                                    <th>Concepto</th>
+                                    <th>Monto</th>
+                                    <th>Observaciones</th>
+                                    <th class="editor-only" style="text-align: right;">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="gastos-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: STAFF -->
+            <section id="view-staff" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Personal / Staff</h1>
+                        <p class="page-subtitle">Administración de banderilleros, comisarios y asistentes</p>
+                    </div>
+                    <div class="editor-only">
+                        <button class="btn" onclick="openModalStaff()"><i class="fa-solid fa-plus"></i> Agregar Personal</button>
+                    </div>
+                </header>
+
+                <div class="table-card">
+                    <div class="table-header-tools">
+                        <h3>Listado de Personal</h3>
+                        <input type="text" id="buscar-staff" class="search-input" placeholder="Buscar por nombre, DNI o función..." oninput="listarStaff()">
+                    </div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Nombre y Apellido</th>
+                                    <th>DNI</th>
+                                    <th>Función/Rol</th>
+                                    <th>Competencias</th>
+                                    <th class="editor-only" style="text-align: right;">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="staff-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: CONFIGURACION -->
+            <section id="view-configuracion" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Configuración del Sistema</h1>
+                        <p class="page-subtitle">Administración de categorías, autódromos, usuarios y copias de seguridad</p>
+                    </div>
+                </header>
+
+                <div class="config-layout">
+                    <!-- Categorías -->
+                    <div class="table-card">
+                        <div class="table-header-tools">
+                            <h3>Categorías</h3>
+                            <button class="btn btn-secondary editor-only" onclick="openModalCategoria()"><i class="fa-solid fa-plus"></i> Nueva</button>
+                        </div>
+                        <div class="table-responsive">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Categoría</th>
+                                        <th>Descripción</th>
+                                        <th class="editor-only" style="text-align: right;">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="config-categorias-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Circuitos -->
+                    <div class="table-card">
+                        <div class="table-header-tools">
+                            <h3>Autódromos / Circuitos</h3>
+                            <button class="btn btn-secondary editor-only" onclick="openModalCircuito()"><i class="fa-solid fa-plus"></i> Nuevo</button>
+                        </div>
+                        <div class="table-responsive">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Nombre del Autódromo</th>
+                                        <th>Ubicación</th>
+                                        <th class="editor-only" style="text-align: right;">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="config-circuitos-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Gestión de Usuarios - Solo Administradores -->
+                <div class="table-card admin-only" style="margin-bottom: 2rem;">
+                    <div class="table-header-tools">
+                        <h3><i class="fa-solid fa-shield-halved" style="color: var(--accent);"></i> Gestión de Usuarios</h3>
+                        <button class="btn" onclick="openModalUsuario()"><i class="fa-solid fa-user-plus"></i> Nuevo Usuario</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Usuario</th>
+                                    <th>Nombre Completo</th>
+                                    <th>Rol</th>
+                                    <th>Estado</th>
+                                    <th style="text-align: right;">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="config-usuarios-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Respaldo de datos -->
+                <div class="form-card editor-only">
+                    <h3 class="form-title">Copia de Seguridad y Backup</h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.95rem;">
+                        Dado que el sistema guarda los datos de forma local en este navegador, te recomendamos descargar una copia de seguridad periódicamente.
+                    </p>
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                        <button class="btn btn-secondary" onclick="exportarDatos()"><i class="fa-solid fa-download"></i> Exportar Datos (JSON)</button>
+                        <label for="import-file" class="btn" style="cursor: pointer;">
+                            <i class="fa-solid fa-upload"></i> Importar Datos (JSON)
+                        </label>
+                        <input type="file" id="import-file" style="display: none;" accept=".json" onchange="importarDatos(event)">
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div><!-- fin #app-main -->
+
+    <!-- ==================== MODALES ==================== -->
+
+    <!-- MODAL: COMPETENCIA -->
+    <div id="modal-competencia" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="competencia-modal-title">Agregar Competencia</h2>
+                <button class="modal-close" onclick="closeModal('modal-competencia')">&times;</button>
+            </div>
+            <form id="form-competencia" onsubmit="guardarCompetenciaForm(event)">
+                <input type="hidden" id="competencia-id">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label for="competencia-nombre">Nombre de la Competencia</label>
+                        <input type="text" id="competencia-nombre" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="competencia-circuito">Autódromo</label>
+                        <select id="competencia-circuito" required>
+                            <option value="">Seleccione un autódromo...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="competencia-inicio">Fecha Inicio</label>
+                        <input type="date" id="competencia-inicio" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="competencia-fin">Fecha Fin</label>
+                        <input type="date" id="competencia-fin" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label>Categorías participantes:</label>
+                        <div class="checkbox-grid" id="competencia-categorias-checkboxes"></div>
+                    </div>
+                    <div class="form-group full-width">
+                        <label>Personal asignado</label>
+                        <div class="checkbox-grid" id="competencia-staff-checkboxes"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-competencia')">Cancelar</button>
+                    <button type="submit" class="btn">Guardar Competencia</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: GASTO -->
+    <div id="modal-gasto" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="gasto-modal-title">Cargar Gasto</h2>
+                <button class="modal-close" onclick="closeModal('modal-gasto')">&times;</button>
+            </div>
+            <form id="form-gasto" onsubmit="guardarGastoForm(event)">
+                <input type="hidden" id="gasto-id">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label for="gasto-competencia">Competencia (Carrera)</label>
+                        <select id="gasto-competencia" required onchange="actualizarStaffGastoPorCompetencia()">
+                            <option value="">Seleccione la carrera...</option>
+                        </select>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="gasto-categoria">Categoría Imputada</label>
+                        <div style="display: flex; gap: 0.5rem; align-items: flex-end;">
+                            <select id="gasto-categoria" required style="flex: 1;">
+                                <option value="">Seleccione categoría...</option>
+                                <option value="general">Gasto General / Compartido</option>
+                            </select>
+                            <button type="button" class="btn btn-secondary" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;" title="Gestionar categorías" onclick="abrirModalGestorCategorias()">
+                                <i class="fa-solid fa-gear"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="gasto-staff">Personal asignado</label>
+                        <select id="gasto-staff" style="width: 100%;">
+                            <option value="">Seleccioná primero una competencia</option>
+                        </select>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="gasto-concepto">Concepto del Gasto</label>
+                        <div style="display: flex; gap: 0.5rem; align-items: flex-end;">
+                            <input type="text" id="gasto-concepto" placeholder="Ej: Pago Banderilleros, Alquiler de Ambulancia" list="conceptos-sugeridos" required style="flex: 1;">
+                            <button type="button" class="btn btn-secondary" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;" title="Gestionar conceptos" onclick="abrirModalGestorConceptos()">
+                                <i class="fa-solid fa-gear"></i>
+                            </button>
+                        </div>
+                        <datalist id="conceptos-sugeridos">
+                            <option value="Ambulancia / Seguro Médico">
+                            <option value="Banderilleros / Personal de Pista">
+                            <option value="Trofeos y Premiaciones">
+                            <option value="Viáticos / Alojamiento / Comida">
+                            <option value="Publicidad / Prensa">
+                            <option value="Servicio de Limpieza / Seguridad">
+                            <option value="Alquiler de Circuito">
+                            <option value="Administrativos / Papelería">
+                        </datalist>
+                    </div>
+                    <div class="form-group">
+                        <label for="gasto-monto">Monto ($)</label>
+                        <input type="number" id="gasto-monto" min="0" step="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="gasto-fecha">Fecha de Pago/Carga</label>
+                        <input type="date" id="gasto-fecha" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="gasto-notas">Observaciones</label>
+                        <textarea id="gasto-notas" rows="3" placeholder="Detalle adicional..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-gasto')">Cancelar</button>
+                    <button type="submit" class="btn">Guardar Gasto</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: STAFF -->
+    <div id="modal-staff" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="staff-modal-title">Agregar Staff / Personal</h2>
+                <button class="modal-close" onclick="closeModal('modal-staff')">&times;</button>
+            </div>
+            <form id="form-staff" onsubmit="guardarStaffForm(event)">
+                <input type="hidden" id="staff-id">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="staff-nombre">Nombre</label>
+                        <input type="text" id="staff-nombre" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="staff-apellido">Apellido</label>
+                        <input type="text" id="staff-apellido" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="staff-dni">DNI</label>
+                        <input type="text" id="staff-dni" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="staff-funcion">Función / Rol</label>
+                        <input type="text" id="staff-funcion" placeholder="Ej: Banderillero, Comisario Deportivo" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label>Competencias asignadas</label>
+                        <div class="checkbox-grid" id="staff-competencias-checkboxes"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-staff')">Cancelar</button>
+                    <button type="submit" class="btn">Guardar Personal</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: CATEGORIA -->
+    <div id="modal-categoria" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="categoria-modal-title">Agregar Categoría</h2>
+                <button class="modal-close" onclick="closeModal('modal-categoria')">&times;</button>
+            </div>
+            <form id="form-categoria" onsubmit="guardarCategoriaForm(event)">
+                <input type="hidden" id="categoria-id">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label for="categoria-nombre">Nombre de la Categoría</label>
+                        <input type="text" id="categoria-nombre" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="categoria-descripcion">Descripción corta</label>
+                        <textarea id="categoria-descripcion" rows="3" required></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-categoria')">Cancelar</button>
+                    <button type="submit" class="btn">Guardar Categoría</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: CIRCUITO -->
+    <div id="modal-circuito" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="circuito-modal-title">Agregar Autódromo / Circuito</h2>
+                <button class="modal-close" onclick="closeModal('modal-circuito')">&times;</button>
+            </div>
+            <form id="form-circuito" onsubmit="guardarCircuitoForm(event)">
+                <input type="hidden" id="circuito-id">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label for="circuito-nombre">Nombre del Autódromo</label>
+                        <input type="text" id="circuito-nombre" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="circuito-ubicacion">Ubicación (Ciudad, Provincia)</label>
+                        <input type="text" id="circuito-ubicacion" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-circuito')">Cancelar</button>
+                    <button type="submit" class="btn">Guardar Autódromo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: USUARIO -->
+    <div id="modal-usuario" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="usuario-modal-title">Nuevo Usuario</h2>
+                <button class="modal-close" onclick="closeModal('modal-usuario')">&times;</button>
+            </div>
+            <form id="form-usuario" onsubmit="guardarUsuarioForm(event)">
+                <input type="hidden" id="usuario-id">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label for="usuario-nombre">Nombre completo</label>
+                        <input type="text" id="usuario-nombre" placeholder="Ej: Carlos García" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="usuario-username">Nombre de usuario</label>
+                        <input type="text" id="usuario-username" placeholder="Ej: cgarcia" required autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="usuario-rol">Rol / Nivel de acceso</label>
+                        <select id="usuario-rol" required>
+                            <option value="viewer">Visualizador (Solo Lectura)</option>
+                            <option value="supervisor">Supervisor (Dashboard Solo)</option>
+                            <option value="editor">Editor (Carga y edición de datos)</option>
+                            <option value="admin">Administrador (Acceso total)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="password-field-group">
+                        <label for="usuario-password">Contraseña</label>
+                        <input type="password" id="usuario-password" placeholder="Ingrese contraseña" autocomplete="new-password">
+                        <small id="password-hint" style="color: var(--text-secondary); font-size:0.8rem; margin-top: 0.25rem;">Dejar en blanco para no cambiar la contraseña (al editar).</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="usuario-activo">Estado</label>
+                        <select id="usuario-activo">
+                            <option value="true">Activo</option>
+                            <option value="false">Inactivo</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-usuario')">Cancelar</button>
+                    <button type="submit" class="btn">Guardar Usuario</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal para gestionar categorías de gastos -->
+    <div id="modal-gasto-categoria" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">Gestionar Categorías de Gastos</h2>
+                <button class="modal-close" onclick="closeModal('modal-gasto-categoria')">&times;</button>
+            </div>
+            <div class="modal-content" style="max-height: 400px; overflow-y: auto;">
+                <div id="gasto-categorias-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+            </div>
+            <div class="modal-footer">
+                <form id="form-gasto-categoria-quick" onsubmit="guardarCategoriaRapido(event)" style="display: flex; gap: 0.5rem; width: 100%;">
+                    <input type="text" id="quick-categoria-nombre" placeholder="Nueva categoría..." required style="flex: 1;">
+                    <button type="submit" class="btn" style="padding: 0.5rem 1rem;">+ Agregar</button>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-gasto-categoria')">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para gestionar conceptos de gastos -->
+    <div id="modal-gasto-concepto" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">Gestionar Conceptos de Gastos</h2>
+                <button class="modal-close" onclick="closeModal('modal-gasto-concepto')">&times;</button>
+            </div>
+            <div class="modal-content" style="max-height: 400px; overflow-y: auto;">
+                <div id="gasto-conceptos-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+            </div>
+            <div class="modal-footer">
+                <form id="form-gasto-concepto-quick" onsubmit="guardarConceptoRapido(event)" style="display: flex; gap: 0.5rem; width: 100%;">
+                    <input type="text" id="quick-concepto-nombre" placeholder="Nuevo concepto..." required style="flex: 1;">
+                    <button type="submit" class="btn" style="padding: 0.5rem 1rem;">+ Agregar</button>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-gasto-concepto')">Cerrar</button>
+            </div>
+        </div>
+    </div>
+    <!-- Scripts -->
+    <script src="db.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
+
+
+
+
