@@ -1,14 +1,73 @@
-﻿// db.js - Gestión de Base de Datos Local con IndexedDB
+﻿// db.js - Gestión de Base de Datos Local con IndexedDB e integración con Firebase
 
 const DB_NAME = 'ControlAutomovilismoDB';
 const DB_VERSION = 3;
 
 let dbInstance = null;
 
-// ==================== CACÃ‰ EN MEMORIA ====================
-// Evita leer IndexedDB en cada cambio de vista.
+// ==================== CACHÉ EN MEMORIA ====================
+// Evita leer IndexedDB/Firebase en cada cambio de vista.
 // Se invalida solo cuando se escriben/eliminan datos.
 const _cache = {};
+
+// ==================== INTEGRACIÓN CON FIREBASE ====================
+let dbFirebase = null;
+let useFirebase = false;
+
+// Variables de módulos de Firebase
+let initializeApp, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, writeBatch;
+
+async function inicializarFirebase() {
+    const configStr = localStorage.getItem('firebase_config');
+    if (!configStr) {
+        useFirebase = false;
+        return false;
+    }
+    try {
+        const config = JSON.parse(configStr);
+
+        // Cargamos módulos oficiales de Firebase v10 desde gstatic CDN para ES Modules
+        const appMod = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js');
+        const fsMod = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');
+
+        initializeApp = appMod.initializeApp;
+        getFirestore = fsMod.getFirestore;
+        collection = fsMod.collection;
+        doc = fsMod.doc;
+        setDoc = fsMod.setDoc;
+        getDocs = fsMod.getDocs;
+        getDoc = fsMod.getDoc;
+        deleteDoc = fsMod.deleteDoc;
+        writeBatch = fsMod.writeBatch;
+
+        const app = initializeApp(config);
+        dbFirebase = getFirestore(app);
+
+        // Habilitar persistencia de datos localmente (offline cache) en Firestore
+        try {
+            await fsMod.enableMultiTabIndexedDbPersistence(dbFirebase);
+            console.log('Persistencia offline de Firebase Firestore habilitada.');
+        } catch (err) {
+            if (err.code == 'failed-precondition') {
+                console.warn('Múltiples pestañas abiertas, persistencia habilitada solo en la principal.');
+            } else if (err.code == 'unimplemented') {
+                console.warn('El navegador no soporta persistencia offline para Firestore.');
+            }
+        }
+
+        useFirebase = true;
+        window.useFirebase = true; // exposición global para depuración
+        console.log('Sincronización con Firebase Firestore activa.');
+        return true;
+    } catch (e) {
+        console.error('Error al inicializar Firebase:', e);
+        useFirebase = false;
+        return false;
+    }
+}
+
+// Intentar inicializar Firebase en segundo plano de inmediato
+inicializarFirebase();
 
 function invalidarCache(storeName) {
     delete _cache[storeName];
@@ -163,6 +222,35 @@ async function inicializarDatosPorDefecto() {
 
 // Helper genérico para guardar o actualizar un elemento
 async function guardar(storeName, item) {
+    // Si la ID no existe, generamos un identificador numérico único basado en timestamp
+    if (!item.id) {
+        item.id = Date.now() + Math.floor(Math.random() * 1000);
+    } else {
+        item.id = Number(item.id);
+    }
+
+    if (useFirebase) {
+        try {
+            const docRef = doc(dbFirebase, storeName, String(item.id));
+            await setDoc(docRef, item);
+
+            // Actualizar la caché en memoria de inmediato para mantener la UI rápida e interactiva
+            if (_cache[storeName]) {
+                const idx = _cache[storeName].findIndex(x => Number(x.id) === Number(item.id));
+                const clone = Object.assign({}, item);
+                if (idx >= 0) {
+                    _cache[storeName][idx] = clone;
+                } else {
+                    _cache[storeName].push(clone);
+                }
+            }
+            return item.id;
+        } catch (e) {
+            console.error(`Error al guardar en Firebase [${storeName}]:`, e);
+            throw e;
+        }
+    }
+
     return new Promise((resolve, reject) => {
         openDB().then(db => {
             const transaction = db.transaction([storeName], 'readwrite');
@@ -197,9 +285,24 @@ async function guardar(storeName, item) {
 
 // Helper genérico para obtener todos los elementos (con caché)
 async function getTodos(storeName) {
-    // Si hay datos en caché, los devuelve directamente sin tocar IndexedDB
+    // Si hay datos en caché, los devuelve directamente sin tocar la BD
     if (_cache[storeName]) {
         return _cache[storeName];
+    }
+
+    if (useFirebase) {
+        try {
+            const querySnapshot = await getDocs(collection(dbFirebase, storeName));
+            const data = [];
+            querySnapshot.forEach((doc) => {
+                data.push(doc.data());
+            });
+            _cache[storeName] = data; // Guardar en caché local de sesión
+            return data;
+        } catch (e) {
+            console.error(`Error al leer de Firebase [${storeName}]:`, e);
+            throw e;
+        }
     }
 
     return new Promise((resolve, reject) => {
@@ -222,6 +325,20 @@ async function getTodos(storeName) {
 
 // Helper genérico para eliminar por ID
 async function eliminar(storeName, id) {
+    if (useFirebase) {
+        try {
+            await deleteDoc(doc(dbFirebase, storeName, String(id)));
+            // Update in-memory cache if present so UI updates immediately
+            if (_cache[storeName]) {
+                _cache[storeName] = _cache[storeName].filter(x => Number(x.id) !== Number(id));
+            }
+            return;
+        } catch (e) {
+            console.error(`Error al eliminar en Firebase [${storeName}]:`, e);
+            throw e;
+        }
+    }
+
     return new Promise((resolve, reject) => {
         openDB().then(db => {
             const transaction = db.transaction([storeName], 'readwrite');
@@ -245,6 +362,24 @@ async function eliminar(storeName, id) {
 
 // Helper genérico para obtener por ID
 async function obtenerPorId(storeName, id) {
+    if (_cache[storeName]) {
+        const found = _cache[storeName].find(x => Number(x.id) === Number(id));
+        if (found) return found;
+    }
+
+    if (useFirebase) {
+        try {
+            const docSnap = await getDoc(doc(dbFirebase, storeName, String(id)));
+            if (docSnap.exists()) {
+                return docSnap.data();
+            }
+            return null;
+        } catch (e) {
+            console.error(`Error al obtener de Firebase [${storeName}] id ${id}:`, e);
+            throw e;
+        }
+    }
+
     return new Promise((resolve, reject) => {
         openDB().then(db => {
             const transaction = db.transaction([storeName], 'readonly');

@@ -401,9 +401,10 @@ async function listarCompetencias() {
         const ul = document.createElement('ul');
         ul.className = 'competition-list-compact';
         competenciasFiltradas.forEach(comp => {
+            const docBtn = comp.documentosUrl ? `<a href="${comp.documentosUrl}" target="_blank" class="action-btn" title="Ver documentos (OneDrive)" style="margin-left: 10px; color: var(--accent); vertical-align: middle;"><i class="fa-solid fa-folder-open"></i></a>` : '';
             const li = document.createElement('li');
             li.className = 'competition-list-item';
-            li.innerHTML = `<button class="link-like" onclick="editarCompetencia(${comp.id})">${comp.nombre}</button>` +
+            li.innerHTML = `<button class="link-like" onclick="editarCompetencia(${comp.id})">${comp.nombre}</button>${docBtn}` +
                            `<div class="meta">${formatearFechaVisual(comp.fechaInicio)} - ${formatearFechaVisual(comp.fechaFin)}</div>`;
             ul.appendChild(li);
         });
@@ -427,6 +428,12 @@ async function listarCompetencias() {
             <button class="action-btn delete" onclick="eliminarCompetencia(${comp.id})"><i class="fa-solid fa-trash"></i></button>
         ` : '';
 
+        const docLink = comp.documentosUrl ? `
+            <a href="${comp.documentosUrl}" target="_blank" class="action-btn" title="Ver OneDrive" style="color: var(--accent); display: inline-flex; align-items: center; gap: 6px;">
+                <i class="fa-solid fa-folder-open"></i> Ver Archivos
+            </a>
+        ` : '';
+
         const card = document.createElement('div');
         card.className = 'data-card';
         card.innerHTML = `
@@ -437,7 +444,10 @@ async function listarCompetencias() {
             <div class="data-card-meta"><i class="fa-solid fa-map-location-dot"></i> <span>${circNombre}</span></div>
             <div class="data-card-meta"><i class="fa-solid fa-calendar-day"></i> <span>${formatearFechaVisual(comp.fechaInicio)} al ${formatearFechaVisual(comp.fechaFin)}</span></div>
             <div class="data-card-tags">${catNombres.map(n => `<span class="tag">${n}</span>`).join('')}</div>
-            <div class="data-card-actions">${editorActions}</div>
+            <div class="data-card-actions">
+                ${docLink}
+                ${editorActions}
+            </div>
         `;
         listContainer.appendChild(card);
     });
@@ -449,6 +459,7 @@ async function openModalCompetencia() {
     await actualizarSelectoresFormularios(); // actualizar al abrir el modal
     document.getElementById('form-competencia').reset();
     document.getElementById('competencia-id').value = '';
+    document.getElementById('competencia-documentos').value = '';
     document.getElementById('competencia-modal-title').innerText = 'Agregar Competencia';
     document.querySelectorAll('#competencia-categorias-checkboxes input').forEach(cb => cb.checked = false);
     document.querySelectorAll('#competencia-staff-checkboxes input').forEach(cb => cb.checked = false);
@@ -465,6 +476,7 @@ async function editarCompetencia(id) {
     document.getElementById('competencia-circuito').value = comp.circuitoId;
     document.getElementById('competencia-inicio').value = comp.fechaInicio;
     document.getElementById('competencia-fin').value = comp.fechaFin;
+    document.getElementById('competencia-documentos').value = comp.documentosUrl || '';
     document.querySelectorAll('#competencia-categorias-checkboxes input').forEach(cb => {
         cb.checked = comp.categoriasIds.includes(Number(cb.value));
     });
@@ -492,7 +504,8 @@ async function guardarCompetenciaForm(e) {
         fechaInicio: document.getElementById('competencia-inicio').value,
         fechaFin: document.getElementById('competencia-fin').value,
         categoriasIds,
-        staffIds
+        staffIds,
+        documentosUrl: document.getElementById('competencia-documentos').value.trim()
     };
     if (id) competencia.id = Number(id);
 

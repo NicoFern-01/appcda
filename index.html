@@ -388,7 +388,7 @@
                 </div>
 
                 <!-- Respaldo de datos -->
-                <div class="form-card editor-only">
+                <div class="form-card editor-only" style="margin-bottom: 2rem;">
                     <h3 class="form-title">Copia de Seguridad y Backup</h3>
                     <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.95rem;">
                         Dado que el sistema guarda los datos de forma local en este navegador, te recomendamos descargar una copia de seguridad periódicamente.
@@ -400,6 +400,35 @@
                         </label>
                         <input type="file" id="import-file" style="display: none;" accept=".json" onchange="importarDatos(event)">
                     </div>
+                </div>
+
+                <!-- Sincronización en la Nube (Firebase) -->
+                <div class="form-card admin-only">
+                    <h3 class="form-title" style="display: flex; align-items: center; gap: 8px;">
+                        <i class="fa-solid fa-cloud" style="color: var(--accent);"></i> Sincronización con Firebase (Nube)
+                    </h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.95rem;">
+                        Configura Firebase Firestore para guardar tus datos en la nube de forma segura. Al conectarte, tus datos se sincronizarán automáticamente y podrás acceder al sistema desde cualquier dispositivo o navegador.
+                    </p>
+                    <div class="form-grid" style="grid-template-columns: 1fr;">
+                        <div class="form-group full-width">
+                            <label for="firebase-config-text">Configuración de la App Firebase (JSON)</label>
+                            <textarea id="firebase-config-text" rows="6" placeholder='Pega aquí tu objeto "firebaseConfig" copiado de la consola de Firebase. Ejemplo:
+{
+  "apiKey": "AIzaSy...",
+  "authDomain": "appcda.firebaseapp.com",
+  "projectId": "appcda",
+  "storageBucket": "appcda.appspot.com",
+  ...
+}' style="background: rgba(0,0,0,0.2); color: #fff; font-family: monospace; padding: 10px; border-radius: 4px; border: 1px solid var(--border); width: 100%; box-sizing: border-box;"></textarea>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1.5rem;">
+                        <button class="btn" id="btn-conectar-firebase" onclick="guardarYConectarFirebase()"><i class="fa-solid fa-plug"></i> Guardar y Conectar</button>
+                        <button class="btn btn-secondary" id="btn-migrar-firebase" onclick="migrarDatosLocalesAFirebase()" style="display: none;"><i class="fa-solid fa-cloud-arrow-up"></i> Subir Datos Locales a la Nube</button>
+                        <button class="btn delete" id="btn-desconectar-firebase" onclick="desconectarFirebase()" style="display: none;"><i class="fa-solid fa-power-off"></i> Desconectar de la Nube</button>
+                    </div>
+                    <div id="firebase-status-message" style="margin-top: 1rem; font-weight: 500; font-size: 0.95rem;"></div>
                 </div>
             </section>
         </main>
@@ -442,6 +471,10 @@
                     <div class="form-group full-width">
                         <label>Personal asignado</label>
                         <div class="checkbox-grid" id="competencia-staff-checkboxes"></div>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="competencia-documentos">Enlace a Documentos/OneDrive (PDFs, etc.)</label>
+                        <input type="url" id="competencia-documentos" placeholder="https://onedrive.live.com/...">
                     </div>
                 </div>
                 <div class="modal-footer">
