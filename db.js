@@ -58,6 +58,15 @@ async function inicializarFirebase() {
         useFirebase = true;
         window.useFirebase = true; // exposición global para depuración
         console.log('Sincronización con Firebase Firestore activa.');
+
+        // Sincronizar automáticamente todos los datos locales a Firebase
+        // Esto resuelve el problema de datos creados antes de que Firebase termine de inicializar
+        try {
+            await sincronizarLocalAFirebase();
+        } catch (syncErr) {
+            console.warn('Sincronización inicial con Firebase no completada:', syncErr);
+        }
+
         return true;
     } catch (e) {
         console.error('Error al inicializar Firebase:', e);
@@ -68,6 +77,9 @@ async function inicializarFirebase() {
 
 // Intentar inicializar Firebase en segundo plano de inmediato
 inicializarFirebase();
+
+// Limpiar toda la caché al cargar la página para evitar datos obsoletos
+limpiarCacheCompleto();
 
 function invalidarCache(storeName) {
     delete _cache[storeName];
@@ -229,29 +241,8 @@ async function guardar(storeName, item) {
         item.id = Number(item.id);
     }
 
-    if (useFirebase) {
-        try {
-            const docRef = doc(dbFirebase, storeName, String(item.id));
-            await setDoc(docRef, item);
-
-            // Actualizar la caché en memoria de inmediato para mantener la UI rápida e interactiva
-            if (_cache[storeName]) {
-                const idx = _cache[storeName].findIndex(x => Number(x.id) === Number(item.id));
-                const clone = Object.assign({}, item);
-                if (idx >= 0) {
-                    _cache[storeName][idx] = clone;
-                } else {
-                    _cache[storeName].push(clone);
-                }
-            }
-            return item.id;
-        } catch (e) {
-            console.error(`Error al guardar en Firebase [${storeName}]:`, e);
-            throw e;
-        }
-    }
-
-    return new Promise((resolve, reject) => {
+    // SIEMPRE guardar primero en IndexedDB (fuente primaria local)
+    const result = await new Promise((resolve, reject) => {
         openDB().then(db => {
             const transaction = db.transaction([storeName], 'readwrite');
             const store = transaction.objectStore(storeName);
@@ -259,7 +250,6 @@ async function guardar(storeName, item) {
 
             request.onsuccess = (event) => {
                 const key = event.target.result;
-                // Ensure item has the id assigned by the DB (useful for new records)
                 try { if (!item.id) item.id = Number(key); } catch(e) {}
 
                 // Update in-memory cache if present so UI sees changes immediately
@@ -281,6 +271,19 @@ async function guardar(storeName, item) {
             };
         }).catch(reject);
     });
+
+    // También sincronizar con Firebase si está conectado (no bloqueante, no revienta si falla)
+    if (useFirebase) {
+        try {
+            const docRef = doc(dbFirebase, storeName, String(item.id));
+            await setDoc(docRef, item);
+        } catch (e) {
+            console.warn(`Firebase sync warning [${storeName}]:`, e);
+            // No lanzar error - la app sigue funcionando con datos locales
+        }
+    }
+
+    return result;
 }
 
 // Helper genérico para obtener todos los elementos (con caché)
@@ -290,21 +293,7 @@ async function getTodos(storeName) {
         return _cache[storeName];
     }
 
-    if (useFirebase) {
-        try {
-            const querySnapshot = await getDocs(collection(dbFirebase, storeName));
-            const data = [];
-            querySnapshot.forEach((doc) => {
-                data.push(doc.data());
-            });
-            _cache[storeName] = data; // Guardar en caché local de sesión
-            return data;
-        } catch (e) {
-            console.error(`Error al leer de Firebase [${storeName}]:`, e);
-            throw e;
-        }
-    }
-
+    // SIEMPRE leer desde IndexedDB como fuente primaria. Firebase es solo para escritura/sync.
     return new Promise((resolve, reject) => {
         openDB().then(db => {
             const transaction = db.transaction([storeName], 'readonly');
@@ -325,21 +314,8 @@ async function getTodos(storeName) {
 
 // Helper genérico para eliminar por ID
 async function eliminar(storeName, id) {
-    if (useFirebase) {
-        try {
-            await deleteDoc(doc(dbFirebase, storeName, String(id)));
-            // Update in-memory cache if present so UI updates immediately
-            if (_cache[storeName]) {
-                _cache[storeName] = _cache[storeName].filter(x => Number(x.id) !== Number(id));
-            }
-            return;
-        } catch (e) {
-            console.error(`Error al eliminar en Firebase [${storeName}]:`, e);
-            throw e;
-        }
-    }
-
-    return new Promise((resolve, reject) => {
+    // SIEMPRE eliminar primero de IndexedDB (fuente primaria local)
+    await new Promise((resolve, reject) => {
         openDB().then(db => {
             const transaction = db.transaction([storeName], 'readwrite');
             const store = transaction.objectStore(storeName);
@@ -358,6 +334,16 @@ async function eliminar(storeName, id) {
             };
         }).catch(reject);
     });
+
+    // También sincronizar con Firebase si está conectado (no bloqueante)
+    if (useFirebase) {
+        try {
+            await deleteDoc(doc(dbFirebase, storeName, String(id)));
+        } catch (e) {
+            console.warn(`Firebase delete sync warning [${storeName}]:`, e);
+            // No lanzar error - la app sigue funcionando con datos locales
+        }
+    }
 }
 
 // Helper genérico para obtener por ID
@@ -367,19 +353,7 @@ async function obtenerPorId(storeName, id) {
         if (found) return found;
     }
 
-    if (useFirebase) {
-        try {
-            const docSnap = await getDoc(doc(dbFirebase, storeName, String(id)));
-            if (docSnap.exists()) {
-                return docSnap.data();
-            }
-            return null;
-        } catch (e) {
-            console.error(`Error al obtener de Firebase [${storeName}] id ${id}:`, e);
-            throw e;
-        }
-    }
-
+    // SIEMPRE leer desde IndexedDB como fuente primaria. Firebase es solo para escritura/sync.
     return new Promise((resolve, reject) => {
         openDB().then(db => {
             const transaction = db.transaction([storeName], 'readonly');
@@ -395,6 +369,45 @@ async function obtenerPorId(storeName, id) {
             };
         }).catch(reject);
     });
+}
+
+// Variable global para que la UI muestre el estado de la sincronización
+if (typeof window !== 'undefined') {
+    window.firebaseSyncResult = { status: 'pending', message: 'Conectando...', count: 0 };
+}
+
+// Sincronizar todos los datos locales (IndexedDB) a Firebase
+// Se ejecuta automáticamente cuando Firebase se conecta
+async function sincronizarLocalAFirebase() {
+    if (!useFirebase || !dbFirebase) {
+        if (typeof window !== 'undefined') {
+            window.firebaseSyncResult = { status: 'error', message: 'Firebase no está conectado.', count: 0 };
+        }
+        return;
+    }
+
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios'];
+    let total = 0;
+
+    for (const storeName of stores) {
+        // Leer desde IndexedDB (forzando sin caché)
+        invalidarCache(storeName);
+        const data = await getTodos(storeName);
+        for (const item of data) {
+            try {
+                const docRef = doc(dbFirebase, storeName, String(item.id));
+                await setDoc(docRef, item);
+                total++;
+            } catch (e) {
+                console.warn(`Error sync ${storeName}/${item.id}:`, e);
+            }
+        }
+    }
+
+    if (typeof window !== 'undefined') {
+        window.firebaseSyncResult = { status: 'synced', message: `Completado: ${total} registros.`, count: total };
+    }
+    console.log(`Sincronización local→Firebase completada: ${total} registros subidos.`);
 }
 
 // Función para importar datos desde backup

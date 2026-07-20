@@ -1,5 +1,13 @@
 // app.js - Lógica de Negocio e Interfaz de Usuario para Control de Automovilismo
 
+// ==================== HELPER DE SEGURIDAD: ESCAPAR HTML ====================
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    const div = document.createElement('div');
+    div.textContent = String(str);
+    return div.innerHTML;
+}
+
 // ==================== ESTADO DE SESIÓN ====================
 let currentUser = null; // El usuario logueado actualmente
 
@@ -686,19 +694,11 @@ async function listarStaff() {
     });
 
     if (filtrado.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${puedeEditar() ? 5 : 4}" style="text-align:center;color:var(--text-secondary);">No hay personal registrado.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${puedeEditar() ? 4 : 3}" style="text-align:center;color:var(--text-secondary);">No hay personal registrado.</td></tr>`;
         return;
     }
 
     filtrado.forEach(s => {
-        const assignedCompetencias = (s.competenciasIds || []).map(id => {
-            const comp = competencias.find(c => c.id === Number(id));
-            return comp ? comp.nombre : null;
-        }).filter(Boolean);
-        const competenciasHtml = assignedCompetencias.length > 0
-            ? assignedCompetencias.map(nombre => `<span class="tag">${nombre}</span>`).join(' ')
-            : '<span class="badge badge-secondary">Sin asignar</span>';
-
         const acciones = puedeEditar() ? `
             <td style="text-align:right;">
                 <button class="action-btn" onclick="editarStaff(${s.id})"><i class="fa-solid fa-pen-to-square"></i></button>
@@ -710,7 +710,6 @@ async function listarStaff() {
             <td style="font-weight:600;">${s.nombre} ${s.apellido}</td>
             <td>${s.dni}</td>
             <td><span class="badge badge-info">${s.funcion}</span></td>
-            <td>${competenciasHtml}</td>
             ${acciones}
         `;
         tbody.appendChild(tr);
@@ -723,7 +722,6 @@ async function openModalStaff() {
     document.getElementById('form-staff').reset();
     document.getElementById('staff-id').value = '';
     document.getElementById('staff-modal-title').innerText = 'Agregar Staff';
-    document.querySelectorAll('#staff-competencias-checkboxes input').forEach(cb => cb.checked = false);
     openModal('modal-staff');
 }
 
@@ -738,9 +736,6 @@ async function editarStaff(id) {
     document.getElementById('staff-dni').value = s.dni;
     document.getElementById('staff-funcion').value = s.funcion;
     document.getElementById('staff-modal-title').innerText = 'Editar Staff';
-    document.querySelectorAll('#staff-competencias-checkboxes input').forEach(cb => {
-        cb.checked = (s.competenciasIds || []).includes(Number(cb.value));
-    });
     openModal('modal-staff');
 }
 
@@ -748,19 +743,15 @@ async function guardarStaffForm(e) {
     e.preventDefault();
     if (!puedeEditar()) return;
     const id = document.getElementById('staff-id').value;
-    const competenciaCheckboxes = document.querySelectorAll('#staff-competencias-checkboxes input:checked');
-    const competenciasIds = Array.from(competenciaCheckboxes).map(cb => Number(cb.value));
     const s = {
         nombre: document.getElementById('staff-nombre').value,
         apellido: document.getElementById('staff-apellido').value,
         dni: document.getElementById('staff-dni').value,
-        funcion: document.getElementById('staff-funcion').value,
-        competenciasIds
+        funcion: document.getElementById('staff-funcion').value
     };
     if (id) s.id = Number(id);
     const savedStaffId = await guardar('staff', s);
     s.id = Number(savedStaffId);
-    await aplicarAsignacionesStaff(s);
     closeModal('modal-staff');
     listarStaff();
 }
@@ -853,6 +844,9 @@ async function listarConfiguraciones() {
                 ${acciones}
             </tr>`;
     });
+
+    // Actualizar el estado de la UI de Firebase
+    actualizarEstadoFirebaseUI();
 
     // Usuarios (solo admin)
     if (esAdmin()) {
@@ -1211,23 +1205,6 @@ async function actualizarSelectoresFormularios() {
         filtroAnoCal.value = savedY || 'todos';
     }
 
-    // Checkboxes de competencias en modal staff
-    const staffCompetenciasContainer = document.getElementById('staff-competencias-checkboxes');
-    if (staffCompetenciasContainer) {
-        const checkedIds = Array.from(staffCompetenciasContainer.querySelectorAll('input:checked')).map(cb => cb.value);
-        staffCompetenciasContainer.innerHTML = '';
-        if (competencias.length === 0) {
-            staffCompetenciasContainer.innerHTML = '<p style="color:var(--text-secondary); margin:0;">No hay competencias disponibles. Agrega una competencia primero.</p>';
-        } else {
-            competencias.forEach(comp => {
-                staffCompetenciasContainer.innerHTML += `
-                    <label class="checkbox-label">
-                        <input type="checkbox" value="${comp.id}" ${checkedIds.includes(String(comp.id)) ? 'checked' : ''}>
-                        <span>${comp.nombre}</span>
-                    </label>`;
-            });
-        }
-    }
 }
 
 async function actualizarStaffGastoPorCompetencia() {
@@ -1431,6 +1408,143 @@ async function eliminarConceptoGasto(id) {
     await eliminar('conceptos', id);
     await actualizarSelectoresFormularios();
     await abrirModalGestorConceptos();
+}
+
+// ==================== GESTIÓN DE FIREBASE DESDE LA UI ====================
+
+function guardarYConectarFirebase() {
+    const configText = document.getElementById('firebase-config-text').value.trim();
+    const statusEl = document.getElementById('firebase-status-message');
+    const btnConectar = document.getElementById('btn-conectar-firebase');
+    const btnMigrar = document.getElementById('btn-migrar-firebase');
+    const btnDesconectar = document.getElementById('btn-desconectar-firebase');
+
+    if (!configText) {
+        statusEl.innerHTML = '<span style="color: #ff6b6b;">⚠️ Pegá la configuración JSON de Firebase en el campo de texto.</span>';
+        return;
+    }
+
+    try {
+        // Validar que sea un JSON válido con los campos necesarios
+        const config = JSON.parse(configText);
+        if (!config.apiKey || !config.projectId) {
+            statusEl.innerHTML = '<span style="color: #ff6b6b;">⚠️ El JSON debe contener al menos "apiKey" y "projectId".</span>';
+            return;
+        }
+
+        localStorage.setItem('firebase_config', JSON.stringify(config));
+        statusEl.innerHTML = '<span style="color: #2ed573;">⌛ Conectando con Firebase...</span>';
+
+        // Recargar la página para que db.js inicialice Firebase con la nueva config
+        setTimeout(() => {
+            location.reload();
+        }, 500);
+    } catch (e) {
+        statusEl.innerHTML = `<span style="color: #ff6b6b;">⚠️ Error: El texto no es un JSON válido. Revisá el formato.</span>`;
+    }
+}
+
+async function migrarDatosLocalesAFirebase() {
+    const statusEl = document.getElementById('firebase-status-message');
+    const btnMigrar = document.getElementById('btn-migrar-firebase');
+
+    try {
+        btnMigrar.disabled = true;
+        btnMigrar.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Migrando...';
+
+        const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios'];
+        let total = 0;
+
+        for (const storeName of stores) {
+            const data = await getTodos(storeName);
+            for (const item of data) {
+                await guardar(storeName, item);
+                total++;
+            }
+        }
+
+        statusEl.innerHTML = `<span style="color: #2ed573;">✅ Migración completada. ${total} registros subidos a Firebase.</span>`;
+    } catch (e) {
+        console.error('Error en migración:', e);
+        statusEl.innerHTML = `<span style="color: #ff6b6b;">❌ Error durante la migración: ${e.message || e}</span>`;
+    } finally {
+        btnMigrar.disabled = false;
+        btnMigrar.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> Subir Datos Locales a la Nube';
+    }
+}
+
+function desconectarFirebase() {
+    if (!confirm('¿Desconectar Firebase? Los datos locales (IndexedDB) se seguirán usando, pero la app dejará de sincronizar con la nube.')) return;
+
+    localStorage.removeItem('firebase_config');
+    const statusEl = document.getElementById('firebase-status-message');
+    statusEl.innerHTML = '<span style="color: #ff9f43;">🔌 Desconectado. Recargando para usar solo datos locales...</span>';
+
+    setTimeout(() => {
+        location.reload();
+    }, 500);
+}
+
+// Actualizar el estado de la UI de Firebase al cargar la vista de configuración
+function actualizarEstadoFirebaseUI() {
+    const configStr = localStorage.getItem('firebase_config');
+    const btnConectar = document.getElementById('btn-conectar-firebase');
+    const btnMigrar = document.getElementById('btn-migrar-firebase');
+    const btnDesconectar = document.getElementById('btn-desconectar-firebase');
+    const statusEl = document.getElementById('firebase-status-message');
+    const configTextarea = document.getElementById('firebase-config-text');
+
+    if (configStr) {
+        try {
+            const config = JSON.parse(configStr);
+            // Mostrar la config actual en el textarea
+            configTextarea.value = JSON.stringify(config, null, 2);
+
+            if (useFirebase) {
+                // Mostrar estado de sincronización
+                const syncResult = window.firebaseSyncResult || { status: 'pending', message: 'Sincronizando...', count: 0 };
+                if (syncResult.status === 'synced') {
+                    statusEl.innerHTML = `
+                        <span style="color: #2ed573;">✅ Conectado a Firebase: <strong>${config.projectId}</strong></span>
+                        <br>
+                        <small style="color: var(--text-secondary);">📤 ${syncResult.count} registros sincronizados a la nube.</small>
+                    `;
+                } else if (syncResult.status === 'error') {
+                    statusEl.innerHTML = `
+                        <span style="color: #2ed573;">✅ Conectado a Firebase: <strong>${config.projectId}</strong></span>
+                        <br>
+                        <small style="color: #ff9f43;">⚠️ Sincronización inicial: ${syncResult.message}</small>
+                        <br>
+                        <small style="color: var(--text-secondary);">Usá "Subir Datos Locales a la Nube" para sincronizar manualmente.</small>
+                    `;
+                } else {
+                    statusEl.innerHTML = `
+                        <span style="color: #2ed573;">✅ Conectado a Firebase: <strong>${config.projectId}</strong></span>
+                        <br>
+                        <small style="color: #ff9f43;">⏳ Sincronizando datos locales a la nube...</small>
+                    `;
+                }
+                btnConectar.style.display = 'none';
+                btnMigrar.style.display = '';
+                btnDesconectar.style.display = '';
+            } else {
+                statusEl.innerHTML = `<span style="color: #ff9f43;">⚠️ Configuración encontrada pero no se pudo conectar. Revisá las credenciales.</span>`;
+                btnConectar.style.display = '';
+                btnMigrar.style.display = 'none';
+                btnDesconectar.style.display = '';
+            }
+        } catch (e) {
+            statusEl.innerHTML = '<span style="color: #ff6b6b;">⚠️ La configuración guardada no es válida.</span>';
+            btnConectar.style.display = '';
+            btnMigrar.style.display = 'none';
+            btnDesconectar.style.display = '';
+        }
+    } else {
+        statusEl.innerHTML = '<span style="color: var(--text-secondary);">No hay conexión configurada. Los datos se guardan localmente.</span>';
+        btnConectar.style.display = '';
+        btnMigrar.style.display = 'none';
+        btnDesconectar.style.display = 'none';
+    }
 }
 
 // ==================== PRUEBA AUTOMATIZADA DE CACHE DB ====================
