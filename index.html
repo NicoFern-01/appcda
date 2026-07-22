@@ -52,7 +52,6 @@
                     </button>
                 </form>
 
-                <p class="login-hint">Credenciales iniciales: <strong>admin</strong> / <strong>admin123</strong></p>
             </div>
         </div>
     </div>
@@ -83,6 +82,12 @@
                     <div class="menu-item" onclick="switchView('gastos')">
                         <i class="fa-solid fa-receipt"></i>
                         <span>Gastos</span>
+                    </div>
+                    <div class="submenu">
+                        <div class="menu-item submenu-item" onclick="switchView('carga-detallada')">
+                            <i class="fa-solid fa-file-invoice"></i>
+                            <span>Carga Detallada</span>
+                        </div>
                     </div>
                 </li>
                 <li>
@@ -280,6 +285,211 @@
                 </div>
             </section>
 
+            <!-- VIEW: CARGA DETALLADA -->
+            <section id="view-carga-detallada" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Carga Detallada de Gastos</h1>
+                        <p class="page-subtitle">Rendición detallada con desglose de impuestos y adjuntos</p>
+                    </div>
+                    <div class="editor-only" style="display:flex;gap:0.5rem;align-items:center;">
+                        <button class="btn" onclick="nuevaRendicion()"><i class="fa-solid fa-plus"></i> Nueva Rendición</button>
+                    </div>
+                </header>
+
+                <!-- Listado de Rendiciones -->
+                <div id="rendiciones-list-container">
+                    <div class="table-card">
+                        <div class="table-header-tools">
+                            <h3>Rendiciones</h3>
+                            <div style="display:flex;gap:0.5rem;align-items:center;">
+                                <input type="text" id="buscar-rendiciones" class="search-input" placeholder="Buscar rendición..." oninput="listarRendiciones()" style="min-width:200px;">
+                                <select id="filtro-estado-rendiciones" onchange="listarRendiciones()" style="padding:0.5rem;">
+                                    <option value="todos">Todos los estados</option>
+                                    <option value="borrador">Borrador</option>
+                                    <option value="completo">Completo</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="table-responsive">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Competencia</th>
+                                        <th>Campeonato</th>
+                                        <th>Autódromo</th>
+                                        <th>Fecha</th>
+                                        <th>Responsable</th>
+                                        <th>Gastos</th>
+                                        <th>Total</th>
+                                        <th>Estado</th>
+                                        <th class="editor-only" style="text-align:right;">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="rendiciones-table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Editor de Rendición (se muestra al crear/editar) -->
+                <div id="rendicion-editor" style="display:none;">
+                    <!-- Sección 1: Información General -->
+                    <div class="form-card">
+                        <div class="form-title" style="display:flex;justify-content:space-between;align-items:center;">
+                            <span><i class="fa-solid fa-file-lines"></i> Información General</span>
+                            <span id="rendicion-estado-badge" class="badge badge-info">Borrador</span>
+                        </div>
+                        <input type="hidden" id="rendicion-id">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="rendicion-competencia">Competencia</label>
+                                <select id="rendicion-competencia" required></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="rendicion-campeonato">Campeonato</label>
+                                <select id="rendicion-campeonato">
+                                    <option value="">Sin campeonato</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="rendicion-autodromo">Autódromo</label>
+                                <select id="rendicion-autodromo" required></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="rendicion-fecha">Fecha</label>
+                                <input type="date" id="rendicion-fecha" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="rendicion-responsable">Responsable</label>
+                                <select id="rendicion-responsable" required></select>
+                            </div>
+                            <div class="form-group full-width">
+                                <label for="rendicion-observaciones">Observaciones</label>
+                                <textarea id="rendicion-observaciones" rows="2" placeholder="Notas generales de la rendición..."></textarea>
+                            </div>
+                            <div class="form-group" style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:0.5rem;padding-top:0.5rem;border-top:1px solid var(--border-color);">
+                                <span style="color:var(--text-secondary);font-size:0.85rem;"><i class="fa-solid fa-user"></i> Usuario: <strong id="rendicion-usuario-creacion">-</strong></span>
+                                <span style="color:var(--text-secondary);font-size:0.85rem;"><i class="fa-solid fa-calendar-plus"></i> Creado: <strong id="rendicion-fecha-creacion">-</strong></span>
+                                <span style="color:var(--text-secondary);font-size:0.85rem;"><i class="fa-solid fa-calendar-check"></i> Modificado: <strong id="rendicion-fecha-modificacion">-</strong></span>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem;">
+                            <button class="btn" onclick="guardarRendicion()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
+                            <button class="btn btn-secondary" onclick="guardarRendicionBorrador()"><i class="fa-solid fa-pen"></i> Guardar Borrador</button>
+                            <span style="flex:1;"></span>
+                            <button class="btn btn-secondary" onclick="cancelarEdicionRendicion()"><i class="fa-solid fa-times"></i> Cancelar</button>
+                        </div>
+                    </div>
+
+                    <!-- Sección 2: Detalle de Gastos -->
+                    <div class="table-card">
+                        <div class="table-header-tools">
+                            <h3><i class="fa-solid fa-receipt"></i> Detalle de Gastos</h3>
+                            <div style="display:flex;gap:0.5rem;align-items:center;">
+                                <span id="cambios-sin-guardar" style="display:none;color:#ff9f43;font-size:0.85rem;"><i class="fa-solid fa-triangle-exclamation"></i> Cambios sin guardar</span>
+                                <button class="btn" onclick="agregarFilaGasto()"><i class="fa-solid fa-plus"></i> Agregar Gasto</button>
+                            </div>
+                        </div>
+                        <div class="table-responsive" style="overflow-x:auto;">
+                            <table class="gastos-detalle-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width:30px;">#</th>
+                                        <th style="min-width:150px;">Proveedor</th>
+                                        <th style="min-width:100px;">Tipo Comp.</th>
+                                        <th style="min-width:80px;">N° Comprobante</th>
+                                        <th style="min-width:90px;">Fecha</th>
+                                        <th style="min-width:140px;">Concepto</th>
+                                        <th style="min-width:130px;">Descripción</th>
+                                        <th style="min-width:90px;">Básico ($)</th>
+                                        <th style="min-width:90px;">IVA ($)</th>
+                                        <th style="min-width:90px;">Imp. Internos ($)</th>
+                                        <th style="min-width:90px;">IIBB ($)</th>
+                                        <th style="min-width:90px;">Percep. IVA ($)</th>
+                                        <th style="min-width:90px;">Otros Imp. ($)</th>
+                                        <th style="min-width:90px;">Total ($)</th>
+                                        <th style="min-width:60px;">Adj.</th>
+                                        <th style="min-width:90px;">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="detalle-gastos-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Sección 3: Totales -->
+                    <div class="form-card">
+                        <div class="form-title">Totales</div>
+                        <div class="totales-grid">
+                            <div class="total-item">
+                                <span class="total-label">Total Básico</span>
+                                <span class="total-value" id="total-basico">$0.00</span>
+                            </div>
+                            <div class="total-item">
+                                <span class="total-label">Total IVA</span>
+                                <span class="total-value" id="total-iva">$0.00</span>
+                            </div>
+                            <div class="total-item">
+                                <span class="total-label">Total Impuestos Internos</span>
+                                <span class="total-value" id="total-impuestos-internos">$0.00</span>
+                            </div>
+                            <div class="total-item">
+                                <span class="total-label">Total Percepción IIBB</span>
+                                <span class="total-value" id="total-iibb">$0.00</span>
+                            </div>
+                            <div class="total-item">
+                                <span class="total-label">Total Percepción IVA</span>
+                                <span class="total-value" id="total-percepcion-iva">$0.00</span>
+                            </div>
+                            <div class="total-item">
+                                <span class="total-label">Total Otros Impuestos</span>
+                                <span class="total-value" id="total-otros-impuestos">$0.00</span>
+                            </div>
+                            <div class="total-item total-general">
+                                <span class="total-label">TOTAL GENERAL</span>
+                                <span class="total-value" id="total-general">$0.00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sección 4: Adjuntos Globales -->
+                    <div class="table-card">
+                        <div class="table-header-tools">
+                            <h3><i class="fa-solid fa-paperclip"></i> Adjuntos Globales</h3>
+                        </div>
+                        <div class="table-responsive">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Archivo</th>
+                                        <th>Tipo</th>
+                                        <th>Fecha Carga</th>
+                                        <th style="text-align:right;">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="adjuntos-globales-body">
+                                    <tr><td colspan="4" style="text-align:center;color:var(--text-secondary);">Sin adjuntos globales. Los adjuntos se asocian a cada gasto individualmente.</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Botones de acción final -->
+                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:2rem;padding:1rem 0;">
+                        <button class="btn" onclick="guardarRendicion()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
+                        <button class="btn btn-secondary" onclick="guardarRendicionBorrador()"><i class="fa-solid fa-pen"></i> Guardar Borrador</button>
+                        <button class="btn btn-secondary" onclick="imprimirRendicion()"><i class="fa-solid fa-print"></i> Imprimir</button>
+                        <button class="btn btn-secondary" onclick="exportarPDFRendicion()"><i class="fa-solid fa-file-pdf"></i> Exportar PDF</button>
+                        <button class="btn btn-secondary" onclick="exportarExcelRendicion()"><i class="fa-solid fa-file-excel"></i> Exportar Excel</button>
+                        <span style="flex:1;"></span>
+                        <button class="btn btn-secondary" onclick="duplicarRendicion()"><i class="fa-solid fa-copy"></i> Duplicar</button>
+                        <button class="btn btn-secondary" onclick="cancelarEdicionRendicion()"><i class="fa-solid fa-times"></i> Cancelar</button>
+                    </div>
+                </div>
+            </section>
+
             <!-- VIEW: STAFF -->
             <section id="view-staff" class="view">
                 <header>
@@ -295,7 +505,7 @@
                 <div class="table-card">
                     <div class="table-header-tools">
                         <h3>Listado de Personal</h3>
-                        <input type="text" id="buscar-staff" class="search-input" placeholder="Buscar por nombre, DNI o función..." oninput="listarStaff()">
+                        <input type="text" id="buscar-staff" class="search-input" placeholder="Buscar por nombre, DNI, función, matrícula, mail o equipo..." oninput="listarStaff()">
                     </div>
                     <div class="table-responsive">
                         <table>
@@ -304,6 +514,10 @@
                                     <th>Nombre y Apellido</th>
                                     <th>DNI</th>
                                     <th>Función/Rol</th>
+                                    <th>Matrícula</th>
+                                    <th>Mail</th>
+                                    <th>Nro Registro - Grado</th>
+                                    <th>Equipos</th>
                                     <th class="editor-only" style="text-align: right;">Acciones</th>
                                 </tr>
                             </thead>
@@ -558,6 +772,120 @@
         </div>
     </div>
 
+    <!-- MODAL: Detalle Gasto (Carga Detallada) -->
+    <div id="modal-detalle-gasto" class="modal-overlay">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <h2 class="modal-title" id="detalle-gasto-modal-title">Agregar Gasto</h2>
+                <button class="modal-close" onclick="closeModalDetalleGasto()">&times;</button>
+            </div>
+            <form id="form-detalle-gasto" onsubmit="guardarDetalleGastoForm(event)">
+                <input type="hidden" id="detalle-gasto-id">
+                <input type="hidden" id="detalle-gasto-rendicion-id">
+                <input type="hidden" id="detalle-gasto-orden">
+                <div class="form-grid" style="grid-template-columns:1fr 1fr;">
+                    <div class="form-group">
+                        <label for="detalle-proveedor">Proveedor</label>
+                        <div style="display:flex;gap:0.5rem;align-items:flex-end;">
+                            <select id="detalle-proveedor" required style="flex:1;">
+                                <option value="">Seleccione proveedor...</option>
+                            </select>
+                            <button type="button" class="btn btn-secondary" style="padding:0.5rem 0.75rem;font-size:0.85rem;" onclick="agregarProveedorRapido()" title="Nuevo proveedor"><i class="fa-solid fa-plus"></i></button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="detalle-tipo-comprobante">Tipo de Comprobante</label>
+                        <select id="detalle-tipo-comprobante" required>
+                            <option value="">Seleccione...</option>
+                            <option value="Factura A">Factura A</option>
+                            <option value="Factura B">Factura B</option>
+                            <option value="Factura C">Factura C</option>
+                            <option value="Ticket">Ticket</option>
+                            <option value="Recibo">Recibo</option>
+                            <option value="Nota de Débito">Nota de Débito</option>
+                            <option value="Nota de Crédito">Nota de Crédito</option>
+                            <option value="Otro">Otro</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="detalle-numero-comprobante">N° Comprobante</label>
+                        <input type="text" id="detalle-numero-comprobante" placeholder="Ej: 0001-00012345">
+                    </div>
+                    <div class="form-group">
+                        <label for="detalle-fecha">Fecha del Comprobante</label>
+                        <input type="date" id="detalle-fecha" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="detalle-concepto">Concepto</label>
+                        <select id="detalle-concepto" required onchange="onCambioConceptoDetalle()"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="detalle-descripcion">Descripción</label>
+                        <input type="text" id="detalle-descripcion" placeholder="Descripción del gasto...">
+                    </div>
+                </div>
+                <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;">
+                    <div class="form-group">
+                        <label for="detalle-basico">Básico ($)</label>
+                        <input type="number" id="detalle-basico" step="0.01" min="0" oninput="recalcularTotalFila()">
+                    </div>
+                    <div class="form-group">
+                        <label for="detalle-iva">IVA ($)</label>
+                        <input type="number" id="detalle-iva" step="0.01" min="0" oninput="recalcularTotalFila()">
+                    </div>
+                    <div class="form-group">
+                        <label for="detalle-impuestos-internos">Impuestos Internos ($)</label>
+                        <input type="number" id="detalle-impuestos-internos" step="0.01" min="0" oninput="recalcularTotalFila()">
+                    </div>
+                    <div class="form-group">
+                        <label for="detalle-percepcion-iibb">Percepción IIBB ($)</label>
+                        <input type="number" id="detalle-percepcion-iibb" step="0.01" min="0" oninput="recalcularTotalFila()">
+                    </div>
+                    <div class="form-group">
+                        <label for="detalle-percepcion-iva">Percepción IVA ($)</label>
+                        <input type="number" id="detalle-percepcion-iva" step="0.01" min="0" oninput="recalcularTotalFila()">
+                    </div>
+                    <div class="form-group">
+                        <label for="detalle-otros-impuestos">Otros Impuestos ($)</label>
+                        <input type="number" id="detalle-otros-impuestos" step="0.01" min="0" oninput="recalcularTotalFila()">
+                    </div>
+                </div>
+                <!-- Campos Kilómetros (ocultos por defecto) -->
+                <div id="campos-kilometros" style="display:none;border:1px solid var(--accent);border-radius:8px;padding:1rem;margin-top:0.5rem;background:rgba(255,71,87,0.05);">
+                    <div class="form-title" style="margin-bottom:0.5rem;font-size:1rem;"><i class="fa-solid fa-road"></i> Kilómetros</div>
+                    <div class="form-grid" style="grid-template-columns:1fr 1fr;">
+                        <div class="form-group">
+                            <label for="detalle-cantidad-km">Cantidad de Kilómetros</label>
+                            <input type="number" id="detalle-cantidad-km" step="0.1" min="0" oninput="recalcularKilometros()">
+                        </div>
+                        <div class="form-group">
+                            <label for="detalle-valor-km">Valor por Kilómetro ($)</label>
+                            <input type="number" id="detalle-valor-km" step="0.01" min="0" oninput="recalcularKilometros()">
+                        </div>
+                    </div>
+                </div>
+                <!-- Total de la fila -->
+                <div style="display:flex;justify-content:flex-end;margin-top:0.5rem;padding:0.75rem;background:var(--bg-secondary);border-radius:6px;">
+                    <span style="font-weight:700;font-size:1.1rem;">Total: <span id="detalle-total" style="color:var(--accent);">$0.00</span></span>
+                </div>
+                <!-- Adjuntos -->
+                <div class="form-group" style="margin-top:0.5rem;">
+                    <label>Archivos Adjuntos</label>
+                    <div id="detalle-adjuntos-list" style="display:flex;flex-direction:column;gap:0.25rem;margin-bottom:0.5rem;"></div>
+                    <div style="display:flex;gap:0.5rem;align-items:center;">
+                        <input type="file" id="detalle-adjunto-file" multiple accept=".pdf,.jpg,.jpeg,.png,.gif,.bmp,.xml" style="flex:1;">
+                        <button type="button" class="btn btn-secondary" style="padding:0.5rem 1rem;" onclick="agregarAdjuntoADetalle()"><i class="fa-solid fa-paperclip"></i> Adjuntar</button>
+                    </div>
+                    <small style="color:var(--text-secondary);">Formatos: PDF, JPG, PNG, GIF, XML</small>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModalDetalleGasto()">Cancelar</button>
+                    <button type="submit" class="btn">Agregar Gasto</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- MODAL: STAFF -->
     <div id="modal-staff" class="modal-overlay">
         <div class="modal">
@@ -583,6 +911,22 @@
                     <div class="form-group">
                         <label for="staff-funcion">Función / Rol</label>
                         <input type="text" id="staff-funcion" placeholder="Ej: Banderillero, Comisario Deportivo" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="staff-matricula">Matrícula</label>
+                        <input type="text" id="staff-matricula" placeholder="Ej: ABC 123">
+                    </div>
+                    <div class="form-group">
+                        <label for="staff-mail">Mail</label>
+                        <input type="email" id="staff-mail" placeholder="Ej: nombre@email.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="staff-numero-registro-grado">Nro de Registro - Grado</label>
+                        <input type="text" id="staff-numero-registro-grado" placeholder="Ej: 12345 - A">
+                    </div>
+                    <div class="form-group">
+                        <label for="staff-equipos">Equipos</label>
+                        <input type="text" id="staff-equipos" placeholder="Ej: Equipo A, Equipo B">
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -738,12 +1082,39 @@
             </div>
         </div>
     </div>
+
+    <!-- Modal para proveedor rápido -->
+    <div id="modal-proveedor-rapido" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">Nuevo Proveedor</h2>
+                <button class="modal-close" onclick="closeModal('modal-proveedor-rapido')">&times;</button>
+            </div>
+            <form id="form-proveedor-rapido" onsubmit="guardarProveedorRapido(event)">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label for="proveedor-rapido-nombre">Nombre/Razón Social</label>
+                        <input type="text" id="proveedor-rapido-nombre" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="proveedor-rapido-cuit">CUIT</label>
+                        <input type="text" id="proveedor-rapido-cuit" placeholder="XX-XXXXXXXX-X">
+                    </div>
+                    <div class="form-group">
+                        <label for="proveedor-rapido-telefono">Teléfono</label>
+                        <input type="text" id="proveedor-rapido-telefono">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-proveedor-rapido')">Cancelar</button>
+                    <button type="submit" class="btn">Guardar Proveedor</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="db.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
-
-
-
-

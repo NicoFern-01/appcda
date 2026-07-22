@@ -1,7 +1,7 @@
 ﻿// db.js - Gestión de Base de Datos Local con IndexedDB e integración con Firebase
 
 const DB_NAME = 'ControlAutomovilismoDB';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 let dbInstance = null;
 
@@ -75,8 +75,11 @@ async function inicializarFirebase() {
     }
 }
 
-// Intentar inicializar Firebase en segundo plano de inmediato
-inicializarFirebase();
+// Intentar inicializar Firebase en segundo plano de inmediato (con captura de errores
+// para que no rompa el login si falla la conexión a la CDN de Firebase)
+inicializarFirebase().catch(err => {
+    console.warn('Firebase no disponible, la app funciona solo con datos locales:', err);
+});
 
 // Limpiar toda la caché al cargar la página para evitar datos obsoletos
 limpiarCacheCompleto();
@@ -134,6 +137,31 @@ function openDB() {
             if (!db.objectStoreNames.contains('usuarios')) {
                 const usuariosStore = db.createObjectStore('usuarios', { keyPath: 'id', autoIncrement: true });
                 usuariosStore.createIndex('username', 'username', { unique: true });
+            }
+
+            // Tabla de Rendiciones (Carga Detallada)
+            if (!db.objectStoreNames.contains('rendiciones')) {
+                db.createObjectStore('rendiciones', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Tabla de Detalle de Gastos (Carga Detallada)
+            if (!db.objectStoreNames.contains('detalleGastos')) {
+                db.createObjectStore('detalleGastos', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Tabla de Adjuntos (Carga Detallada)
+            if (!db.objectStoreNames.contains('adjuntos')) {
+                db.createObjectStore('adjuntos', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Tabla de Proveedores (Carga Detallada)
+            if (!db.objectStoreNames.contains('proveedores')) {
+                db.createObjectStore('proveedores', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Tabla de Campeonatos (Carga Detallada)
+            if (!db.objectStoreNames.contains('campeonatos')) {
+                db.createObjectStore('campeonatos', { keyPath: 'id', autoIncrement: true });
             }
         };
 
@@ -386,7 +414,7 @@ async function sincronizarLocalAFirebase() {
         return;
     }
 
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos'];
     let total = 0;
 
     for (const storeName of stores) {
@@ -414,7 +442,7 @@ async function sincronizarLocalAFirebase() {
 async function importarTodo(datos) {
     limpiarCacheCompleto(); // limpiar todo el caché antes de importar
     const db = await openDB();
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos'];
     
     for (const storeName of stores) {
         if (datos[storeName]) {
