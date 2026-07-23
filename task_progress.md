@@ -1,8 +1,0 @@
-- [ ] Agregar columnas nuevas a la tabla de staff en index.html (Matrícula, Mail, Nro Registro - Grado, Equipos)
-- [ ] Agregar campos nuevos al formulario modal de staff en index.html
-- [ ] Actualizar placeholder de búsqueda de staff en index.html
-- [ ] Actualizar listarStaff() en app.js (renderizado de filas + filtro de búsqueda + colspan)
-- [ ] Actualizar openModalStaff() en app.js (reset de nuevos campos)
-- [ ] Actualizar editarStaff() en app.js (carga de nuevos campos)
-- [ ] Actualizar guardarStaffForm() en app.js (guardado de nuevos campos)
-- [ ] Verificar consistencia de todos los cambios

@@ -9,7 +9,7 @@ function escapeHtml(str) {
 }
 
 // ==================== ESTADO DE SESIÓN ====================
-let currentUser = null; // El usuario logueado actualmente
+let currentUser = null;
 
 // ==================== INSTANCIAS DE GRÁFICOS ====================
 let chartCategoriasInstance = null;
@@ -19,7 +19,7 @@ let chartConceptoInstance = null;
 // Flag para evitar re-renderizar el dashboard si no cambiaron los datos
 let dashboardDirty = true;
 
-const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'staff', 'configuracion'];
+const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'configuracion'];
 
 // Calendario view mode: 'cards' | 'list' (compact)
 let calendarioViewMode = localStorage.getItem('calendarioViewMode') || 'cards';
@@ -53,8 +53,6 @@ function toggleCalendarioFilters() {
 document.addEventListener('DOMContentLoaded', async () => {
     try {
         await inicializarDatosPorDefecto();
-        // La app empieza mostrando el Login. El estado de sesión NO persiste
-        // intencionalmente: cada vez que se abre la pestaña se pide el login.
     } catch (error) {
         console.error('Error al inicializar la base de datos:', error);
         alert('Error al iniciar la base de datos local. Por favor, recarga la página.');
@@ -88,9 +86,10 @@ async function handleLogin(event) {
 
     try {
         const usuarios = await getTodos('usuarios');
+        const passwordHash = await hashPassword(password);
         const usuario = usuarios.find(u =>
             u.username === username &&
-            u.passwordHash === hashPassword(password) &&
+            u.passwordHash === passwordHash &&
             u.activo === true
         );
 
@@ -111,22 +110,17 @@ async function handleLogin(event) {
 }
 
 function iniciarSesion(usuario) {
-    // Ocultar login y mostrar app
     document.getElementById('login-screen').style.display = 'none';
     const appMain = document.getElementById('app-main');
     appMain.style.display = 'flex';
 
-    // Actualizar info de usuario en sidebar
     document.getElementById('sidebar-user-name').textContent = usuario.nombre;
     document.getElementById('sidebar-avatar').textContent = usuario.nombre.charAt(0).toUpperCase();
 
     const rolesNombres = { admin: 'Administrador', editor: 'Editor', viewer: 'Visualizador', supervisor: 'Supervisor' };
     document.getElementById('sidebar-user-role').textContent = rolesNombres[usuario.rol] || usuario.rol;
 
-    // Aplicar restricciones de visibilidad según el rol
     aplicarControlDeAcceso(usuario.rol);
-
-    // Cargar la vista inicial
     switchView('dashboard');
 }
 
@@ -145,42 +139,35 @@ function aplicarControlDeAcceso(rol) {
     const esAdmin = rol === 'admin';
     const esSupervisor = rol === 'supervisor';
 
-    // Ocultar elementos de edición para visualizadores
     document.querySelectorAll('.editor-only').forEach(el => {
         el.style.display = (esViewer || esSupervisor) ? 'none' : '';
     });
 
-    // Ocultar panel de usuarios si no es admin
     document.querySelectorAll('.admin-only').forEach(el => {
         el.style.display = esAdmin ? '' : 'none';
     });
 
-    // Supervisores solo ven dashboard
     document.querySelectorAll('.menu-item').forEach((item, idx) => {
-        if (esSupervisor && idx !== 0) { // idx 0 es dashboard
+        if (esSupervisor && idx !== 0) {
             item.style.display = 'none';
         } else {
             item.style.display = '';
         }
     });
 
-    // Añadir clase al body para que reglas CSS adicionales puedan aplicar
     document.body.classList.toggle('viewer-mode', esViewer);
     document.body.classList.toggle('admin-mode', esAdmin);
     document.body.classList.toggle('supervisor-mode', esSupervisor);
 }
 
-// Verifica si el usuario puede editar (editor o admin)
 function puedeEditar() {
     return currentUser && (currentUser.rol === 'admin' || currentUser.rol === 'editor');
 }
 
-// Verifica si el usuario es admin
 function esAdmin() {
     return currentUser && currentUser.rol === 'admin';
 }
 
-// Verifica si el usuario es supervisor (solo lectura, solo dashboard)
 function esSupervisor() {
     return currentUser && currentUser.rol === 'supervisor';
 }
@@ -214,7 +201,6 @@ async function cargarDatosVista(viewId) {
 // ==================== DASHBOARD & GRÁFICOS ====================
 
 async function renderDashboard() {
-    // No re-renderizar si los datos no cambiaron
     if (!dashboardDirty) return;
     dashboardDirty = false;
 
@@ -230,7 +216,6 @@ async function renderDashboard() {
     document.getElementById('stat-competencias-count').innerText = competencias.length;
     document.getElementById('stat-staff-count').innerText = staff.length;
 
-    // Gráfico 1: Gastos por Categoría
     const gastosPorCat = {};
     categorias.forEach(c => { gastosPorCat[c.nombre] = 0; });
     gastosPorCat['General / Compartido'] = 0;
@@ -260,7 +245,6 @@ async function renderDashboard() {
         options: chartBarOptions()
     });
 
-    // Gráfico 2: Evolución (Mensual o Anual según selector)
     const intervalEl = document.getElementById('dashboard-gastos-interval');
     const interval = intervalEl ? intervalEl.value : 'monthly';
 
@@ -276,7 +260,6 @@ async function renderDashboard() {
         labels = mesesNombres;
         dataPoints = gastosMensuales;
     } else {
-        // Agrupar por año
         const mapaAnios = {};
         gastos.forEach(g => {
             if (!g.fecha) return;
@@ -308,7 +291,6 @@ async function renderDashboard() {
         options: chartLineOptions()
     });
 
-    // Gráfico 3: Por Concepto (Donut)
     const gastosPorConcepto = {};
     gastos.forEach(g => {
         const k = g.concepto.trim();
@@ -361,10 +343,25 @@ function chartLineOptions() {
     };
 }
 
+// ==================== GENERAR CÓDIGO DE COMPETENCIA ====================
+async function generarCodigoCompetencia() {
+    const competencias = await getTodos('competencias');
+    const year = new Date().getFullYear();
+    const esteAño = competencias.filter(c => c.codigo && c.codigo.startsWith('TC2000-' + year));
+    let maxNum = 0;
+    esteAño.forEach(c => {
+        const parts = c.codigo.split('-');
+        if (parts.length === 3) {
+            const num = parseInt(parts[2]);
+            if (num > maxNum) maxNum = num;
+        }
+    });
+    return `TC2000-${year}-${String(maxNum + 1).padStart(3, '0')}`;
+}
+
 // ==================== COMPETENCIAS (CALENDARIO) ====================
 
 async function listarCompetencias() {
-    // Asegurarse que los selects y filtros estén cargados
     await actualizarSelectoresFormularios();
     const [competencias, circuitos, categorias, gastos] = await Promise.all([
         getTodos('competencias'),
@@ -381,7 +378,7 @@ async function listarCompetencias() {
     }
 
     competencias.sort((a, b) => new Date(a.fechaInicio) - new Date(b.fechaInicio));
-    // Apply filters from header (categoria / mes / año)
+
     const filtroCatEl = document.getElementById('calendario-filtro-categoria');
     const filtroMesEl = document.getElementById('calendario-filtro-mes');
     const filtroAnoEl = document.getElementById('calendario-filtro-ano');
@@ -405,15 +402,16 @@ async function listarCompetencias() {
         return true;
     });
 
-    // If compact list view requested, render a simple list with title + fechas
     if (calendarioViewMode === 'list') {
         const ul = document.createElement('ul');
         ul.className = 'competition-list-compact';
         competenciasFiltradas.forEach(comp => {
-            const docBtn = comp.documentosUrl ? `<a href="${comp.documentosUrl}" target="_blank" class="action-btn" title="Ver documentos (OneDrive)" style="margin-left: 10px; color: var(--accent); vertical-align: middle;"><i class="fa-solid fa-folder-open"></i></a>` : '';
+            const docBtn = comp.documentosUrl ? `<a href="${comp.documentosUrl}" target="_blank" class="action-btn" title="Ver documentos (OneDrive)" style="margin-left:10px;color:var(--accent);vertical-align:middle;"><i class="fa-solid fa-folder-open"></i></a>` : '';
             const li = document.createElement('li');
             li.className = 'competition-list-item';
+            const codigoHtml = esAdmin() ? comp.codigo : `<span class="blur-readonly" style="display:inline-block;font-family:monospace;font-size:0.85rem;">${comp.codigo || 'SIN CÓDIGO'}</span>`;
             li.innerHTML = `<button class="link-like" onclick="editarCompetencia(${comp.id})">${comp.nombre}</button>${docBtn}` +
+                           `<div class="meta"><i class="fa-solid fa-hashtag"></i> ${codigoHtml}</div>` +
                            `<div class="meta">${formatearFechaVisual(comp.fechaInicio)} - ${formatearFechaVisual(comp.fechaFin)}</div>`;
             ul.appendChild(li);
         });
@@ -422,7 +420,6 @@ async function listarCompetencias() {
         return;
     }
 
-    // default: card view (existing rendering)
     competenciasFiltradas.forEach(comp => {
         const circ = circuitos.find(c => c.id === Number(comp.circuitoId));
         const circNombre = circ ? `${circ.nombre} (${circ.ubicacion})` : 'Circuito Desconocido';
@@ -445,11 +442,13 @@ async function listarCompetencias() {
 
         const card = document.createElement('div');
         card.className = 'data-card';
+        const codigoVisible = esAdmin() ? comp.codigo : `<span class="blur-readonly" style="display:inline-block;font-family:monospace;font-size:0.9rem;">${comp.codigo || 'SIN CÓDIGO'}</span>`;
         card.innerHTML = `
             <div class="data-card-title">
                 <span>${comp.nombre}</span>
                 <span style="color:var(--accent);font-weight:700;">$${costoComp.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
             </div>
+            <div class="data-card-meta"><i class="fa-solid fa-hashtag"></i> <span style="font-family:monospace;font-weight:600;">${codigoVisible}</span></div>
             <div class="data-card-meta"><i class="fa-solid fa-map-location-dot"></i> <span>${circNombre}</span></div>
             <div class="data-card-meta"><i class="fa-solid fa-calendar-day"></i> <span>${formatearFechaVisual(comp.fechaInicio)} al ${formatearFechaVisual(comp.fechaFin)}</span></div>
             <div class="data-card-tags">${catNombres.map(n => `<span class="tag">${n}</span>`).join('')}</div>
@@ -465,13 +464,22 @@ async function listarCompetencias() {
 
 async function openModalCompetencia() {
     if (!puedeEditar()) return;
-    await actualizarSelectoresFormularios(); // actualizar al abrir el modal
+    await actualizarSelectoresFormularios();
     document.getElementById('form-competencia').reset();
     document.getElementById('competencia-id').value = '';
+    document.getElementById('competencia-codigo').value = '';
+    document.getElementById('competencia-codigo-admin').value = '';
     document.getElementById('competencia-documentos').value = '';
     document.getElementById('competencia-modal-title').innerText = 'Agregar Competencia';
     document.querySelectorAll('#competencia-categorias-checkboxes input').forEach(cb => cb.checked = false);
     document.querySelectorAll('#competencia-staff-checkboxes input').forEach(cb => cb.checked = false);
+
+    document.getElementById('admin-edit-codigo-group').style.display = esAdmin() ? 'block' : 'none';
+
+    const tentativo = await generarCodigoCompetencia();
+    document.getElementById('competencia-codigo').value = tentativo;
+    document.getElementById('competencia-codigo-admin').value = tentativo;
+
     openModal('modal-competencia');
 }
 
@@ -486,6 +494,11 @@ async function editarCompetencia(id) {
     document.getElementById('competencia-inicio').value = comp.fechaInicio;
     document.getElementById('competencia-fin').value = comp.fechaFin;
     document.getElementById('competencia-documentos').value = comp.documentosUrl || '';
+
+    document.getElementById('competencia-codigo').value = comp.codigo || '';
+    document.getElementById('competencia-codigo-admin').value = comp.codigo || '';
+    document.getElementById('admin-edit-codigo-group').style.display = esAdmin() ? 'block' : 'none';
+
     document.querySelectorAll('#competencia-categorias-checkboxes input').forEach(cb => {
         cb.checked = comp.categoriasIds.includes(Number(cb.value));
     });
@@ -507,6 +520,15 @@ async function guardarCompetenciaForm(e) {
     const staffCheckboxes = document.querySelectorAll('#competencia-staff-checkboxes input:checked');
     const staffIds = Array.from(staffCheckboxes).map(cb => Number(cb.value));
 
+    let codigo = document.getElementById('competencia-codigo').value.trim();
+    const adminCodigo = document.getElementById('competencia-codigo-admin').value.trim();
+    if (esAdmin() && adminCodigo) {
+        codigo = adminCodigo;
+    }
+    if (!codigo) {
+        codigo = await generarCodigoCompetencia();
+    }
+
     const competencia = {
         nombre: document.getElementById('competencia-nombre').value,
         circuitoId: Number(document.getElementById('competencia-circuito').value),
@@ -514,7 +536,8 @@ async function guardarCompetenciaForm(e) {
         fechaFin: document.getElementById('competencia-fin').value,
         categoriasIds,
         staffIds,
-        documentosUrl: document.getElementById('competencia-documentos').value.trim()
+        documentosUrl: document.getElementById('competencia-documentos').value.trim(),
+        codigo
     };
     if (id) competencia.id = Number(id);
 
@@ -585,6 +608,9 @@ async function listarGastos() {
     filtrados.forEach(g => {
         const comp = competencias.find(c => c.id === Number(g.competenciaId));
         const compNombre = comp ? comp.nombre : 'General / Sin Carrera';
+        const compCodigo = comp && comp.codigo ? comp.codigo : 'SIN CÓDIGO';
+        const codigoVisible = esAdmin() ? compCodigo : `<span class="blur-readonly" style="font-family:monospace;font-size:0.85rem;">${compCodigo}</span>`;
+        
         let catNombre = 'General / Compartido';
         if (g.categoriaId !== 'general') {
             const cat = categorias.find(c => c.id === Number(g.categoriaId));
@@ -603,7 +629,7 @@ async function listarGastos() {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td>${formatearFechaVisual(g.fecha)}</td>
-            <td>${compNombre}</td>
+            <td>${compNombre}<br><small style="color:var(--text-secondary);"><i class="fa-solid fa-hashtag"></i> ${codigoVisible}</small></td>
             <td><span class="badge ${g.categoriaId === 'general' ? 'badge-success' : 'badge-info'}">${catNombre}</span></td>
             <td>${staffNombre}</td>
             <td style="font-weight:600;">${g.concepto}</td>
@@ -617,7 +643,7 @@ async function listarGastos() {
 
 async function openModalGasto() {
     if (!puedeEditar()) return;
-    await actualizarSelectoresFormularios(); // refrescar selects al abrir
+    await actualizarSelectoresFormularios();
     document.getElementById('form-gasto').reset();
     document.getElementById('gasto-id').value = '';
     document.getElementById('gasto-fecha').value = new Date().toISOString().split('T')[0];
@@ -629,7 +655,7 @@ async function editarGasto(id) {
     if (!puedeEditar()) return;
     const g = await obtenerPorId('gastos', id);
     if (!g) return;
-    await actualizarSelectoresFormularios(); // refrescar selects al abrir
+    await actualizarSelectoresFormularios();
     document.getElementById('gasto-id').value = g.id;
     document.getElementById('gasto-competencia').value = g.competenciaId;
     await actualizarStaffGastoPorCompetencia();
@@ -828,7 +854,6 @@ async function quitarStaffDeCompetencias(staffId) {
 // ==================== CONFIGURACIÓN: CATEGORÍAS & CIRCUITOS ====================
 
 async function listarConfiguraciones() {
-    // Categorías
     const categorias = await getTodos('categorias');
     const catBody = document.getElementById('config-categorias-body');
     catBody.innerHTML = '';
@@ -847,7 +872,6 @@ async function listarConfiguraciones() {
             </tr>`;
     });
 
-    // Circuitos
     const circuitos = await getTodos('circuitos');
     const circBody = document.getElementById('config-circuitos-body');
     circBody.innerHTML = '';
@@ -866,10 +890,8 @@ async function listarConfiguraciones() {
             </tr>`;
     });
 
-    // Actualizar el estado de la UI de Firebase
     actualizarEstadoFirebaseUI();
 
-    // Usuarios (solo admin)
     if (esAdmin()) {
         await listarUsuarios();
     }
@@ -1016,7 +1038,6 @@ async function guardarUsuarioForm(e) {
     const activo = document.getElementById('usuario-activo').value === 'true';
     const password = document.getElementById('usuario-password').value;
 
-    // Validar que el username no esté duplicado (en modo creación)
     if (!id) {
         const todos = await getTodos('usuarios');
         if (todos.find(u => u.username === username)) {
@@ -1028,21 +1049,19 @@ async function guardarUsuarioForm(e) {
     const usuario = { username, nombre, rol, activo };
     if (id) {
         usuario.id = Number(id);
-        // Mantener el hash anterior si no se cambió la contraseña
         if (password) {
-            usuario.passwordHash = hashPassword(password);
+            usuario.passwordHash = await hashPassword(password);
         } else {
             const existente = await obtenerPorId('usuarios', Number(id));
             usuario.passwordHash = existente.passwordHash;
         }
     } else {
         if (!password) { alert('La contraseña es obligatoria para nuevos usuarios.'); return; }
-        usuario.passwordHash = hashPassword(password);
+        usuario.passwordHash = await hashPassword(password);
     }
 
     await guardar('usuarios', usuario);
 
-    // Si el admin editó su propio perfil, actualizar la UI del sidebar
     if (currentUser && currentUser.id === usuario.id) {
         currentUser = { ...currentUser, ...usuario };
         document.getElementById('sidebar-user-name').textContent = usuario.nombre;
@@ -1073,7 +1092,6 @@ async function exportarDatos() {
         staff: await getTodos('staff'),
         competencias: await getTodos('competencias'),
         gastos: await getTodos('gastos')
-        // No se exportan usuarios por seguridad (cada instalación maneja los suyos)
     };
     const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(backup, null, 2))}`;
     const a = document.createElement('a');
@@ -1118,14 +1136,12 @@ async function actualizarSelectoresFormularios() {
     const competencias = await getTodos('competencias');
     const staff = await getTodos('staff');
 
-    // Select de circuito en modal competencia
     const selectCircuito = document.getElementById('competencia-circuito');
     const savedCirc = selectCircuito.value;
     selectCircuito.innerHTML = '<option value="">Seleccione un autódromo...</option>';
     circuitos.forEach(c => selectCircuito.innerHTML += `<option value="${c.id}">${c.nombre} (${c.ubicacion})</option>`);
     selectCircuito.value = savedCirc;
 
-    // Checkboxes de categorías en modal competencia
     const checkContainer = document.getElementById('competencia-categorias-checkboxes');
     const checkedIds = Array.from(checkContainer.querySelectorAll('input:checked')).map(cb => cb.value);
     checkContainer.innerHTML = '';
@@ -1137,7 +1153,6 @@ async function actualizarSelectoresFormularios() {
             </label>`;
     });
 
-    // Checkboxes de staff en modal competencia
     const staffContainer = document.getElementById('competencia-staff-checkboxes');
     if (staffContainer) {
         const checkedStaffIds = Array.from(staffContainer.querySelectorAll('input:checked')).map(cb => cb.value);
@@ -1155,33 +1170,28 @@ async function actualizarSelectoresFormularios() {
         }
     }
 
-    // Select de competencia en modal gasto
     const selectGastoComp = document.getElementById('gasto-competencia');
     const savedComp = selectGastoComp.value;
     selectGastoComp.innerHTML = '<option value="">Seleccione la carrera...</option>';
     competencias.forEach(c => selectGastoComp.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
     selectGastoComp.value = savedComp;
 
-    // Select de categoría en modal gasto
     const selectGastoCat = document.getElementById('gasto-categoria');
     const savedCat = selectGastoCat.value;
     selectGastoCat.innerHTML = '<option value="">Seleccione categoría...</option><option value="general">Gasto General / Compartido</option>';
     categorias.forEach(cat => selectGastoCat.innerHTML += `<option value="${cat.id}">${cat.nombre}</option>`);
     selectGastoCat.value = savedCat;
 
-    // Select de staff en modal gasto
     const selectGastoStaff = document.getElementById('gasto-staff');
     const savedStaff = selectGastoStaff ? selectGastoStaff.value : '';
     await actualizarStaffGastoPorCompetencia();
     if (selectGastoStaff) selectGastoStaff.value = savedStaff;
 
-    // Datalist de conceptos sugeridos
     const datalistConceptos = document.getElementById('conceptos-sugeridos');
     const conceptos = await getTodos('conceptos');
     datalistConceptos.innerHTML = '';
     conceptos.forEach(conc => datalistConceptos.innerHTML += `<option value="${conc.nombre}"></option>`);
 
-    // Filtros en pantalla de Gastos
     const filterCat = document.getElementById('filtro-categoria-gastos');
     const savedFilterCat = filterCat.value;
     filterCat.innerHTML = '<option value="todos">Todas las categorías</option><option value="general">Gasto General / Compartido</option>';
@@ -1194,7 +1204,6 @@ async function actualizarSelectoresFormularios() {
     competencias.forEach(c => filterComp.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
     filterComp.value = savedFilterComp;
 
-    // Calendario: filtro de categoría, mes y año
     const filtroCatCal = document.getElementById('calendario-filtro-categoria');
     if (filtroCatCal) {
         const saved = filtroCatCal.value;
@@ -1225,7 +1234,6 @@ async function actualizarSelectoresFormularios() {
         anosArr.forEach(y => filtroAnoCal.innerHTML += `<option value="${y}">${y}</option>`);
         filtroAnoCal.value = savedY || 'todos';
     }
-
 }
 
 async function actualizarStaffGastoPorCompetencia() {
@@ -1276,6 +1284,7 @@ function formatearFechaVisual(fechaStr) {
     const p = fechaStr.split('-');
     return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : fechaStr;
 }
+
 // ==================== GESTOR DE CATEGORÍAS DE GASTOS ====================
 
 async function abrirModalGestorCategorias() {
@@ -1312,8 +1321,6 @@ async function guardarCategoriaRapido(e) {
 
     const nuevaCategoria = { nombre };
     await guardar('categorias', nuevaCategoria);
-    
-    // Actualizar el select de categoría y recargar la lista
     await actualizarSelectoresFormularios();
     await abrirModalGestorCategorias();
 }
@@ -1335,7 +1342,6 @@ async function eliminarCategoriaGasto(id) {
     if (!puedeEditar()) return;
     if (!confirm('¿Eliminar esta categoría de gasto?\n\nNota: Los gastos ya cargados con esta categoría pasarán a "General"')) return;
     
-    // Cambiar gastos de esta categoría a "general"
     const gastos = await getTodos('gastos');
     for (const g of gastos) {
         if (g.categoriaId === String(id)) {
@@ -1406,7 +1412,6 @@ async function eliminarConceptoGasto(id) {
     if (!puedeEditar()) return;
     if (!confirm('¿Eliminar este concepto de gasto?\n\nNota: Los gastos que usen este concepto quedarán sin concepto.')) return;
 
-    // Reasignar gastos que usen este concepto a 'Otros' (se crea si no existe)
     const gastos = await getTodos('gastos');
     let conceptos = await getTodos('conceptos');
     let otros = conceptos.find(c => c.nombre === 'Otros');
@@ -1423,7 +1428,6 @@ async function eliminarConceptoGasto(id) {
         }
     }
 
-    // No permitir eliminar el concepto 'Otros'
     if (concObj && concObj.nombre === 'Otros') { alert('No se puede eliminar el concepto "Otros".'); return; }
 
     await eliminar('conceptos', id);
@@ -1446,7 +1450,6 @@ function guardarYConectarFirebase() {
     }
 
     try {
-        // Validar que sea un JSON válido con los campos necesarios
         const config = JSON.parse(configText);
         if (!config.apiKey || !config.projectId) {
             statusEl.innerHTML = '<span style="color: #ff6b6b;">⚠️ El JSON debe contener al menos "apiKey" y "projectId".</span>';
@@ -1456,7 +1459,6 @@ function guardarYConectarFirebase() {
         localStorage.setItem('firebase_config', JSON.stringify(config));
         statusEl.innerHTML = '<span style="color: #2ed573;">⌛ Conectando con Firebase...</span>';
 
-        // Recargar la página para que db.js inicialice Firebase con la nueva config
         setTimeout(() => {
             location.reload();
         }, 500);
@@ -1506,7 +1508,6 @@ function desconectarFirebase() {
     }, 500);
 }
 
-// Actualizar el estado de la UI de Firebase al cargar la vista de configuración
 function actualizarEstadoFirebaseUI() {
     const configStr = localStorage.getItem('firebase_config');
     const btnConectar = document.getElementById('btn-conectar-firebase');
@@ -1518,11 +1519,9 @@ function actualizarEstadoFirebaseUI() {
     if (configStr) {
         try {
             const config = JSON.parse(configStr);
-            // Mostrar la config actual en el textarea
             configTextarea.value = JSON.stringify(config, null, 2);
 
             if (useFirebase) {
-                // Mostrar estado de sincronización
                 const syncResult = window.firebaseSyncResult || { status: 'pending', message: 'Sincronizando...', count: 0 };
                 if (syncResult.status === 'synced') {
                     statusEl.innerHTML = `
@@ -1569,8 +1568,6 @@ function actualizarEstadoFirebaseUI() {
 }
 
 // ==================== PRUEBA AUTOMATIZADA DE CACHE DB ====================
-// Esta función crea/edita/elimina un registro temporal en 'categorias'
-// y registra el estado de la caché `_cache` para verificar actualizaciones inmediatas.
 async function ejecutarPruebaCache() {
     try {
         console.group('DB Cache SelfTest');
@@ -1579,19 +1576,16 @@ async function ejecutarPruebaCache() {
 
         console.log('Conteo inicial categorias:', (await getTodos('categorias')).length);
 
-        // Crear categoría temporal
         const temp = { nombre: 'ZZZ_AUTOTEST_TEMP' };
         const savedId = await guardar('categorias', temp);
         console.log('Guardado ID:', savedId);
         console.log('Cache categorias (últimos 5):', (_cache['categorias'] || []).slice(-5));
 
-        // Actualizar
         temp.id = Number(savedId);
         temp.nombre = 'ZZZ_AUTOTEST_UPDATED';
         await guardar('categorias', temp);
         console.log('Después de actualizar (buscar en cache):', (_cache['categorias'] || []).find(c => Number(c.id) === Number(savedId)));
 
-        // Eliminar
         await eliminar('categorias', savedId);
         console.log('Después de eliminar, encontrar en cache:', (_cache['categorias'] || []).find(c => Number(c.id) === Number(savedId)));
 
@@ -1604,8 +1598,6 @@ async function ejecutarPruebaCache() {
     }
 }
 
-// Ejecutar la prueba ahora solo si está habilitada en localStorage
-// Para habilitar temporalmente: `localStorage.setItem('runDbSelfTest','1')`
 if (localStorage.getItem('runDbSelfTest') === '1') {
     ejecutarPruebaCache();
 }
@@ -1614,13 +1606,11 @@ if (localStorage.getItem('runDbSelfTest') === '1') {
 // MÓDULO: CARGA DETALLADA
 // ====================================================================
 
-// ==================== ESTADO DEL EDITOR ====================
-let rendicionActual = null;           // Objeto rendición que se está editando
-let detallesActuales = [];            // Array de detalleGastos de la rendición actual
-let detallesModificados = false;      // Flag para cambios sin guardar
-let adjuntosTemporales = {};          // Adjuntos pendientes por fila (key = filaIndex)
+let rendicionActual = null;
+let detallesActuales = [];
+let detallesModificados = false;
+let adjuntosTemporales = {};
 
-// ==================== TOAST SYSTEM ====================
 function mostrarToast(mensaje, tipo = 'success') {
     let container = document.querySelector('.toast-container');
     if (!container) {
@@ -1635,7 +1625,6 @@ function mostrarToast(mensaje, tipo = 'success') {
     setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 3000);
 }
 
-// ==================== LISTADO DE RENDICIONES ====================
 async function listarRendiciones() {
     if (!puedeEditar() && esSupervisor()) {
         document.getElementById('rendiciones-list-container').innerHTML = '<p style="color:var(--text-secondary);">No tenés acceso a este módulo.</p>';
@@ -1686,19 +1675,21 @@ async function listarRendiciones() {
         const estadoBadge = r.estado === 'completo' ? 'badge-success' : 'badge-warning';
         const estadoText = r.estado === 'completo' ? 'Completo' : 'Borrador';
 
-        const acciones = puedeEditar() ? `
+        const acciones = `
             <td style="text-align:right;white-space:nowrap;">
-                <button class="action-btn" onclick="editarRendicion(${r.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
-                <button class="action-btn" onclick="duplicarRendicionId(${r.id})" title="Duplicar"><i class="fa-solid fa-copy"></i></button>
-                <button class="action-btn delete" onclick="eliminarRendicion(${r.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                <button class="action-btn" onclick="verRendicion(${r.id})" title="Ver detalle" style="min-width:32px;display:inline-flex;align-items:center;justify-content:center;"><i class="fa-solid fa-eye"></i></button>
+                ${puedeEditar() ? `
+                <button class="action-btn" onclick="editarRendicion(${r.id})" title="Editar" style="display:inline-flex;align-items:center;justify-content:center;"><i class="fa-solid fa-pen-to-square"></i></button>
+                <button class="action-btn" onclick="duplicarRendicionId(${r.id})" title="Duplicar" style="display:inline-flex;align-items:center;justify-content:center;"><i class="fa-solid fa-copy"></i></button>
+                <button class="action-btn delete" onclick="eliminarRendicion(${r.id})" title="Eliminar" style="display:inline-flex;align-items:center;justify-content:center;"><i class="fa-solid fa-trash"></i></button>
+                ` : ''}
             </td>
-        ` : '';
+        `;
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td style="font-weight:600;">${r.id}</td>
             <td>${comp ? comp.nombre : '-'}</td>
-            <td>${camp ? camp.nombre : '-'}</td>
             <td>${circ ? circ.nombre : '-'}</td>
             <td>${formatearFechaVisual(r.fecha)}</td>
             <td>${resp ? `${resp.nombre} ${resp.apellido}` : '-'}</td>
@@ -1711,7 +1702,234 @@ async function listarRendiciones() {
     });
 }
 
-// ==================== NUEVA RENDICIÓN ====================
+async function verRendicion(id) {
+    const [rendicion, competencias, circuitos, staff, conceptos, proveedores, todosDetalles, todosAdjuntos] = await Promise.all([
+        obtenerPorId('rendiciones', id),
+        getTodos('competencias'),
+        getTodos('circuitos'),
+        getTodos('staff'),
+        getTodos('conceptos'),
+        getTodos('proveedores'),
+        getTodos('detalleGastos'),
+        getTodos('adjuntos')
+    ]);
+
+    if (!rendicion) { mostrarToast('Rendición no encontrada.', 'error'); return; }
+
+    const comp = competencias.find(c => c.id === Number(rendicion.competenciaId));
+    const circ = circuitos.find(c => c.id === Number(rendicion.autodromoId));
+    const resp = staff.find(s => s.id === Number(rendicion.responsableId));
+    const detalles = todosDetalles.filter(d => Number(d.rendicionId) === Number(id)).sort((a, b) => (a.orden || 0) - (b.orden || 0));
+
+    let totalBasico = 0, totalIVA = 0, totalGeneral = 0;
+    detalles.forEach(d => {
+        totalBasico += Number(d.basico || 0);
+        totalIVA += Number(d.iva || 0);
+        totalGeneral += calcularTotalFila(d);
+    });
+
+    if (!document.getElementById('modal-ver-rendicion')) {
+        const modalHtml = `
+        <div id="modal-ver-rendicion" class="modal-overlay">
+            <div class="modal modal-lg" style="width:95vw;max-width:1400px;overflow:hidden;box-sizing:border-box;position:relative;">
+                <div class="modal-header">
+                    <h2 class="modal-title"><i class="fa-solid fa-file-invoice"></i> Rendición #<span id="ver-rendicion-id"></span></h2>
+                    <button class="modal-close" onclick="closeModal('modal-ver-rendicion')">&times;</button>
+                </div>
+                <div class="modal-content" style="max-height:80vh;overflow:auto;padding:1.5rem;box-sizing:border-box;">
+                    <div class="stats-grid" id="ver-rendicion-summary" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:1.5rem;"></div>
+                    
+                    <div class="form-card" style="margin-bottom:1.5rem;">
+                        <div class="form-title"><i class="fa-solid fa-circle-info"></i> Información General</div>
+                        <div id="ver-rendicion-info" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;padding:1rem 0;"></div>
+                        <div id="ver-rendicion-observaciones" style="padding:0.5rem 0;color:var(--text-secondary);border-top:1px solid var(--border-color);"></div>
+                    </div>
+
+                    <div class="table-card">
+                        <div class="table-header-tools">
+                            <h3><i class="fa-solid fa-receipt"></i> Detalle de Gastos</h3>
+                            <span style="color:var(--accent);font-weight:700;font-size:1.1rem;" id="ver-rendicion-total-general"></span>
+                        </div>
+                        <div class="table-responsive">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Proveedor</th>
+                                        <th>Comp.</th>
+                                        <th>N° Comp.</th>
+                                        <th>Fecha</th>
+                                        <th>Concepto</th>
+                                        <th>Descripción</th>
+                                        <th>Básico</th>
+                                        <th>IVA</th>
+                                        <th>Total</th>
+                                        <th>Adj.</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ver-rendicion-detalles-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="table-card" style="margin-top:1rem;">
+                        <div class="table-header-tools">
+                            <h3><i class="fa-solid fa-paperclip"></i> Archivos Adjuntos</h3>
+                        </div>
+                        <div id="ver-rendicion-adjuntos" style="padding:1rem;display:flex;flex-wrap:wrap;gap:0.75rem;"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-ver-rendicion')">Cerrar</button>
+                </div>
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+    }
+
+    document.getElementById('ver-rendicion-id').textContent = rendicion.id;
+
+    const summaryHtml = `
+        <div class="stat-card" style="padding:1rem;">
+            <div class="stat-info">
+                <h3 style="font-size:0.85rem;">Competencia</h3>
+                <p style="font-size:1rem;">${comp ? comp.nombre : '-'}<br><small style="color:var(--text-secondary);"><i class="fa-solid fa-hashtag"></i> <span class="blur-readonly" style="font-family:monospace;">${comp && comp.codigo ? comp.codigo : 'SIN CÓDIGO'}</span></small></p>
+            </div>
+            <div class="stat-icon"><i class="fa-solid fa-trophy"></i></div>
+        </div>
+        <div class="stat-card" style="padding:1rem;">
+            <div class="stat-info">
+                <h3 style="font-size:0.85rem;">Autódromo</h3>
+                <p style="font-size:1rem;">${circ ? circ.nombre : '-'}</p>
+            </div>
+            <div class="stat-icon"><i class="fa-solid fa-map-location-dot"></i></div>
+        </div>
+        <div class="stat-card" style="padding:1rem;">
+            <div class="stat-info">
+                <h3 style="font-size:0.85rem;">Responsable</h3>
+                <p style="font-size:1rem;">${resp ? `${resp.nombre} ${resp.apellido}` : '-'}</p>
+            </div>
+            <div class="stat-icon"><i class="fa-solid fa-user"></i></div>
+        </div>
+        <div class="stat-card" style="padding:1rem;">
+            <div class="stat-info">
+                <h3 style="font-size:0.85rem;">Fecha</h3>
+                <p style="font-size:1rem;">${formatearFechaVisual(rendicion.fecha)}</p>
+            </div>
+            <div class="stat-icon"><i class="fa-solid fa-calendar"></i></div>
+        </div>
+        <div class="stat-card" style="padding:1rem;">
+            <div class="stat-info">
+                <h3 style="font-size:0.85rem;">Cant. Gastos</h3>
+                <p style="font-size:1rem;">${detalles.length}</p>
+            </div>
+            <div class="stat-icon"><i class="fa-solid fa-receipt"></i></div>
+        </div>
+        <div class="stat-card" style="padding:1rem;">
+            <div class="stat-info">
+                <h3 style="font-size:0.85rem;">Total General</h3>
+                <p style="font-size:1rem;color:var(--accent);font-weight:700;">${formatearMoneda(totalGeneral)}</p>
+            </div>
+            <div class="stat-icon"><i class="fa-solid fa-dollar-sign"></i></div>
+        </div>
+    `;
+    document.getElementById('ver-rendicion-summary').innerHTML = summaryHtml;
+
+    const estadoBadge = rendicion.estado === 'completo' ? 'badge-success' : 'badge-warning';
+    const estadoText = rendicion.estado === 'completo' ? 'Completo' : 'Borrador';
+    document.getElementById('ver-rendicion-info').innerHTML = `
+        <div><strong>Estado:</strong> <span class="badge ${estadoBadge}">${estadoText}</span></div>
+        <div><strong>Responsable:</strong> ${resp ? `${resp.nombre} ${resp.apellido}` : '-'}</div>
+        <div><strong>Autódromo:</strong> ${circ ? circ.nombre : '-'}</div>
+        <div><strong>Competencia:</strong> ${comp ? comp.nombre : '-'}</div>
+        <div><strong>Código:</strong> <span class="blur-readonly" style="font-family:monospace;">${comp && comp.codigo ? comp.codigo : 'SIN CÓDIGO'}</span></div>
+        <div><strong>Fecha:</strong> ${formatearFechaVisual(rendicion.fecha)}</div>
+        <div><strong># Rendición:</strong> ${rendicion.id}</div>
+    `;
+    document.getElementById('ver-rendicion-observaciones').innerHTML = rendicion.observaciones ? `<i class="fa-solid fa-comment"></i> ${rendicion.observaciones}` : '';
+
+    const tbody = document.getElementById('ver-rendicion-detalles-body');
+    tbody.innerHTML = '';
+    if (detalles.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--text-secondary);">Sin gastos registrados.</td></tr>';
+    } else {
+        for (let i = 0; i < detalles.length; i++) {
+            const d = detalles[i];
+            const prov = proveedores.find(p => p.id === Number(d.proveedorId));
+            const conc = conceptos.find(c => c.id === Number(d.conceptoId));
+            const total = calcularTotalFila(d);
+            const adjFila = todosAdjuntos.filter(a => Number(a.detalleGastoId) === Number(d.id));
+            const tieneAdj = adjFila.length > 0;
+            
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="text-align:center;font-weight:600;">${i + 1}</td>
+                <td>${prov ? prov.nombre : '-'}</td>
+                <td>${d.tipoComprobante || '-'}</td>
+                <td>${d.numeroComprobante || '-'}</td>
+                <td>${formatearFechaVisual(d.fecha)}</td>
+                <td>${conc ? conc.nombre : '-'}</td>
+                <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${d.descripcion || ''}">${d.descripcion || '-'}</td>
+                <td style="text-align:right;">${formatearMoneda(Number(d.basico || 0))}</td>
+                <td style="text-align:right;">${formatearMoneda(Number(d.iva || 0))}</td>
+                <td style="text-align:right;color:var(--accent);font-weight:700;">${formatearMoneda(total)}</td>
+                <td style="text-align:center;">
+                    ${tieneAdj ? `<span style="color:var(--accent-green);cursor:pointer;" onclick="verAdjuntosRendicion(${i})" title="${adjFila.length} archivo(s)"><i class="fa-solid fa-paperclip"></i> ${adjFila.length}</span>` : '<span style="color:var(--text-secondary);"><i class="fa-regular fa-paperclip"></i></span>'}
+                </td>
+            `;
+            tr.dataset.adjuntos = JSON.stringify(adjFila);
+            tbody.appendChild(tr);
+        }
+    }
+
+    document.getElementById('ver-rendicion-total-general').textContent = `Total: ${formatearMoneda(totalGeneral)}`;
+
+    const adjContainer = document.getElementById('ver-rendicion-adjuntos');
+    adjContainer.innerHTML = '';
+    let totalAdj = 0;
+    const todosAdjRendicion = [];
+    for (const d of detalles) {
+        const adjFila = todosAdjuntos.filter(a => Number(a.detalleGastoId) === Number(d.id));
+        adjFila.forEach(a => {
+            totalAdj++;
+            todosAdjRendicion.push(a);
+        });
+    }
+    
+    if (totalAdj === 0) {
+        adjContainer.innerHTML = '<span style="color:var(--text-secondary);">Esta rendición no tiene archivos adjuntos.</span>';
+    } else {
+        todosAdjRendicion.forEach((adj, idx) => {
+            const card = document.createElement('div');
+            card.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.75rem;background:var(--bg-card);border-radius:6px;border:1px solid var(--border-color);cursor:pointer;';
+            card.title = 'Haga clic para abrir';
+            const icono = adj.tipoArchivo?.includes('pdf') ? 'fa-file-pdf' :
+                          adj.tipoArchivo?.includes('image') ? 'fa-file-image' : 'fa-file';
+            card.innerHTML = `
+                <i class="fa-regular ${icono}" style="font-size:1.2rem;color:var(--accent);"></i>
+                <span style="font-size:0.85rem;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${adj.nombre}</span>
+            `;
+            card.onclick = () => abrirArchivoAdjunto(adj.nombre, adj.archivo);
+            adjContainer.appendChild(card);
+        });
+    }
+
+    openModal('modal-ver-rendicion');
+}
+
+function verAdjuntosRendicion(index) {
+    const tbody = document.getElementById('ver-rendicion-detalles-body');
+    const tr = tbody.children[index];
+    if (!tr || !tr.dataset.adjuntos) { mostrarToast('Sin archivos adjuntos.', 'warning'); return; }
+    try {
+        const adjuntos = JSON.parse(tr.dataset.adjuntos);
+        if (adjuntos.length === 0) { mostrarToast('Sin archivos adjuntos.', 'warning'); return; }
+        adjuntos.forEach(adj => abrirArchivoAdjunto(adj.nombre, adj.archivo));
+    } catch(e) {
+        mostrarToast('Error al leer los adjuntos.', 'error');
+    }
+}
+
 async function nuevaRendicion() {
     if (!puedeEditar()) return;
     await cargarSelectoresRendicion();
@@ -1743,7 +1961,6 @@ async function nuevaRendicion() {
     recalcularTodosLosTotales();
 }
 
-// ==================== CARGAR SELECTORES DE RENDICIÓN ====================
 async function cargarSelectoresRendicion() {
     const [competencias, circuitos, staff, campeonatos, conceptos, proveedores] = await Promise.all([
         getTodos('competencias'),
@@ -1754,35 +1971,24 @@ async function cargarSelectoresRendicion() {
         getTodos('proveedores')
     ]);
 
-    // Competencia
     const selComp = document.getElementById('rendicion-competencia');
     const savedComp = selComp.value;
     selComp.innerHTML = '<option value="">Seleccione competencia...</option>';
     competencias.forEach(c => selComp.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
     selComp.value = savedComp;
 
-    // Autódromo
     const selAuto = document.getElementById('rendicion-autodromo');
     const savedAuto = selAuto.value;
     selAuto.innerHTML = '<option value="">Seleccione autódromo...</option>';
     circuitos.forEach(c => selAuto.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
     selAuto.value = savedAuto;
 
-    // Campeonato
-    const selCamp = document.getElementById('rendicion-campeonato');
-    const savedCamp = selCamp.value;
-    selCamp.innerHTML = '<option value="">Sin campeonato</option>';
-    campeonatos.forEach(c => selCamp.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
-    selCamp.value = savedCamp;
-
-    // Responsable (staff)
     const selResp = document.getElementById('rendicion-responsable');
     const savedResp = selResp.value;
     selResp.innerHTML = '<option value="">Seleccione responsable...</option>';
     staff.forEach(s => selResp.innerHTML += `<option value="${s.id}">${s.nombre} ${s.apellido}</option>`);
     selResp.value = savedResp;
 
-    // Selector de conceptos (para el modal de detalle)
     const selConc = document.getElementById('detalle-concepto');
     if (selConc) {
         const savedConc = selConc.value;
@@ -1791,7 +1997,6 @@ async function cargarSelectoresRendicion() {
         selConc.value = savedConc;
     }
 
-    // Selector de proveedores (para el modal de detalle)
     const selProv = document.getElementById('detalle-proveedor');
     if (selProv) {
         const savedProv = selProv.value;
@@ -1801,11 +2006,9 @@ async function cargarSelectoresRendicion() {
     }
 }
 
-// ==================== LLENAR FORMULARIO DE RENDICIÓN ====================
 async function llenarFormularioRendicion(r) {
     document.getElementById('rendicion-id').value = r.id || '';
     document.getElementById('rendicion-competencia').value = r.competenciaId || '';
-    document.getElementById('rendicion-campeonato').value = r.campeonatoId || '';
     document.getElementById('rendicion-autodromo').value = r.autodromoId || '';
     document.getElementById('rendicion-fecha').value = r.fecha || '';
     document.getElementById('rendicion-responsable').value = r.responsableId || '';
@@ -1822,12 +2025,10 @@ async function llenarFormularioRendicion(r) {
     document.getElementById('rendicion-fecha-modificacion').textContent = r.fechaModificacion ? new Date(r.fechaModificacion).toLocaleString() : '-';
 }
 
-// ==================== OBTENER DATOS DEL FORMULARIO ====================
 function obtenerDatosFormularioRendicion() {
     return {
         id: document.getElementById('rendicion-id').value ? Number(document.getElementById('rendicion-id').value) : null,
         competenciaId: document.getElementById('rendicion-competencia').value,
-        campeonatoId: document.getElementById('rendicion-campeonato').value || null,
         autodromoId: document.getElementById('rendicion-autodromo').value,
         responsableId: document.getElementById('rendicion-responsable').value,
         fecha: document.getElementById('rendicion-fecha').value,
@@ -1836,7 +2037,6 @@ function obtenerDatosFormularioRendicion() {
     };
 }
 
-// ==================== VALIDAR RENDICIÓN ====================
 function validarRendicion() {
     const datos = obtenerDatosFormularioRendicion();
     if (!datos.competenciaId) { mostrarToast('Debe seleccionar una competencia.', 'error'); return false; }
@@ -1845,7 +2045,6 @@ function validarRendicion() {
     if (!datos.responsableId) { mostrarToast('Debe seleccionar un responsable.', 'error'); return false; }
     if (detallesActuales.length === 0) { mostrarToast('Debe agregar al menos un gasto.', 'error'); return false; }
 
-    // Validar cada detalle
     for (let i = 0; i < detallesActuales.length; i++) {
         const d = detallesActuales[i];
         if (!d.proveedorId) { mostrarToast(`Fila ${i+1}: Debe seleccionar un proveedor.`, 'error'); return false; }
@@ -1860,29 +2059,27 @@ function validarRendicion() {
     return true;
 }
 
-// ==================== GUARDAR RENDICIÓN ====================
 async function guardarRendicion() {
     if (!puedeEditar()) return;
     if (!validarRendicion()) return;
-    await ejecutarGuardadoRendicion('completo');
+    await ejecutarGuardadoRendicion('completo', true);
 }
 
 async function guardarRendicionBorrador() {
     if (!puedeEditar()) return;
-    await ejecutarGuardadoRendicion('borrador');
+    await ejecutarGuardadoRendicion('borrador', true);
 }
 
-async function ejecutarGuardadoRendicion(estado) {
+async function ejecutarGuardadoRendicion(estado, volverAlListado = false) {
+    let datos = null;
     try {
-        const datos = obtenerDatosFormularioRendicion();
+        datos = obtenerDatosFormularioRendicion();
         const ahora = new Date().toISOString();
 
-        // Si es nuevo, establecer fechas de creación
         if (!datos.id) {
             datos.fechaCreacion = ahora;
             datos.usuarioCreacion = currentUser ? currentUser.id : null;
         } else {
-            // Preservar fechas de creación originales
             const orig = await obtenerPorId('rendiciones', datos.id);
             if (orig) {
                 datos.fechaCreacion = orig.fechaCreacion;
@@ -1893,18 +2090,15 @@ async function ejecutarGuardadoRendicion(estado) {
         datos.usuarioModificacion = currentUser ? currentUser.id : null;
         datos.estado = estado;
 
-        // Guardar rendición
         const savedId = await guardar('rendiciones', datos);
         datos.id = Number(savedId);
         rendicionActual = datos;
         document.getElementById('rendicion-id').value = datos.id;
 
-        // Guardar todos los detalles
         for (let i = 0; i < detallesActuales.length; i++) {
             const detalle = detallesActuales[i];
             detalle.rendicionId = datos.id;
             detalle.orden = i + 1;
-            // Calcular total
             detalle.total = Number(detalle.basico || 0) + Number(detalle.iva || 0) +
                 Number(detalle.impuestosInternos || 0) + Number(detalle.percepcionIIBB || 0) +
                 Number(detalle.percepcionIVA || 0) + Number(detalle.otrosImpuestos || 0);
@@ -1912,7 +2106,6 @@ async function ejecutarGuardadoRendicion(estado) {
             const detalleId = await guardar('detalleGastos', detalle);
             detalle.id = Number(detalleId);
 
-            // Guardar adjuntos asociados a este detalle
             const adjuntosFila = adjuntosTemporales[i] || [];
             for (const adj of adjuntosFila) {
                 adj.detalleGastoId = detalle.id;
@@ -1922,18 +2115,14 @@ async function ejecutarGuardadoRendicion(estado) {
             }
         }
 
-        // Limpiar adjuntos temporales guardados
         adjuntosTemporales = {};
-
         detallesModificados = false;
         document.getElementById('cambios-sin-guardar').style.display = 'none';
 
-        // Actualizar badge de estado
         const badge = document.getElementById('rendicion-estado-badge');
         badge.textContent = estado === 'completo' ? 'Completo' : 'Borrador';
         badge.className = `badge ${estado === 'completo' ? 'badge-success' : 'badge-warning'}`;
 
-        // Actualizar info de auditoría
         document.getElementById('rendicion-usuario-creacion').textContent = currentUser ? currentUser.nombre : '-';
         document.getElementById('rendicion-fecha-modificacion').textContent = new Date(ahora).toLocaleString();
 
@@ -1944,11 +2133,14 @@ async function ejecutarGuardadoRendicion(estado) {
         mostrarToast(`Rendición #${datos.id} guardada como "${estado}".`);
     } catch (e) {
         console.error('Error al guardar rendición:', e);
-        mostrarToast('Error al guardar la rendición.', 'error');
+        mostrarToast('Error al guardar la rendición: ' + (e.message || e), 'error');
+    } finally {
+        if (volverAlListado) {
+            cancelarEdicionRendicion();
+        }
     }
 }
 
-// ==================== EDITAR RENDICIÓN ====================
 async function editarRendicion(id) {
     if (!puedeEditar()) return;
     await cargarSelectoresRendicion();
@@ -1959,7 +2151,6 @@ async function editarRendicion(id) {
     const detalles = await getTodos('detalleGastos');
     detallesActuales = detalles.filter(d => Number(d.rendicionId) === Number(id)).sort((a, b) => (a.orden || 0) - (b.orden || 0));
 
-    // Cargar adjuntos
     const todosAdjuntos = await getTodos('adjuntos');
     adjuntosTemporales = {};
     for (let i = 0; i < detallesActuales.length; i++) {
@@ -1983,7 +2174,6 @@ async function editarRendicion(id) {
     recalcularTodosLosTotales();
 }
 
-// ==================== CANCELAR EDICIÓN ====================
 function cancelarEdicionRendicion() {
     if (detallesModificados) {
         if (!confirm('Hay cambios sin guardar. ¿Estás seguro de que deseas salir?')) return;
@@ -1997,7 +2187,6 @@ function cancelarEdicionRendicion() {
     listarRendiciones();
 }
 
-// ==================== ELIMINAR RENDICIÓN ====================
 async function eliminarRendicion(id) {
     if (!puedeEditar()) return;
     if (!confirm('¿Eliminar esta rendición y todos sus gastos asociados? Esta acción no se puede deshacer.')) return;
@@ -2006,7 +2195,6 @@ async function eliminarRendicion(id) {
         const detalles = await getTodos('detalleGastos');
         const adjuntos = await getTodos('adjuntos');
 
-        // Eliminar adjuntos de los detalles de esta rendición
         for (const d of detalles.filter(dd => Number(dd.rendicionId) === Number(id))) {
             for (const a of adjuntos.filter(aa => Number(aa.detalleGastoId) === Number(d.id))) {
                 await eliminar('adjuntos', a.id);
@@ -2026,7 +2214,6 @@ async function eliminarRendicion(id) {
     }
 }
 
-// ==================== DUPLICAR RENDICIÓN ====================
 async function duplicarRendicionId(id) {
     if (!puedeEditar()) return;
     try {
@@ -2036,7 +2223,6 @@ async function duplicarRendicionId(id) {
         const detalles = await getTodos('detalleGastos');
         const detallesOrig = detalles.filter(d => Number(d.rendicionId) === Number(id));
 
-        // Crear nueva rendición
         const nueva = { ...orig };
         delete nueva.id;
         nueva.observaciones = (orig.observaciones || '') + ' (Copia)';
@@ -2048,13 +2234,11 @@ async function duplicarRendicionId(id) {
 
         const newId = await guardar('rendiciones', nueva);
 
-        // Duplicar detalles
         for (const d of detallesOrig) {
             const nuevoDet = { ...d };
             delete nuevoDet.id;
             nuevoDet.rendicionId = Number(newId);
             const detId = await guardar('detalleGastos', nuevoDet);
-            // Duplicar adjuntos
             const adjuntos = await getTodos('adjuntos');
             for (const a of adjuntos.filter(aa => Number(aa.detalleGastoId) === Number(d.id))) {
                 const nuevoAdj = { ...a };
@@ -2076,7 +2260,6 @@ async function duplicarRendicionId(id) {
     }
 }
 
-// ==================== DUPLICAR RENDICIÓN ACTUAL ====================
 async function duplicarRendicion() {
     if (!rendicionActual || !rendicionActual.id) {
         mostrarToast('Primero debe guardar la rendición actual.', 'warning');
@@ -2085,7 +2268,6 @@ async function duplicarRendicion() {
     await duplicarRendicionId(rendicionActual.id);
 }
 
-// ==================== GRILLA DE DETALLE DE GASTOS ====================
 async function renderizarDetalleGastos() {
     const tbody = document.getElementById('detalle-gastos-body');
     tbody.innerHTML = '';
@@ -2164,7 +2346,6 @@ function calcularTotalFila(detalle) {
         Number(detalle.percepcionIVA || 0) + Number(detalle.otrosImpuestos || 0);
 }
 
-// ==================== RECALCULAR TOTALES ====================
 function recalcularTodosLosTotales() {
     let totalBasico = 0, totalIVA = 0, totalImpInternos = 0, totalIIBB = 0;
     let totalPercepcionIVA = 0, totalOtros = 0, totalGeneral = 0;
@@ -2188,18 +2369,16 @@ function recalcularTodosLosTotales() {
     document.getElementById('total-general').textContent = formatearMoneda(totalGeneral);
 }
 
-// ==================== AGREGAR FILA GASTO (MODAL) ====================
 let filaEditandoIndex = -1;
 
 async function agregarFilaGasto() {
-    await cargarSelectoresRendicion(); // Asegura que conceptos y proveedores estén cargados
+    await cargarSelectoresRendicion();
     filaEditandoIndex = -1;
     document.getElementById('detalle-gasto-id').value = '';
     document.getElementById('detalle-gasto-rendicion-id').value = rendicionActual ? (rendicionActual.id || '') : '';
     document.getElementById('detalle-gasto-orden').value = detallesActuales.length + 1;
     document.getElementById('detalle-gasto-modal-title').textContent = 'Agregar Gasto';
 
-    // Limpiar formulario
     document.getElementById('detalle-proveedor').value = '';
     document.getElementById('detalle-tipo-comprobante').value = '';
     document.getElementById('detalle-numero-comprobante').value = '';
@@ -2218,7 +2397,6 @@ async function agregarFilaGasto() {
     document.getElementById('detalle-total').textContent = '$0.00';
     document.getElementById('detalle-adjuntos-list').innerHTML = '';
 
-    // Limpiar adjuntos temporales para esta nueva fila
     adjuntosTemporales['modal'] = [];
 
     openModal('modal-detalle-gasto');
@@ -2250,20 +2428,15 @@ async function editarFilaGasto(index) {
     document.getElementById('detalle-cantidad-km').value = detalle.cantidadKm || '';
     document.getElementById('detalle-valor-km').value = detalle.valorKm || '';
 
-    // Mostrar/ocultar campos kilómetros según concepto
     onCambioConceptoDetalle();
-
-    // Recalcular total
     recalcularTotalFila();
 
-    // Cargar adjuntos temporales
     adjuntosTemporales['modal'] = adjuntosTemporales[index] || [];
     renderizarAdjuntosModal();
 
     openModal('modal-detalle-gasto');
 }
 
-// ==================== ON CAMBIO CONCEPTO (MOSTRAR KM) ====================
 async function onCambioConceptoDetalle() {
     const concId = document.getElementById('detalle-concepto').value;
     if (!concId) { document.getElementById('campos-kilometros').style.display = 'none'; return; }
@@ -2276,7 +2449,6 @@ async function onCambioConceptoDetalle() {
     }
 }
 
-// ==================== RECALCULAR KILÓMETROS ====================
 function recalcularKilometros() {
     const km = Number(document.getElementById('detalle-cantidad-km').value) || 0;
     const valorKm = Number(document.getElementById('detalle-valor-km').value) || 0;
@@ -2285,7 +2457,6 @@ function recalcularKilometros() {
     recalcularTotalFila();
 }
 
-// ==================== RECALCULAR TOTAL FILA ====================
 function recalcularTotalFila() {
     const basico = Number(document.getElementById('detalle-basico').value) || 0;
     const iva = Number(document.getElementById('detalle-iva').value) || 0;
@@ -2297,7 +2468,6 @@ function recalcularTotalFila() {
     document.getElementById('detalle-total').textContent = formatearMoneda(total);
 }
 
-// ==================== GUARDAR DETALLE GASTO (DESDE MODAL) ====================
 async function guardarDetalleGastoForm(e) {
     e.preventDefault();
     if (!puedeEditar()) return;
@@ -2332,17 +2502,13 @@ async function guardarDetalleGastoForm(e) {
     const idExistente = document.getElementById('detalle-gasto-id').value;
 
     if (filaEditandoIndex >= 0 && filaEditandoIndex < detallesActuales.length) {
-        // Editar existente
         if (idExistente) detalle.id = Number(idExistente);
         detalle.rendicionId = detallesActuales[filaEditandoIndex].rendicionId || (rendicionActual ? rendicionActual.id : null);
         detallesActuales[filaEditandoIndex] = detalle;
-        // Transferir adjuntos temporales del modal a la fila
         adjuntosTemporales[filaEditandoIndex] = adjuntosTemporales['modal'] || [];
     } else {
-        // Nuevo
         detalle.rendicionId = rendicionActual ? rendicionActual.id : null;
         detallesActuales.push(detalle);
-        // Transferir adjuntos temporales
         adjuntosTemporales[detallesActuales.length - 1] = adjuntosTemporales['modal'] || [];
     }
 
@@ -2359,12 +2525,10 @@ function closeModalDetalleGasto() {
     delete adjuntosTemporales['modal'];
 }
 
-// ==================== ACCIONES SOBRE FILAS ====================
 function eliminarFilaGasto(index) {
     if (!confirm(`¿Eliminar el gasto #${index + 1}?`)) return;
     detallesActuales.splice(index, 1);
     delete adjuntosTemporales[index];
-    // Reindexar adjuntos temporales
     const newAdj = {};
     Object.keys(adjuntosTemporales).forEach(k => {
         const ki = parseInt(k);
@@ -2383,7 +2547,6 @@ function duplicarFilaGasto(index) {
     const copia = { ...original };
     delete copia.id;
     detallesActuales.splice(index + 1, 0, copia);
-    // Duplicar adjuntos
     adjuntosTemporales[index + 1] = [...(adjuntosTemporales[index] || [])].map(a => ({ ...a, id: undefined, detalleGastoId: undefined }));
     detallesModificados = true;
     document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
@@ -2393,7 +2556,6 @@ function duplicarFilaGasto(index) {
 function moverFilaArriba(index) {
     if (index <= 0) return;
     [detallesActuales[index], detallesActuales[index - 1]] = [detallesActuales[index - 1], detallesActuales[index]];
-    // Swap adjuntos
     const tempAdj = adjuntosTemporales[index];
     adjuntosTemporales[index] = adjuntosTemporales[index - 1];
     adjuntosTemporales[index - 1] = tempAdj;
@@ -2413,7 +2575,6 @@ function moverFilaAbajo(index) {
     renderizarDetalleGastos();
 }
 
-// ==================== ADJUNTOS EN MODAL ====================
 function agregarAdjuntoADetalle() {
     const fileInput = document.getElementById('detalle-adjunto-file');
     const files = fileInput.files;
@@ -2448,16 +2609,34 @@ function renderizarAdjuntosModal() {
 
     adjuntos.forEach((adj, idx) => {
         const div = document.createElement('div');
-        div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:0.35rem 0.5rem;background:var(--bg-secondary);border-radius:4px;';
+        div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:0.35rem 0.5rem;background:var(--bg-secondary);border-radius:4px;cursor:pointer;';
+        div.title = 'Haga doble clic para abrir';
         const icono = adj.tipoArchivo?.includes('pdf') ? 'fa-file-pdf' :
                       adj.tipoArchivo?.includes('image') ? 'fa-file-image' :
                       adj.tipoArchivo?.includes('xml') ? 'fa-file-code' : 'fa-file';
         div.innerHTML = `
-            <span><i class="fa-regular ${icono}"></i> ${adj.nombre}</span>
+            <span ondblclick="abrirArchivoAdjunto('${adj.nombre}', '${adj.archivo}')"><i class="fa-regular ${icono}"></i> ${adj.nombre}</span>
             <button type="button" class="action-btn delete" onclick="eliminarAdjuntoModal(${idx})" style="padding:0.15rem 0.3rem;"><i class="fa-solid fa-times"></i></button>
         `;
         container.appendChild(div);
     });
+}
+
+function abrirArchivoAdjunto(nombre, archivoData) {
+    if (!archivoData) return;
+    try {
+        const win = window.open('');
+        if (archivoData.startsWith('data:')) {
+            win.document.write(`<html><head><title>${nombre}</title></head><body style="margin:0;display:flex;justify-content:center;align-items:center;height:100vh;background:#f0f0f0;">
+                <embed src="${archivoData}" style="width:100%;height:100%;border:none;" type="${archivoData.split(';')[0].split(':')[1]}">
+                </body></html>`);
+            win.document.title = nombre;
+        } else {
+            win.document.write(`<pre>${archivoData}</pre>`);
+        }
+    } catch(e) {
+        mostrarToast('Error al abrir el archivo.', 'error');
+    }
 }
 
 function eliminarAdjuntoModal(idx) {
@@ -2477,7 +2656,137 @@ function mostrarAdjuntosFila(index) {
     alert(msg);
 }
 
-// ==================== PROVEEDOR RÁPIDO ====================
+async function abrirModalGestorProveedores() {
+    const proveedores = await getTodos('proveedores');
+    const container = document.getElementById('gasto-proveedores-list');
+    if (!container) {
+        const modalHtml = `
+        <div id="modal-gasto-proveedor" class="modal-overlay">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2 class="modal-title">Gestionar Proveedores</h2>
+                    <button class="modal-close" onclick="closeModal('modal-gasto-proveedor')">&times;</button>
+                </div>
+                <div class="modal-content" style="max-height: 400px; overflow-y: auto;">
+                    <div id="gasto-proveedores-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+                </div>
+                <div class="modal-footer">
+                    <form id="form-gasto-proveedor-quick" onsubmit="guardarProveedorRapidoModal(event)" style="display: flex; gap: 0.5rem; width: 100%;">
+                        <input type="text" id="quick-proveedor-nombre" placeholder="Nuevo proveedor..." required style="flex: 1;">
+                        <button type="submit" class="btn" style="padding: 0.5rem 1rem;">+ Agregar</button>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-gasto-proveedor')">Cerrar</button>
+                </div>
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+    }
+
+    const listContainer = document.getElementById('gasto-proveedores-list');
+    listContainer.innerHTML = '';
+
+    proveedores.forEach(prov => {
+        const div = document.createElement('div');
+        div.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background-color: var(--bg-card); border-radius: 6px;';
+        div.innerHTML = `
+            <span style="font-weight: 500;">${prov.nombre} ${prov.cuit ? '('+prov.cuit+')' : ''}</span>
+            <div style="display: flex; gap: 0.5rem;">
+                <button type="button" class="action-btn" style="padding: 0.25rem 0.5rem;" onclick="editarProveedorModal(${prov.id})" title="Editar">
+                    <i class="fa-solid fa-pen-to-square"></i>
+                </button>
+                <button type="button" class="action-btn delete" style="padding: 0.25rem 0.5rem;" onclick="eliminarProveedorModal(${prov.id})" title="Eliminar">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </div>
+        `;
+        listContainer.appendChild(div);
+    });
+
+    document.getElementById('quick-proveedor-nombre').value = '';
+    openModal('modal-gasto-proveedor');
+}
+
+async function guardarProveedorRapidoModal(e) {
+    e.preventDefault();
+    if (!puedeEditar()) return;
+    const nombre = document.getElementById('quick-proveedor-nombre').value.trim();
+    if (!nombre) return;
+    await guardar('proveedores', { nombre });
+    invalidarCache('proveedores');
+    await cargarSelectoresRendicion();
+    await abrirModalGestorProveedores();
+}
+
+async function editarProveedorModal(id) {
+    if (!puedeEditar()) return;
+    const prov = await obtenerPorId('proveedores', id);
+    if (!prov) return;
+    const nuevoNombre = prompt('Editar nombre del proveedor:', prov.nombre);
+    if (nuevoNombre && nuevoNombre.trim() !== '') {
+        prov.nombre = nuevoNombre.trim();
+        await guardar('proveedores', prov);
+        invalidarCache('proveedores');
+        await cargarSelectoresRendicion();
+        await abrirModalGestorProveedores();
+    }
+}
+
+async function eliminarProveedorModal(id) {
+    if (!puedeEditar()) return;
+    if (!confirm('¿Eliminar este proveedor permanentemente?')) return;
+    const detalles = await getTodos('detalleGastos');
+    if (detalles.some(d => Number(d.proveedorId) === Number(id))) {
+        if (!confirm('Hay gastos que usan este proveedor. ¿Eliminar de todas formas?')) return;
+    }
+    await eliminar('proveedores', id);
+    invalidarCache('proveedores');
+    await cargarSelectoresRendicion();
+    await abrirModalGestorProveedores();
+}
+
+function agregarConceptoRapidoDetalle() {
+    if (!document.getElementById('modal-concepto-rapido')) {
+        const modalHtml = `
+        <div id="modal-concepto-rapido" class="modal-overlay">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2 class="modal-title">Nuevo Concepto</h2>
+                    <button class="modal-close" onclick="closeModal('modal-concepto-rapido')">&times;</button>
+                </div>
+                <form id="form-concepto-rapido" onsubmit="guardarConceptoRapidoDetalle(event)">
+                    <div class="form-grid">
+                        <div class="form-group full-width">
+                            <label for="concepto-rapido-nombre">Nombre del Concepto</label>
+                            <input type="text" id="concepto-rapido-nombre" placeholder="Ej: Viáticos, Combustible, ..." required>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-concepto-rapido')">Cancelar</button>
+                        <button type="submit" class="btn">Guardar Concepto</button>
+                    </div>
+                </form>
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+    }
+    document.getElementById('concepto-rapido-nombre').value = '';
+    openModal('modal-concepto-rapido');
+    setTimeout(() => document.getElementById('concepto-rapido-nombre').focus(), 100);
+}
+
+async function guardarConceptoRapidoDetalle(e) {
+    e.preventDefault();
+    const nombre = document.getElementById('concepto-rapido-nombre').value.trim();
+    if (!nombre) { mostrarToast('El nombre del concepto es obligatorio.', 'error'); return; }
+    await guardar('conceptos', { nombre });
+    invalidarCache('conceptos');
+    closeModal('modal-concepto-rapido');
+    await cargarSelectoresRendicion();
+    mostrarToast('Concepto agregado correctamente.');
+}
+
 function agregarProveedorRapido() {
     document.getElementById('proveedor-rapido-nombre').value = '';
     document.getElementById('proveedor-rapido-cuit').value = '';
@@ -2501,7 +2810,6 @@ async function guardarProveedorRapido(e) {
     await cargarSelectoresRendicion();
 }
 
-// ==================== IMPRIMIR / EXPORTAR ====================
 async function imprimirRendicion() {
     if (!rendicionActual) { mostrarToast('No hay rendición activa.', 'warning'); return; }
     const datos = obtenerDatosFormularioRendicion();
@@ -2573,7 +2881,7 @@ async function exportarExcelRendicion() {
     if (!rendicionActual) { mostrarToast('No hay rendición activa.', 'warning'); return; }
     if (detallesActuales.length === 0) { mostrarToast('No hay gastos para exportar.', 'warning'); return; }
 
-    let csv = '\uFEFF'; // BOM para Excel
+    let csv = '\uFEFF';
     csv += 'N.,Proveedor,Tipo Comp.,N Comprobante,Fecha,Concepto,Descripcion,Basico,IVA,Imp Internos,IIBB,Percep IVA,Otros Imp.,Total\r\n';
 
     for (let idx = 0; idx < detallesActuales.length; idx++) {
@@ -2596,4 +2904,1301 @@ async function exportarExcelRendicion() {
     a.click();
     document.body.removeChild(a);
     mostrarToast('Archivo Excel exportado correctamente.');
+}
+
+// ====================================================================
+// MÓDULO: INVENTARIO
+// ====================================================================
+
+let chartInvCategorias = null;
+let chartInvStock = null;
+
+async function cargarDatosVista(viewId) {
+    switch(viewId) {
+        case 'dashboard':    await renderDashboard(); break;
+        case 'calendario':   await listarCompetencias(); break;
+        case 'gastos':       await listarGastos(); break;
+        case 'carga-detallada': await listarRendiciones(); break;
+        case 'inventario':   await renderDashboardInventario(); break;
+        case 'articulos':    await listarArticulos(); break;
+        case 'movimientos-inventario': await listarMovimientosInventario(); break;
+        case 'categorias-inventario': await listarCategoriasInventario(); break;
+        case 'entregas-inventario': await listarEntregas(); break;
+        case 'staff':        await listarStaff(); break;
+        case 'configuracion':await listarConfiguraciones(); break;
+    }
+}
+
+async function renderDashboardInventario() {
+    const [articulos, articuloTalles, movimientos] = await Promise.all([
+        getTodos('articulos'),
+        getTodos('articuloTalles'),
+        getTodos('movimientosInventario')
+    ]);
+
+    const totalArticulos = articulos.filter(a => a.activo !== false).length;
+    const totalUnidades = calcularStockTotal(articulos, articuloTalles);
+    const articulosSinStock = contarArticulosSinStock(articulos, articuloTalles);
+    const articulosBajoStock = contarArticulosBajoStock(articulos, articuloTalles);
+    const ultimosMovs = movimientos.length;
+
+    document.getElementById('inv-stat-total-articulos').textContent = totalArticulos;
+    document.getElementById('inv-stat-total-unidades').textContent = totalUnidades;
+    document.getElementById('inv-stat-stock-bajo').textContent = articulosBajoStock;
+    document.getElementById('inv-stat-sin-stock').textContent = articulosSinStock;
+    document.getElementById('inv-stat-ultimos-mov').textContent = ultimosMovs;
+
+    const categorias = await getTodos('categoriasInventario');
+    const articulosPorCat = {};
+    const stockPorCat = {};
+
+    categorias.forEach(c => {
+        articulosPorCat[c.nombre] = 0;
+        stockPorCat[c.nombre] = 0;
+    });
+
+    for (const art of articulos) {
+        if (art.activo === false) continue;
+        const cat = categorias.find(c => c.id === Number(art.categoriaId));
+        const catName = cat ? cat.nombre : 'Sin categoría';
+        if (!articulosPorCat[catName]) articulosPorCat[catName] = 0;
+        articulosPorCat[catName]++;
+
+        let stockArt = 0;
+        if (art.controlaTalles) {
+            const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
+            stockArt = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
+        } else {
+            stockArt = Number(art.stockUnico || 0);
+        }
+        if (!stockPorCat[catName]) stockPorCat[catName] = 0;
+        stockPorCat[catName] += stockArt;
+    }
+
+    if (chartInvCategorias) chartInvCategorias.destroy();
+    chartInvCategorias = new Chart(document.getElementById('chart-inv-categorias').getContext('2d'), {
+        type: 'doughnut',
+        data: {
+            labels: Object.keys(articulosPorCat).filter(k => articulosPorCat[k] > 0),
+            datasets: [{
+                data: Object.values(articulosPorCat).filter(v => v > 0),
+                backgroundColor: ['#ff4757','#00d2d3','#2ed573','#ff9f43','#1e90ff','#a55eea','#ff6b81','#f368e0','#ff9ff3','#54a0ff','#5f27cd','#01a3a4'],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'right', labels: { color: '#94a3b8', font: { size: 11, family: 'Outfit' } } }
+            }
+        }
+    });
+
+    if (chartInvStock) chartInvStock.destroy();
+    chartInvStock = new Chart(document.getElementById('chart-inv-stock').getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: Object.keys(stockPorCat).filter(k => stockPorCat[k] > 0),
+            datasets: [{
+                label: 'Unidades',
+                data: Object.values(stockPorCat).filter(v => v > 0),
+                backgroundColor: '#00d2d3',
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
+                x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
+            }
+        }
+    });
+
+    const ultimosMov = movimientos.sort((a, b) => new Date(b.fecha || 0) - new Date(a.fecha || 0)).slice(0, 10);
+    const container = document.getElementById('inv-ultimos-movimientos');
+    container.innerHTML = '';
+    if (ultimosMov.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-secondary);padding:1rem;text-align:center;">No hay movimientos registrados.</p>';
+        return;
+    }
+    for (const mov of ultimosMov) {
+        const art = await obtenerPorId('articulos', Number(mov.articuloId));
+        const artName = art ? art.nombre : 'ID: ' + mov.articuloId;
+        const esIngreso = ['ingreso', 'devolucion', 'compra', 'reposicion'].includes(mov.tipoMovimiento);
+        const item = document.createElement('div');
+        item.className = `movement-item ${esIngreso ? 'mov-in' : 'mov-out'}`;
+        const icono = esIngreso ? 'fa-arrow-down' : 'fa-arrow-up';
+        item.innerHTML = `
+            <div class="mov-icon"><i class="fa-solid ${icono}"></i></div>
+            <div class="mov-info">
+                <div class="mov-title">${artName}</div>
+                <div class="mov-meta">${mov.tipoMovimiento} • ${mov.motivo || ''} • ${formatearFechaVisual(mov.fecha)}</div>
+            </div>
+            <div class="mov-qty">${esIngreso ? '+' : '-'}${mov.cantidad}</div>
+        `;
+        container.appendChild(item);
+    }
+}
+
+function calcularStockTotal(articulos, articuloTalles) {
+    return articulos.reduce((sum, art) => {
+        if (art.activo === false) return sum;
+        if (art.controlaTalles) {
+            const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
+            return sum + tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
+        }
+        return sum + Number(art.stockUnico || 0);
+    }, 0);
+}
+
+function contarArticulosSinStock(articulos, articuloTalles) {
+    return articulos.filter(art => {
+        if (art.activo === false) return false;
+        let stock = 0;
+        if (art.controlaTalles) {
+            const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
+            stock = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
+        } else {
+            stock = Number(art.stockUnico || 0);
+        }
+        return stock === 0;
+    }).length;
+}
+
+function contarArticulosBajoStock(articulos, articuloTalles) {
+    return articulos.filter(art => {
+        if (art.activo === false) return false;
+        let stock = 0;
+        if (art.controlaTalles) {
+            const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
+            stock = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
+        } else {
+            stock = Number(art.stockUnico || 0);
+        }
+        return stock > 0 && stock <= (art.stockMinimo || 0);
+    }).length;
+}
+
+async function obtenerStockArticulo(articuloId, articuloTalles) {
+    const art = await obtenerPorId('articulos', Number(articuloId));
+    if (!art) return 0;
+    if (art.controlaTalles) {
+        const talles = articuloTalles.filter(at => Number(at.articuloId) === Number(articuloId));
+        return talles.reduce((s, t) => s + Number(t.stock || 0), 0);
+    }
+    return Number(art.stockUnico || 0);
+}
+
+async function listarArticulos() {
+    const [articulos, categorias, articuloTalles] = await Promise.all([
+        getTodos('articulos'),
+        getTodos('categoriasInventario'),
+        getTodos('articuloTalles')
+    ]);
+
+    const filtroCat = document.getElementById('filtro-articulo-categoria').value;
+    const filtroEstado = document.getElementById('filtro-articulo-estado').value;
+    const filtroStock = document.getElementById('filtro-articulo-stock').value;
+    const buscador = document.getElementById('buscar-articulos').value.toLowerCase();
+
+    let filtrados = articulos.filter(a => {
+        if (filtroCat !== 'todas' && String(a.categoriaId) !== String(filtroCat)) return false;
+        if (filtroEstado === 'activos' && a.activo === false) return false;
+        if (filtroEstado === 'inactivos' && a.activo !== false) return false;
+
+        const stock = articuloTalles.filter(at => Number(at.articuloId) === Number(a.id)).reduce((s, t) => s + Number(t.stock || 0), 0) + Number(a.stockUnico || 0);
+        if (filtroStock === 'bajo' && (stock > (a.stockMinimo || 0) || stock === 0)) return false;
+        if (filtroStock === 'sin' && stock > 0) return false;
+        if (filtroStock === 'con' && stock === 0) return false;
+
+        if (buscador) {
+            const buscaEn = `${a.codigo} ${a.nombre} ${a.marca || ''} ${a.modelo || ''} ${a.color || ''}`.toLowerCase();
+            if (!buscaEn.includes(buscador)) return false;
+        }
+        return true;
+    }).sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+    const tbody = document.getElementById('articulos-table-body');
+    tbody.innerHTML = '';
+
+    if (filtrados.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-secondary);">No hay artículos que coincidan con los filtros.</td></tr>`;
+        return;
+    }
+
+    for (const art of filtrados) {
+        const cat = categorias.find(c => c.id === Number(art.categoriaId));
+        const catName = cat ? cat.nombre : '-';
+
+        let stock = 0;
+        if (art.controlaTalles) {
+            const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
+            stock = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
+        } else {
+            stock = Number(art.stockUnico || 0);
+        }
+
+        let stockBadge = 'stock-ok';
+        if (stock === 0) stockBadge = 'stock-out';
+        else if (stock <= (art.stockMinimo || 0)) stockBadge = 'stock-low';
+
+        const estadoBadge = art.activo !== false ? 'badge-active' : 'badge-inactive';
+        const estadoText = art.activo !== false ? 'Activo' : 'Inactivo';
+
+        const acciones = puedeEditar() ? `
+            <td style="text-align:right;white-space:nowrap;">
+                <button class="action-btn" onclick="editarArticulo(${art.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
+                <button class="action-btn" onclick="duplicarArticulo(${art.id})" title="Duplicar"><i class="fa-solid fa-copy"></i></button>
+                <button class="action-btn delete" onclick="eliminarArticulo(${art.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+            </td>
+        ` : '';
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td style="font-weight:600;font-family:monospace;">${escapeHtml(art.codigo)}</td>
+            <td style="font-weight:600;">${escapeHtml(art.nombre)}</td>
+            <td>${escapeHtml(catName)}</td>
+            <td>${escapeHtml(art.marca || '-')}</td>
+            <td><span class="stock-badge ${stockBadge}"><i class="fa-solid fa-cube"></i> ${stock}</span></td>
+            <td><span class="badge ${estadoBadge}">${estadoText}</span></td>
+            ${acciones}
+        `;
+        tbody.appendChild(tr);
+    }
+
+    const selectCat = document.getElementById('filtro-articulo-categoria');
+    const savedCat = selectCat.value;
+    selectCat.innerHTML = '<option value="todas">Todas</option>';
+    categorias.forEach(c => selectCat.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
+    selectCat.value = savedCat;
+}
+
+async function openModalArticulo() {
+    if (!puedeEditar()) return;
+    await cargarSelectoresArticulo();
+    document.getElementById('form-articulo').reset();
+    document.getElementById('articulo-id').value = '';
+    document.getElementById('articulo-modal-title').textContent = 'Nuevo Artículo';
+    document.getElementById('seccion-talles-articulo').style.display = 'none';
+    document.getElementById('seccion-stock-unico').style.display = 'none';
+    document.getElementById('articulo-stock-inicial').value = '0';
+    document.getElementById('articulo-stock-minimo').value = '0';
+    document.getElementById('articulo-estado').value = 'true';
+    document.getElementById('articulo-gallery').innerHTML = '';
+    window.articuloImagenes = [];
+    renderizarSizeMatrix([]);
+    openModal('modal-articulo');
+}
+
+async function editarArticulo(id) {
+    if (!puedeEditar()) return;
+    const art = await obtenerPorId('articulos', id);
+    if (!art) return;
+    await cargarSelectoresArticulo();
+
+    document.getElementById('articulo-id').value = art.id;
+    document.getElementById('articulo-codigo').value = art.codigo;
+    document.getElementById('articulo-nombre').value = art.nombre;
+    document.getElementById('articulo-descripcion').value = art.descripcion || '';
+    document.getElementById('articulo-categoria').value = art.categoriaId;
+    document.getElementById('articulo-subcategoria').value = art.subcategoriaId || '';
+    document.getElementById('articulo-marca').value = art.marca || '';
+    document.getElementById('articulo-modelo').value = art.modelo || '';
+    document.getElementById('articulo-color').value = art.color || '';
+    document.getElementById('articulo-stock-minimo').value = art.stockMinimo || 0;
+    document.getElementById('articulo-estado').value = art.activo !== false ? 'true' : 'false';
+    document.getElementById('articulo-observaciones').value = art.observaciones || '';
+    document.getElementById('articulo-imagen').value = art.imagenPrincipal || '';
+    document.getElementById('articulo-modal-title').textContent = 'Editar Artículo';
+
+    const imagenes = await getTodos('imagenesArticulo');
+    window.articuloImagenes = imagenes.filter(img => Number(img.articuloId) === Number(art.id));
+    renderizarGaleriaArticulo();
+
+    await onCambioCategoriaArticulo();
+
+    if (art.controlaTalles) {
+        const tallesArt = await getTodos('articuloTalles');
+        const tallesFiltrados = tallesArt.filter(at => Number(at.articuloId) === Number(art.id));
+        const sizeInputs = document.querySelectorAll('.size-input');
+        sizeInputs.forEach(inp => {
+            const talleId = Number(inp.dataset.talleId);
+            const match = tallesFiltrados.find(t => Number(t.talleId) === talleId);
+            inp.value = match ? match.stock : 0;
+        });
+    } else {
+        document.getElementById('articulo-stock-inicial').value = art.stockUnico || 0;
+    }
+
+    openModal('modal-articulo');
+}
+
+async function cargarSelectoresArticulo() {
+    const categorias = await getTodos('categoriasInventario');
+    const subcategorias = await getTodos('subcategoriasInventario');
+
+    const selCat = document.getElementById('articulo-categoria');
+    const savedCat = selCat.value;
+    selCat.innerHTML = '<option value="">Seleccione...</option>';
+    categorias.forEach(c => selCat.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
+    selCat.value = savedCat;
+
+    const selSub = document.getElementById('articulo-subcategoria');
+    const savedSub = selSub.value;
+    const catId = Number(selCat.value);
+    selSub.innerHTML = '<option value="">Sin subcategoría</option>';
+    subcategorias.filter(s => Number(s.categoriaId) === catId).forEach(s => {
+        selSub.innerHTML += `<option value="${s.id}">${s.nombre}</option>`;
+    });
+    selSub.value = savedSub;
+}
+
+async function onCambioCategoriaArticulo() {
+    const catId = document.getElementById('articulo-categoria').value;
+    if (!catId) {
+        document.getElementById('seccion-talles-articulo').style.display = 'none';
+        document.getElementById('seccion-stock-unico').style.display = 'none';
+        return;
+    }
+    const cat = await obtenerPorId('categoriasInventario', Number(catId));
+    const controlaTalles = cat && cat.controlaTalles;
+
+    const subcategorias = await getTodos('subcategoriasInventario');
+    const selSub = document.getElementById('articulo-subcategoria');
+    const savedSub = selSub.value;
+    selSub.innerHTML = '<option value="">Sin subcategoría</option>';
+    subcategorias.filter(s => Number(s.categoriaId) === Number(catId)).forEach(s => {
+        selSub.innerHTML += `<option value="${s.id}">${s.nombre}</option>`;
+    });
+    selSub.value = savedSub;
+
+    if (controlaTalles) {
+        document.getElementById('seccion-talles-articulo').style.display = 'block';
+        document.getElementById('seccion-stock-unico').style.display = 'none';
+        await renderizarSizeMatrix();
+    } else {
+        document.getElementById('seccion-talles-articulo').style.display = 'none';
+        document.getElementById('seccion-stock-unico').style.display = 'block';
+    }
+}
+
+async function renderizarSizeMatrix() {
+    const talles = await getTodos('talles');
+    const container = document.getElementById('size-matrix-articulo');
+    container.innerHTML = '';
+    talles.forEach(t => {
+        const item = document.createElement('div');
+        item.className = 'size-matrix-item';
+        item.innerHTML = `
+            <span class="size-label">${t.nombre}</span>
+            <input type="number" class="size-input" data-talle-id="${t.id}" min="0" value="0" placeholder="0">
+        `;
+        container.appendChild(item);
+    });
+}
+
+function renderizarGaleriaArticulo() {
+    const container = document.getElementById('articulo-gallery');
+    container.innerHTML = '';
+    (window.articuloImagenes || []).forEach((img, idx) => {
+        const item = document.createElement('div');
+        item.className = 'article-gallery-item';
+        item.innerHTML = `
+            <img src="${escapeHtml(img.url)}" alt="Imagen ${idx+1}" onerror="this.style.display='none'">
+            <button type="button" class="gallery-remove" onclick="eliminarImagenArticulo(${idx})">&times;</button>
+        `;
+        container.appendChild(item);
+    });
+}
+
+function agregarImagenArticulo() {
+    const url = document.getElementById('articulo-nueva-imagen').value.trim();
+    if (!url) { mostrarToast('Ingresá una URL de imagen.', 'warning'); return; }
+    if (!window.articuloImagenes) window.articuloImagenes = [];
+    window.articuloImagenes.push({ url, articuloId: null });
+    document.getElementById('articulo-nueva-imagen').value = '';
+    renderizarGaleriaArticulo();
+}
+
+function eliminarImagenArticulo(idx) {
+    if (window.articuloImagenes) {
+        window.articuloImagenes.splice(idx, 1);
+        renderizarGaleriaArticulo();
+    }
+}
+
+async function guardarArticuloForm(e) {
+    e.preventDefault();
+    if (!puedeEditar()) return;
+
+    const id = document.getElementById('articulo-id').value;
+    const codigo = document.getElementById('articulo-codigo').value.trim();
+    const catId = document.getElementById('articulo-categoria').value;
+
+    if (!catId) { mostrarToast('Debe seleccionar una categoría.', 'error'); return; }
+
+    const todos = await getTodos('articulos');
+    const duplicado = todos.find(a => a.codigo === codigo && String(a.id) !== String(id));
+    if (duplicado) { mostrarToast('Ya existe un artículo con ese código.', 'error'); return; }
+
+    const cat = await obtenerPorId('categoriasInventario', Number(catId));
+    const controlaTalles = cat && cat.controlaTalles;
+
+    const articulo = {
+        codigo,
+        nombre: document.getElementById('articulo-nombre').value.trim(),
+        descripcion: document.getElementById('articulo-descripcion').value.trim(),
+        categoriaId: Number(catId),
+        subcategoriaId: document.getElementById('articulo-subcategoria').value || null,
+        marca: document.getElementById('articulo-marca').value.trim(),
+        modelo: document.getElementById('articulo-modelo').value.trim(),
+        color: document.getElementById('articulo-color').value.trim(),
+        stockMinimo: Number(document.getElementById('articulo-stock-minimo').value) || 0,
+        observaciones: document.getElementById('articulo-observaciones').value.trim(),
+        imagenPrincipal: document.getElementById('articulo-imagen').value.trim(),
+        controlaTalles,
+        activo: document.getElementById('articulo-estado').value === 'true',
+        stockUnico: controlaTalles ? 0 : (Number(document.getElementById('articulo-stock-inicial').value) || 0),
+        usuarioCreacion: currentUser ? currentUser.id : null,
+        usuarioModificacion: currentUser ? currentUser.id : null,
+        fechaCreacion: new Date().toISOString(),
+        fechaModificacion: new Date().toISOString()
+    };
+
+    if (id) {
+        articulo.id = Number(id);
+        const orig = await obtenerPorId('articulos', Number(id));
+        if (orig) {
+            articulo.usuarioCreacion = orig.usuarioCreacion;
+            articulo.fechaCreacion = orig.fechaCreacion;
+        }
+    }
+
+    const savedId = await guardar('articulos', articulo);
+    articulo.id = Number(savedId);
+
+    if (controlaTalles) {
+        const sizeInputs = document.querySelectorAll('.size-input');
+        for (const inp of sizeInputs) {
+            const talleId = Number(inp.dataset.talleId);
+            const stock = Number(inp.value) || 0;
+            const existentes = await getTodos('articuloTalles');
+            const existente = existentes.find(at => Number(at.articuloId) === Number(articulo.id) && Number(at.talleId) === talleId);
+            if (existente) {
+                if (stock > 0) {
+                    existente.stock = stock;
+                    await guardar('articuloTalles', existente);
+                } else {
+                    await eliminar('articuloTalles', existente.id);
+                }
+            } else if (stock > 0) {
+                await guardar('articuloTalles', { articuloId: articulo.id, talleId, stock });
+            }
+        }
+    }
+
+    if (window.articuloImagenes) {
+        const existentes = await getTodos('imagenesArticulo');
+        const viejas = existentes.filter(img => Number(img.articuloId) === Number(articulo.id));
+        for (const v of viejas) await eliminar('imagenesArticulo', v.id);
+
+        for (const img of window.articuloImagenes) {
+            await guardar('imagenesArticulo', { articuloId: articulo.id, url: img.url });
+        }
+    }
+
+    invalidarCache('articulos');
+    invalidarCache('articuloTalles');
+    invalidarCache('imagenesArticulo');
+
+    closeModal('modal-articulo');
+    mostrarToast(`Artículo "${articulo.nombre}" guardado.`);
+    listarArticulos();
+}
+
+async function eliminarArticulo(id) {
+    if (!puedeEditar()) return;
+    const movimientos = await getTodos('movimientosInventario');
+    if (movimientos.some(m => Number(m.articuloId) === Number(id))) {
+        mostrarToast('No se puede eliminar un artículo con movimientos asociados.', 'error');
+        return;
+    }
+    if (!confirm('¿Eliminar este artículo permanentemente?')) return;
+
+    const tallesArt = await getTodos('articuloTalles');
+    for (const t of tallesArt.filter(t => Number(t.articuloId) === Number(id))) {
+        await eliminar('articuloTalles', t.id);
+    }
+    const imgs = await getTodos('imagenesArticulo');
+    for (const img of imgs.filter(i => Number(i.articuloId) === Number(id))) {
+        await eliminar('imagenesArticulo', img.id);
+    }
+
+    await eliminar('articulos', id);
+    invalidarCache('articulos');
+    invalidarCache('articuloTalles');
+    mostrarToast('Artículo eliminado.');
+    listarArticulos();
+}
+
+async function duplicarArticulo(id) {
+    if (!puedeEditar()) return;
+    const orig = await obtenerPorId('articulos', Number(id));
+    if (!orig) return;
+
+    const copia = { ...orig };
+    delete copia.id;
+    copia.codigo = orig.codigo + '-COPIA';
+    copia.nombre = orig.nombre + ' (Copia)';
+    copia.fechaCreacion = new Date().toISOString();
+    copia.fechaModificacion = new Date().toISOString();
+    copia.usuarioCreacion = currentUser ? currentUser.id : null;
+    copia.usuarioModificacion = currentUser ? currentUser.id : null;
+
+    const newId = await guardar('articulos', copia);
+
+    if (orig.controlaTalles) {
+        const tallesArt = await getTodos('articuloTalles');
+        for (const t of tallesArt.filter(at => Number(at.articuloId) === Number(orig.id))) {
+            const nuevoT = { ...t };
+            delete nuevoT.id;
+            nuevoT.articuloId = Number(newId);
+            await guardar('articuloTalles', nuevoT);
+        }
+    }
+
+    invalidarCache('articulos');
+    invalidarCache('articuloTalles');
+    mostrarToast('Artículo duplicado.');
+    listarArticulos();
+}
+
+async function exportarArticulosExcel() {
+    const [articulos, categorias, articuloTalles] = await Promise.all([
+        getTodos('articulos'),
+        getTodos('categoriasInventario'),
+        getTodos('articuloTalles')
+    ]);
+
+    let csv = '\uFEFF';
+    csv += 'Código,Nombre,Descripción,Categoría,Marca,Modelo,Color,Stock Total,Stock Mínimo,Estado\r\n';
+
+    for (const art of articulos) {
+        const cat = categorias.find(c => c.id === Number(art.categoriaId));
+        const catName = cat ? cat.nombre : '-';
+        let stock = 0;
+        if (art.controlaTalles) {
+            const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
+            stock = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
+        } else {
+            stock = Number(art.stockUnico || 0);
+        }
+        const estado = art.activo !== false ? 'Activo' : 'Inactivo';
+        const linea = [
+            art.codigo, art.nombre, (art.descripcion || '').replace(/,/g, ' '),
+            catName, art.marca || '', art.modelo || '', art.color || '',
+            stock, art.stockMinimo || 0, estado
+        ].join(',');
+        csv += linea + '\r\n';
+    }
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `articulos_inventario_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    mostrarToast('Artículos exportados.');
+}
+
+async function listarMovimientosInventario() {
+    const [movimientos, articulos] = await Promise.all([
+        getTodos('movimientosInventario'),
+        getTodos('articulos')
+    ]);
+
+    const filtroTipo = document.getElementById('filtro-movimiento-tipo').value;
+    const filtroArt = document.getElementById('filtro-movimiento-articulo').value;
+    const buscador = document.getElementById('buscar-movimientos').value.toLowerCase();
+
+    const selArt = document.getElementById('filtro-movimiento-articulo');
+    const savedArt = selArt.value;
+    selArt.innerHTML = '<option value="todos">Todos</option>';
+    articulos.forEach(a => selArt.innerHTML += `<option value="${a.id}">${a.nombre}</option>`);
+    selArt.value = savedArt;
+
+    let filtrados = movimientos.filter(m => {
+        if (filtroTipo !== 'todos' && m.tipoMovimiento !== filtroTipo) return false;
+        if (filtroArt !== 'todos' && String(m.articuloId) !== String(filtroArt)) return false;
+        if (buscador) {
+            const art = articulos.find(a => Number(a.id) === Number(m.articuloId));
+            const artName = art ? art.nombre : '';
+            const busca = `${artName} ${m.motivo || ''} ${m.observaciones || ''}`.toLowerCase();
+            if (!busca.includes(buscador)) return false;
+        }
+        return true;
+    }).sort((a, b) => new Date(b.fecha || 0) - new Date(a.fecha || 0));
+
+    const container = document.getElementById('movimientos-list');
+    container.className = 'movement-timeline';
+    container.innerHTML = '';
+
+    if (filtrados.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-secondary);padding:1rem;text-align:center;">No hay movimientos que coincidan con los filtros.</p>';
+        return;
+    }
+
+    for (const mov of filtrados) {
+        const art = articulos.find(a => Number(a.id) === Number(mov.articuloId));
+        const artName = art ? art.nombre : 'ID: ' + mov.articuloId;
+        const esIngreso = ['ingreso', 'devolucion', 'compra', 'reposicion'].includes(mov.tipoMovimiento);
+
+        let talleText = '';
+        if (mov.talleId) {
+            const talles = await getTodos('talles');
+            const talle = talles.find(t => Number(t.id) === Number(mov.talleId));
+            if (talle) talleText = ` (${talle.nombre})`;
+        }
+
+        const item = document.createElement('div');
+        item.className = `movement-item ${esIngreso ? 'mov-in' : 'mov-out'}`;
+        const icono = esIngreso ? 'fa-arrow-down' : 'fa-arrow-up';
+        const fecha = mov.fecha ? formatearFechaVisual(mov.fecha) : '-';
+        item.innerHTML = `
+            <div class="mov-icon"><i class="fa-solid ${icono}"></i></div>
+            <div class="mov-info">
+                <div class="mov-title">${escapeHtml(artName)}${talleText}</div>
+                <div class="mov-meta">${mov.tipoMovimiento} • ${escapeHtml(mov.motivo || '')} • ${fecha}</div>
+                ${mov.observaciones ? `<div class="mov-meta">📝 ${escapeHtml(mov.observaciones)}</div>` : ''}
+            </div>
+            <div class="mov-qty">${esIngreso ? '+' : '-'}${mov.cantidad}</div>
+        `;
+        container.appendChild(item);
+    }
+}
+
+async function openModalMovimiento() {
+    if (!puedeEditar()) return;
+    const articulos = await getTodos('articulos');
+    const sel = document.getElementById('movimiento-articulo');
+    sel.innerHTML = '<option value="">Seleccione un artículo...</option>';
+    articulos.filter(a => a.activo !== false).forEach(a => {
+        sel.innerHTML += `<option value="${a.id}">${a.codigo} - ${a.nombre}</option>`;
+    });
+
+    document.getElementById('form-movimiento').reset();
+    document.getElementById('movimiento-id').value = '';
+    document.getElementById('movimiento-talle-group').style.display = 'none';
+    document.getElementById('movimiento-modal-title').textContent = 'Registrar Movimiento';
+    document.getElementById('movimiento-fecha').value = new Date().toISOString().split('T')[0];
+    openModal('modal-movimiento');
+}
+
+async function onCambioArticuloMovimiento() {
+    const artId = document.getElementById('movimiento-articulo').value;
+    if (!artId) {
+        document.getElementById('movimiento-talle-group').style.display = 'none';
+        return;
+    }
+    const art = await obtenerPorId('articulos', Number(artId));
+    if (art && art.controlaTalles) {
+        document.getElementById('movimiento-talle-group').style.display = 'block';
+        const talles = await getTodos('talles');
+        const selTalle = document.getElementById('movimiento-talle');
+        const savedTalle = selTalle.value;
+        selTalle.innerHTML = '<option value="">Seleccione talle...</option>';
+        talles.forEach(t => selTalle.innerHTML += `<option value="${t.id}">${t.nombre}</option>`);
+        selTalle.value = savedTalle;
+    } else {
+        document.getElementById('movimiento-talle-group').style.display = 'none';
+    }
+}
+
+async function guardarMovimientoForm(e) {
+    e.preventDefault();
+    if (!puedeEditar()) return;
+
+    const articuloId = document.getElementById('movimiento-articulo').value;
+    const tipo = document.getElementById('movimiento-tipo').value;
+    const cantidad = Number(document.getElementById('movimiento-cantidad').value);
+    const talleId = document.getElementById('movimiento-talle').value || null;
+    const motivo = document.getElementById('movimiento-motivo').value.trim();
+    const observaciones = document.getElementById('movimiento-observaciones').value.trim();
+
+    if (!articuloId || !tipo || !cantidad || !motivo) {
+        mostrarToast('Completá todos los campos requeridos.', 'error');
+        return;
+    }
+
+    const art = await obtenerPorId('articulos', Number(articuloId));
+    if (!art) { mostrarToast('Artículo no encontrado.', 'error'); return; }
+
+    const esEgreso = ['egreso', 'entrega', 'perdida', 'rotura', 'transferencia'].includes(tipo);
+    if (esEgreso) {
+        let stockActual = 0;
+        if (art.controlaTalles && talleId) {
+            const tallesArt = await getTodos('articuloTalles');
+            const talleArt = tallesArt.find(t => Number(t.articuloId) === Number(articuloId) && Number(t.talleId) === Number(talleId));
+            stockActual = talleArt ? talleArt.stock : 0;
+        } else {
+            stockActual = Number(art.stockUnico || 0);
+        }
+        if (cantidad > stockActual) {
+            mostrarToast(`Stock insuficiente. Stock actual: ${stockActual}`, 'error');
+            return;
+        }
+    }
+
+    const mov = {
+        articuloId: Number(articuloId),
+        talleId: talleId ? Number(talleId) : null,
+        tipoMovimiento: tipo,
+        cantidad,
+        motivo,
+        observaciones,
+        usuarioId: currentUser ? currentUser.id : null,
+        fecha: new Date().toISOString().split('T')[0]
+    };
+
+    await guardar('movimientosInventario', mov);
+
+    if (art.controlaTalles && talleId) {
+        const tallesArt = await getTodos('articuloTalles');
+        let talleArt = tallesArt.find(t => Number(t.articuloId) === Number(articuloId) && Number(t.talleId) === Number(talleId));
+        if (esEgreso) {
+            if (talleArt) {
+                talleArt.stock = Math.max(0, Number(talleArt.stock) - cantidad);
+                await guardar('articuloTalles', talleArt);
+            }
+        } else {
+            if (talleArt) {
+                talleArt.stock = Number(talleArt.stock) + cantidad;
+                await guardar('articuloTalles', talleArt);
+            } else {
+                await guardar('articuloTalles', { articuloId: Number(articuloId), talleId: Number(talleId), stock: cantidad });
+            }
+        }
+    } else {
+        if (esEgreso) {
+            art.stockUnico = Math.max(0, Number(art.stockUnico || 0) - cantidad);
+        } else {
+            art.stockUnico = Number(art.stockUnico || 0) + cantidad;
+        }
+        await guardar('articulos', art);
+    }
+
+    invalidarCache('articuloTalles');
+    invalidarCache('articulos');
+    invalidarCache('movimientosInventario');
+
+    closeModal('modal-movimiento');
+    mostrarToast(`Movimiento registrado: ${tipo} de ${cantidad} unidades.`);
+
+    const activeView = document.querySelector('.view.active');
+    if (activeView) {
+        const viewId = activeView.id.replace('view-', '');
+        if (viewId === 'movimientos-inventario') listarMovimientosInventario();
+    }
+}
+
+async function listarCategoriasInventario() {
+    const [categorias, subcategorias, talles] = await Promise.all([
+        getTodos('categoriasInventario'),
+        getTodos('subcategoriasInventario'),
+        getTodos('talles')
+    ]);
+
+    const catBody = document.getElementById('categorias-inventario-body');
+    catBody.innerHTML = '';
+    categorias.forEach(c => {
+        const acciones = puedeEditar() ? `
+            <td style="text-align:right;">
+                <button class="action-btn" onclick="editarCategoriaInventario(${c.id})"><i class="fa-solid fa-pen-to-square"></i></button>
+                <button class="action-btn delete" onclick="eliminarCategoriaInventario(${c.id})"><i class="fa-solid fa-trash"></i></button>
+            </td>
+        ` : '';
+        const tallesBadge = c.controlaTalles ? '<span class="badge badge-info">Sí</span>' : '<span class="badge badge-secondary">No</span>';
+        const estadoBadge = c.activo !== false ? '<span class="badge badge-active">Activo</span>' : '<span class="badge badge-inactive">Inactivo</span>';
+        catBody.innerHTML += `<tr>
+            <td style="font-weight:600;">${escapeHtml(c.nombre)}</td>
+            <td>${tallesBadge}</td>
+            <td>${estadoBadge}</td>
+            ${acciones}
+        </tr>`;
+    });
+
+    const talleBody = document.getElementById('talles-body');
+    talleBody.innerHTML = '';
+    talles.forEach(t => {
+        const acciones = puedeEditar() ? `
+            <td style="text-align:right;">
+                <button class="action-btn" onclick="editarTalle(${t.id})"><i class="fa-solid fa-pen-to-square"></i></button>
+                <button class="action-btn delete" onclick="eliminarTalle(${t.id})"><i class="fa-solid fa-trash"></i></button>
+            </td>
+        ` : '';
+        talleBody.innerHTML += `<tr>
+            <td style="font-weight:600;">${escapeHtml(t.nombre)}</td>
+            <td>${escapeHtml(t.descripcion || '-')}</td>
+            ${acciones}
+        </tr>`;
+    });
+
+    const subBody = document.getElementById('subcategorias-inventario-body');
+    subBody.innerHTML = '';
+    subcategorias.forEach(s => {
+        const cat = categorias.find(c => c.id === Number(s.categoriaId));
+        const catName = cat ? cat.nombre : '-';
+        const acciones = puedeEditar() ? `
+            <td style="text-align:right;">
+                <button class="action-btn" onclick="editarSubcategoria(${s.id})"><i class="fa-solid fa-pen-to-square"></i></button>
+                <button class="action-btn delete" onclick="eliminarSubcategoria(${s.id})"><i class="fa-solid fa-trash"></i></button>
+            </td>
+        ` : '';
+        subBody.innerHTML += `<tr>
+            <td style="font-weight:600;">${escapeHtml(s.nombre)}</td>
+            <td>${escapeHtml(catName)}</td>
+            ${acciones}
+        </tr>`;
+    });
+}
+
+function openModalCategoriaInventario() {
+    if (!puedeEditar()) return;
+    document.getElementById('form-categoria-inventario').reset();
+    document.getElementById('categoria-inv-id').value = '';
+    document.getElementById('categoria-inv-controla-talles').value = 'false';
+    document.getElementById('categoria-inv-activo').value = 'true';
+    document.getElementById('categoria-inv-modal-title').textContent = 'Nueva Categoría de Inventario';
+    openModal('modal-categoria-inventario');
+}
+
+async function editarCategoriaInventario(id) {
+    if (!puedeEditar()) return;
+    const c = await obtenerPorId('categoriasInventario', Number(id));
+    if (!c) return;
+    document.getElementById('categoria-inv-id').value = c.id;
+    document.getElementById('categoria-inv-nombre').value = c.nombre;
+    document.getElementById('categoria-inv-descripcion').value = c.descripcion || '';
+    document.getElementById('categoria-inv-controla-talles').value = c.controlaTalles ? 'true' : 'false';
+    document.getElementById('categoria-inv-activo').value = c.activo !== false ? 'true' : 'false';
+    document.getElementById('categoria-inv-modal-title').textContent = 'Editar Categoría';
+    openModal('modal-categoria-inventario');
+}
+
+async function guardarCategoriaInventarioForm(e) {
+    e.preventDefault();
+    if (!puedeEditar()) return;
+    const id = document.getElementById('categoria-inv-id').value;
+    const cat = {
+        nombre: document.getElementById('categoria-inv-nombre').value.trim(),
+        descripcion: document.getElementById('categoria-inv-descripcion').value.trim(),
+        controlaTalles: document.getElementById('categoria-inv-controla-talles').value === 'true',
+        activo: document.getElementById('categoria-inv-activo').value === 'true'
+    };
+    if (id) cat.id = Number(id);
+    await guardar('categoriasInventario', cat);
+    invalidarCache('categoriasInventario');
+    closeModal('modal-categoria-inventario');
+    mostrarToast('Categoría guardada.');
+    listarCategoriasInventario();
+}
+
+async function eliminarCategoriaInventario(id) {
+    if (!puedeEditar()) return;
+    const articulos = await getTodos('articulos');
+    if (articulos.some(a => Number(a.categoriaId) === Number(id))) {
+        mostrarToast('No se puede eliminar una categoría con artículos asociados.', 'error');
+        return;
+    }
+    if (!confirm('¿Eliminar esta categoría de inventario?')) return;
+    await eliminar('categoriasInventario', id);
+    invalidarCache('categoriasInventario');
+    listarCategoriasInventario();
+}
+
+function openModalSubcategoria() {
+    if (!puedeEditar()) return;
+    document.getElementById('form-subcategoria').reset();
+    document.getElementById('subcategoria-id').value = '';
+    document.getElementById('subcategoria-modal-title').textContent = 'Nueva Subcategoría';
+    cargarSelectSubcategoria();
+    openModal('modal-subcategoria');
+}
+
+async function cargarSelectSubcategoria() {
+    const categorias = await getTodos('categoriasInventario');
+    const sel = document.getElementById('subcategoria-categoria');
+    const saved = sel.value;
+    sel.innerHTML = '<option value="">Seleccione...</option>';
+    categorias.forEach(c => sel.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
+    sel.value = saved;
+}
+
+async function editarSubcategoria(id) {
+    if (!puedeEditar()) return;
+    const s = await obtenerPorId('subcategoriasInventario', Number(id));
+    if (!s) return;
+    await cargarSelectSubcategoria();
+    document.getElementById('subcategoria-id').value = s.id;
+    document.getElementById('subcategoria-nombre').value = s.nombre;
+    document.getElementById('subcategoria-categoria').value = s.categoriaId;
+    document.getElementById('subcategoria-modal-title').textContent = 'Editar Subcategoría';
+    openModal('modal-subcategoria');
+}
+
+async function guardarSubcategoriaForm(e) {
+    e.preventDefault();
+    if (!puedeEditar()) return;
+    const id = document.getElementById('subcategoria-id').value;
+    const sub = {
+        nombre: document.getElementById('subcategoria-nombre').value.trim(),
+        categoriaId: Number(document.getElementById('subcategoria-categoria').value)
+    };
+    if (!sub.categoriaId) { mostrarToast('Seleccioná una categoría padre.', 'error'); return; }
+    if (id) sub.id = Number(id);
+    await guardar('subcategoriasInventario', sub);
+    invalidarCache('subcategoriasInventario');
+    closeModal('modal-subcategoria');
+    mostrarToast('Subcategoría guardada.');
+    listarCategoriasInventario();
+}
+
+async function eliminarSubcategoria(id) {
+    if (!puedeEditar()) return;
+    if (!confirm('¿Eliminar esta subcategoría?')) return;
+    await eliminar('subcategoriasInventario', id);
+    invalidarCache('subcategoriasInventario');
+    listarCategoriasInventario();
+}
+
+function openModalTalle() {
+    if (!puedeEditar()) return;
+    document.getElementById('form-talle').reset();
+    document.getElementById('talle-id').value = '';
+    document.getElementById('talle-modal-title').textContent = 'Nuevo Talle';
+    openModal('modal-talle');
+}
+
+async function editarTalle(id) {
+    if (!puedeEditar()) return;
+    const t = await obtenerPorId('talles', Number(id));
+    if (!t) return;
+    document.getElementById('talle-id').value = t.id;
+    document.getElementById('talle-nombre').value = t.nombre;
+    document.getElementById('talle-descripcion').value = t.descripcion || '';
+    document.getElementById('talle-modal-title').textContent = 'Editar Talle';
+    openModal('modal-talle');
+}
+
+async function guardarTalleForm(e) {
+    e.preventDefault();
+    if (!puedeEditar()) return;
+    const id = document.getElementById('talle-id').value;
+    const talle = {
+        nombre: document.getElementById('talle-nombre').value.trim(),
+        descripcion: document.getElementById('talle-descripcion').value.trim()
+    };
+    if (!talle.nombre) { mostrarToast('El nombre del talle es obligatorio.', 'error'); return; }
+    if (id) talle.id = Number(id);
+    await guardar('talles', talle);
+    invalidarCache('talles');
+    closeModal('modal-talle');
+    mostrarToast('Talle guardado.');
+    listarCategoriasInventario();
+}
+
+async function eliminarTalle(id) {
+    if (!puedeEditar()) return;
+    const tallesArt = await getTodos('articuloTalles');
+    if (tallesArt.some(t => Number(t.talleId) === Number(id) && Number(t.stock) > 0)) {
+        mostrarToast('No se puede eliminar un talle que tiene stock asociado.', 'error');
+        return;
+    }
+    if (!confirm('¿Eliminar este talle?')) return;
+    for (const t of tallesArt.filter(t => Number(t.talleId) === Number(id))) {
+        await eliminar('articuloTalles', t.id);
+    }
+    await eliminar('talles', id);
+    invalidarCache('talles');
+    invalidarCache('articuloTalles');
+    listarCategoriasInventario();
+}
+
+async function listarEntregas() {
+    const [entregas, staff, competencias, detalles] = await Promise.all([
+        getTodos('entregasInventario'),
+        getTodos('staff'),
+        getTodos('competencias'),
+        getTodos('detalleEntregas')
+    ]);
+
+    const filtroPersona = document.getElementById('filtro-entrega-persona').value;
+    const filtroEvento = document.getElementById('filtro-entrega-evento').value;
+    const buscador = document.getElementById('buscar-entregas').value.toLowerCase();
+
+    const selPersona = document.getElementById('filtro-entrega-persona');
+    const savedPer = selPersona.value;
+    selPersona.innerHTML = '<option value="todas">Todas</option>';
+    staff.forEach(s => selPersona.innerHTML += `<option value="${s.id}">${s.nombre} ${s.apellido}</option>`);
+    selPersona.value = savedPer;
+
+    const selEvento = document.getElementById('filtro-entrega-evento');
+    const savedEv = selEvento.value;
+    selEvento.innerHTML = '<option value="todos">Todos</option>';
+    competencias.forEach(c => selEvento.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
+    selEvento.value = savedEv;
+
+    let filtradas = entregas.filter(e => {
+        if (filtroPersona !== 'todas' && String(e.personaId) !== String(filtroPersona)) return false;
+        if (filtroEvento !== 'todos' && String(e.eventoId) !== String(filtroEvento)) return false;
+        if (buscador) {
+            const pers = staff.find(s => Number(s.id) === Number(e.personaId));
+            const persName = pers ? `${pers.nombre} ${pers.apellido}` : '';
+            if (!persName.toLowerCase().includes(buscador)) return false;
+        }
+        return true;
+    }).sort((a, b) => new Date(b.fecha || 0) - new Date(a.fecha || 0));
+
+    const container = document.getElementById('entregas-list');
+    container.innerHTML = '';
+
+    if (filtradas.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-secondary);text-align:center;padding:2rem;">No hay entregas registradas.</p>';
+        return;
+    }
+
+    for (const entrega of filtradas) {
+        const pers = staff.find(s => Number(s.id) === Number(entrega.personaId));
+        const persName = pers ? `${pers.nombre} ${pers.apellido}` : 'ID: ' + entrega.personaId;
+        const comp = competencias.find(c => Number(c.id) === Number(entrega.eventoId));
+        const compName = comp ? comp.nombre : (entrega.eventoId ? 'ID: ' + entrega.eventoId : 'Sin evento');
+
+        const detallesEntrega = detalles.filter(d => Number(d.entregaId) === Number(entrega.id));
+
+        const card = document.createElement('div');
+        card.className = 'delivery-card';
+        card.innerHTML = `
+            <div class="delivery-header">
+                <span class="delivery-person"><i class="fa-solid fa-user"></i> ${escapeHtml(persName)}</span>
+                <span class="delivery-date">${formatearFechaVisual(entrega.fecha)}</span>
+            </div>
+            <div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:0.75rem;">
+                <i class="fa-solid fa-trophy"></i> ${escapeHtml(compName)}
+                ${entrega.observaciones ? `<br><i class="fa-solid fa-comment"></i> ${escapeHtml(entrega.observaciones)}` : ''}
+            </div>
+            <div class="delivery-items">
+                ${detallesEntrega.length > 0 ? '' : '<span style="color:var(--text-secondary);">Sin detalle</span>'}
+        `;
+
+        for (const det of detallesEntrega) {
+            const articulos = await getTodos('articulos');
+            const art = articulos.find(a => Number(a.id) === Number(det.articuloId));
+            const artName = art ? art.nombre : 'ID: ' + det.articuloId;
+            let talleText = '';
+            if (det.talleId) {
+                const talles = await getTodos('talles');
+                const talle = talles.find(t => Number(t.id) === Number(det.talleId));
+                if (talle) talleText = ` (${talle.nombre})`;
+            }
+            card.querySelector('.delivery-items').innerHTML += `
+                <div class="delivery-item">
+                    <span>${escapeHtml(artName)}${talleText}</span>
+                    <span class="item-qty">x${det.cantidad}</span>
+                </div>
+            `;
+        }
+
+        card.innerHTML += `
+            <div style="margin-top:0.75rem;padding-top:0.5rem;border-top:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:0.8rem;color:var(--text-secondary);">#${entrega.id}</span>
+                ${puedeEditar() ? `
+                    <div style="display:flex;gap:0.5rem;">
+                        <button class="action-btn delete" onclick="eliminarEntrega(${entrega.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+        container.appendChild(card);
+    }
+}
+
+async function openModalEntrega() {
+    if (!puedeEditar()) return;
+    const staff = await getTodos('staff');
+    const competencias = await getTodos('competencias');
+    const articulos = await getTodos('articulos');
+
+    document.getElementById('form-entrega').reset();
+    document.getElementById('entrega-id').value = '';
+    document.getElementById('entrega-modal-title').textContent = 'Nueva Entrega de Indumentaria';
+    document.getElementById('entrega-fecha').value = new Date().toISOString().split('T')[0];
+
+    const selPersona = document.getElementById('entrega-persona');
+    selPersona.innerHTML = '<option value="">Seleccione...</option>';
+    staff.forEach(s => selPersona.innerHTML += `<option value="${s.id}">${s.nombre} ${s.apellido}</option>`);
+
+    const selEvento = document.getElementById('entrega-evento');
+    selEvento.innerHTML = '<option value="">Sin evento</option>';
+    competencias.forEach(c => selEvento.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
+
+    const container = document.getElementById('entrega-detalles-container');
+    container.innerHTML = '';
+    agregarFilaEntrega();
+
+    openModal('modal-entrega');
+}
+
+async function agregarFilaEntrega() {
+    const container = document.getElementById('entrega-detalles-container');
+    const articulos = await getTodos('articulos');
+
+    const row = document.createElement('div');
+    row.className = 'entrega-detalle-row';
+    row.style.cssText = 'display:flex;gap:0.5rem;align-items:flex-end;margin-bottom:0.5rem;';
+
+    row.innerHTML = `
+        <div class="form-group" style="flex:2;">
+            <label>Artículo</label>
+            <select class="entrega-articulo-select" required onchange="onCambioArticuloEntrega(this)">
+                <option value="">Seleccione...</option>
+                ${articulos.filter(a => a.activo !== false).map(a => `<option value="${a.id}">${a.codigo} - ${a.nombre}</option>`).join('')}
+            </select>
+        </div>
+        <div class="form-group" style="flex:1;">
+            <label>Talle</label>
+            <select class="entrega-talle-select">
+                <option value="">Sin talle</option>
+            </select>
+        </div>
+        <div class="form-group" style="flex:0.5;">
+            <label>Cantidad</label>
+            <input type="number" class="entrega-cantidad-input" min="1" value="1" required>
+        </div>
+        <button type="button" class="action-btn delete" onclick="eliminarFilaEntrega(this)" style="margin-bottom:0.5rem;" title="Quitar"><i class="fa-solid fa-times"></i></button>
+    `;
+
+    container.appendChild(row);
+}
+
+async function onCambioArticuloEntrega(select) {
+    const artId = select.value;
+    const talleSelect = select.closest('.entrega-detalle-row').querySelector('.entrega-talle-select');
+    if (!artId) {
+        talleSelect.innerHTML = '<option value="">Sin talle</option>';
+        return;
+    }
+    const art = await obtenerPorId('articulos', Number(artId));
+    if (art && art.controlaTalles) {
+        const talles = await getTodos('talles');
+        talleSelect.innerHTML = '<option value="">Seleccione talle...</option>';
+        talles.forEach(t => talleSelect.innerHTML += `<option value="${t.id}">${t.nombre}</option>`);
+    } else {
+        talleSelect.innerHTML = '<option value="">Sin talle</option>';
+    }
+}
+
+function eliminarFilaEntrega(btn) {
+    const container = document.getElementById('entrega-detalles-container');
+    if (container.children.length <= 1) {
+        mostrarToast('Debe haber al menos un artículo en la entrega.', 'warning');
+        return;
+    }
+    btn.closest('.entrega-detalle-row').remove();
+}
+
+async function guardarEntregaForm(e) {
+    e.preventDefault();
+    if (!puedeEditar()) return;
+
+    const personaId = document.getElementById('entrega-persona').value;
+    if (!personaId) { mostrarToast('Debe seleccionar una persona.', 'error'); return; }
+
+    const rows = document.querySelectorAll('#entrega-detalles-container .entrega-detalle-row');
+    if (rows.length === 0) { mostrarToast('Debe agregar al menos un artículo.', 'error'); return; }
+
+    const entrega = {
+        personaId: Number(personaId),
+        eventoId: document.getElementById('entrega-evento').value || null,
+        fecha: document.getElementById('entrega-fecha').value,
+        observaciones: document.getElementById('entrega-observaciones').value.trim(),
+        usuarioId: currentUser ? currentUser.id : null,
+        fechaCreacion: new Date().toISOString()
+    };
+
+    const entregaId = await guardar('entregasInventario', entrega);
+    entrega.id = Number(entregaId);
+
+    for (const row of rows) {
+        const artSelect = row.querySelector('.entrega-articulo-select');
+        const talleSelect = row.querySelector('.entrega-talle-select');
+        const cantInput = row.querySelector('.entrega-cantidad-input');
+
+        const articuloId = artSelect.value;
+        const talleId = talleSelect.value || null;
+        const cantidad = Number(cantInput.value);
+
+        if (!articuloId || !cantidad) continue;
+
+        const detalle = {
+            entregaId: entrega.id,
+            articuloId: Number(articuloId),
+            talleId: talleId ? Number(talleId) : null,
+            cantidad
+        };
+        await guardar('detalleEntregas', detalle);
+
+        const art = await obtenerPorId('articulos', Number(articuloId));
+        if (art.controlaTalles && talleId) {
+            const tallesArt = await getTodos('articuloTalles');
+            const talleArt = tallesArt.find(t => Number(t.articuloId) === Number(articuloId) && Number(t.talleId) === Number(talleId));
+            if (talleArt) {
+                talleArt.stock = Math.max(0, Number(talleArt.stock) - cantidad);
+                await guardar('articuloTalles', talleArt);
+            }
+        } else {
+            art.stockUnico = Math.max(0, Number(art.stockUnico || 0) - cantidad);
+            await guardar('articulos', art);
+        }
+
+        await guardar('movimientosInventario', {
+            articuloId: Number(articuloId),
+            talleId: talleId ? Number(talleId) : null,
+            tipoMovimiento: 'entrega',
+            cantidad,
+            motivo: 'Entrega de indumentaria',
+            observaciones: `Entrega #${entrega.id} a persona ID: ${personaId}`,
+            usuarioId: currentUser ? currentUser.id : null,
+            fecha: new Date().toISOString().split('T')[0]
+        });
+    }
+
+    invalidarCache('entregasInventario');
+    invalidarCache('detalleEntregas');
+    invalidarCache('articuloTalles');
+    invalidarCache('articulos');
+    invalidarCache('movimientosInventario');
+
+    closeModal('modal-entrega');
+    mostrarToast(`Entrega #${entrega.id} registrada correctamente.`);
+    listarEntregas();
+}
+
+async function eliminarEntrega(id) {
+    if (!puedeEditar()) return;
+    if (!confirm('¿Eliminar esta entrega? No se restaurará el stock automáticamente.')) return;
+
+    const detalles = await getTodos('detalleEntregas');
+    for (const d of detalles.filter(d => Number(d.entregaId) === Number(id))) {
+        await eliminar('detalleEntregas', d.id);
+    }
+    await eliminar('entregasInventario', id);
+    invalidarCache('detalleEntregas');
+    invalidarCache('entregasInventario');
+    mostrarToast('Entrega eliminada.');
+    listarEntregas();
 }

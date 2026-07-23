@@ -1,7 +1,7 @@
 ﻿// db.js - Gestión de Base de Datos Local con IndexedDB e integración con Firebase
 
 const DB_NAME = 'ControlAutomovilismoDB';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 let dbInstance = null;
 
@@ -163,6 +163,53 @@ function openDB() {
             if (!db.objectStoreNames.contains('campeonatos')) {
                 db.createObjectStore('campeonatos', { keyPath: 'id', autoIncrement: true });
             }
+
+            // ==================== NUEVAS TABLAS DE INVENTARIO (DB_VERSION 5) ====================
+            
+            // Categorías de inventario (Indumentaria, Banderas, etc.)
+            if (!db.objectStoreNames.contains('categoriasInventario')) {
+                db.createObjectStore('categoriasInventario', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Subcategorías de inventario
+            if (!db.objectStoreNames.contains('subcategoriasInventario')) {
+                db.createObjectStore('subcategoriasInventario', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Talles (administrables)
+            if (!db.objectStoreNames.contains('talles')) {
+                db.createObjectStore('talles', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Artículos del inventario
+            if (!db.objectStoreNames.contains('articulos')) {
+                db.createObjectStore('articulos', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Stock por talle (solo indumentaria)
+            if (!db.objectStoreNames.contains('articuloTalles')) {
+                db.createObjectStore('articuloTalles', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Movimientos de inventario
+            if (!db.objectStoreNames.contains('movimientosInventario')) {
+                db.createObjectStore('movimientosInventario', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Entregas de indumentaria
+            if (!db.objectStoreNames.contains('entregasInventario')) {
+                db.createObjectStore('entregasInventario', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Detalle de entregas
+            if (!db.objectStoreNames.contains('detalleEntregas')) {
+                db.createObjectStore('detalleEntregas', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Imágenes de artículos
+            if (!db.objectStoreNames.contains('imagenesArticulo')) {
+                db.createObjectStore('imagenesArticulo', { keyPath: 'id', autoIncrement: true });
+            }
         };
 
         request.onsuccess = (event) => {
@@ -256,6 +303,63 @@ async function inicializarDatosPorDefecto() {
             rol: 'admin', // 'admin' | 'editor' | 'viewer'
             activo: true
         });
+    }
+
+    // ==================== DATOS POR DEFECTO DE INVENTARIO ====================
+    
+    // Talles por defecto
+    const talles = await getTodos('talles');
+    if (talles.length === 0) {
+        const tallesIniciales = [
+            { nombre: 'XXXS', descripcion: 'Extra Extra Extra Small' },
+            { nombre: 'XXS', descripcion: 'Extra Extra Small' },
+            { nombre: 'XS', descripcion: 'Extra Small' },
+            { nombre: 'S', descripcion: 'Small' },
+            { nombre: 'M', descripcion: 'Medium' },
+            { nombre: 'L', descripcion: 'Large' },
+            { nombre: 'XL', descripcion: 'Extra Large' },
+            { nombre: 'XXL', descripcion: 'Extra Extra Large' },
+            { nombre: 'XXXL', descripcion: 'Extra Extra Extra Large' },
+            { nombre: '40', descripcion: 'Talle 40' },
+            { nombre: '42', descripcion: 'Talle 42' },
+            { nombre: '44', descripcion: 'Talle 44' },
+            { nombre: '46', descripcion: 'Talle 46' },
+            { nombre: '48', descripcion: 'Talle 48' },
+            { nombre: '50', descripcion: 'Talle 50' },
+            { nombre: '52', descripcion: 'Talle 52' },
+            { nombre: '54', descripcion: 'Talle 54' },
+            { nombre: '56', descripcion: 'Talle 56' },
+            { nombre: '58', descripcion: 'Talle 58' },
+            { nombre: '60', descripcion: 'Talle 60' },
+            { nombre: 'Único', descripcion: 'Talle único' },
+            { nombre: 'Sin Talle', descripcion: 'Sin talle asignado' }
+        ];
+        for (const t of tallesIniciales) {
+            await guardar('talles', t);
+        }
+    }
+
+    // Categorías de inventario por defecto
+    const catInv = await getTodos('categoriasInventario');
+    if (catInv.length === 0) {
+        const categoriasInventario = [
+            { nombre: 'Indumentaria', descripcion: 'Prendas y uniformes', activo: true, controlaTalles: true },
+            { nombre: 'Banderas', descripcion: 'Banderas y banderines', activo: true, controlaTalles: false },
+            { nombre: 'Equipamiento', descripcion: 'Equipamiento general', activo: true, controlaTalles: false },
+            { nombre: 'Herramientas', descripcion: 'Herramientas manuales y eléctricas', activo: true, controlaTalles: false },
+            { nombre: 'Papelería', descripcion: 'Papelería e impresos', activo: true, controlaTalles: false },
+            { nombre: 'Electrónica', descripcion: 'Dispositivos electrónicos', activo: true, controlaTalles: false },
+            { nombre: 'Comunicación', descripcion: 'Equipos de comunicación', activo: true, controlaTalles: false },
+            { nombre: 'Mobiliario', descripcion: 'Muebles y mobiliario', activo: true, controlaTalles: false },
+            { nombre: 'Consumibles', descripcion: 'Materiales consumibles', activo: true, controlaTalles: false },
+            { nombre: 'Repuestos', descripcion: 'Repuestos y recambios', activo: true, controlaTalles: false },
+            { nombre: 'Material Deportivo', descripcion: 'Material deportivo y pista', activo: true, controlaTalles: false },
+            { nombre: 'Seguridad', descripcion: 'Elementos de seguridad', activo: true, controlaTalles: false },
+            { nombre: 'Otros', descripcion: 'Otros artículos', activo: true, controlaTalles: false }
+        ];
+        for (const c of categoriasInventario) {
+            await guardar('categoriasInventario', c);
+        }
     }
 }
 
@@ -414,7 +518,7 @@ async function sincronizarLocalAFirebase() {
         return;
     }
 
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo'];
     let total = 0;
 
     for (const storeName of stores) {
@@ -442,7 +546,7 @@ async function sincronizarLocalAFirebase() {
 async function importarTodo(datos) {
     limpiarCacheCompleto(); // limpiar todo el caché antes de importar
     const db = await openDB();
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo'];
     
     for (const storeName of stores) {
         if (datos[storeName]) {
@@ -467,7 +571,3 @@ async function importarTodo(datos) {
         }
     }
 }
-
-
-
-

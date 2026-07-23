@@ -91,6 +91,30 @@
                     </div>
                 </li>
                 <li>
+                    <div class="menu-item" onclick="switchView('inventario')">
+                        <i class="fa-solid fa-warehouse"></i>
+                        <span>Inventario</span>
+                    </div>
+                    <div class="submenu">
+                        <div class="menu-item submenu-item" onclick="switchView('articulos')">
+                            <i class="fa-solid fa-box"></i>
+                            <span>Artículos</span>
+                        </div>
+                        <div class="menu-item submenu-item" onclick="switchView('movimientos-inventario')">
+                            <i class="fa-solid fa-arrows-spin"></i>
+                            <span>Movimientos</span>
+                        </div>
+                        <div class="menu-item submenu-item" onclick="switchView('categorias-inventario')">
+                            <i class="fa-solid fa-tags"></i>
+                            <span>Categorías</span>
+                        </div>
+                        <div class="menu-item submenu-item" onclick="switchView('entregas-inventario')">
+                            <i class="fa-solid fa-shirt"></i>
+                            <span>Entregas</span>
+                        </div>
+                    </div>
+                </li>
+                <li>
                     <div class="menu-item" onclick="switchView('staff')">
                         <i class="fa-solid fa-users"></i>
                         <span>Staff</span>
@@ -317,7 +341,6 @@
                                     <tr>
                                         <th>#</th>
                                         <th>Competencia</th>
-                                        <th>Campeonato</th>
                                         <th>Autódromo</th>
                                         <th>Fecha</th>
                                         <th>Responsable</th>
@@ -348,12 +371,6 @@
                                 <select id="rendicion-competencia" required></select>
                             </div>
                             <div class="form-group">
-                                <label for="rendicion-campeonato">Campeonato</label>
-                                <select id="rendicion-campeonato">
-                                    <option value="">Sin campeonato</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
                                 <label for="rendicion-autodromo">Autódromo</label>
                                 <select id="rendicion-autodromo" required></select>
                             </div>
@@ -374,12 +391,6 @@
                                 <span style="color:var(--text-secondary);font-size:0.85rem;"><i class="fa-solid fa-calendar-plus"></i> Creado: <strong id="rendicion-fecha-creacion">-</strong></span>
                                 <span style="color:var(--text-secondary);font-size:0.85rem;"><i class="fa-solid fa-calendar-check"></i> Modificado: <strong id="rendicion-fecha-modificacion">-</strong></span>
                             </div>
-                        </div>
-                        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem;">
-                            <button class="btn" onclick="guardarRendicion()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
-                            <button class="btn btn-secondary" onclick="guardarRendicionBorrador()"><i class="fa-solid fa-pen"></i> Guardar Borrador</button>
-                            <span style="flex:1;"></span>
-                            <button class="btn btn-secondary" onclick="cancelarEdicionRendicion()"><i class="fa-solid fa-times"></i> Cancelar</button>
                         </div>
                     </div>
 
@@ -454,28 +465,6 @@
                         </div>
                     </div>
 
-                    <!-- Sección 4: Adjuntos Globales -->
-                    <div class="table-card">
-                        <div class="table-header-tools">
-                            <h3><i class="fa-solid fa-paperclip"></i> Adjuntos Globales</h3>
-                        </div>
-                        <div class="table-responsive">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Archivo</th>
-                                        <th>Tipo</th>
-                                        <th>Fecha Carga</th>
-                                        <th style="text-align:right;">Acciones</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="adjuntos-globales-body">
-                                    <tr><td colspan="4" style="text-align:center;color:var(--text-secondary);">Sin adjuntos globales. Los adjuntos se asocian a cada gasto individualmente.</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
                     <!-- Botones de acción final -->
                     <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:2rem;padding:1rem 0;">
                         <button class="btn" onclick="guardarRendicion()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
@@ -486,6 +475,275 @@
                         <span style="flex:1;"></span>
                         <button class="btn btn-secondary" onclick="duplicarRendicion()"><i class="fa-solid fa-copy"></i> Duplicar</button>
                         <button class="btn btn-secondary" onclick="cancelarEdicionRendicion()"><i class="fa-solid fa-times"></i> Cancelar</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ==================== VIEW: INVENTARIO DASHBOARD ==================== -->
+            <section id="view-inventario" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Dashboard de Inventario</h1>
+                        <p class="page-subtitle">Monitoreo general de artículos, stock y movimientos</p>
+                    </div>
+                    <div class="editor-only inv-quick-actions">
+                        <button class="btn" onclick="openModalArticulo()"><i class="fa-solid fa-plus"></i> Nuevo Artículo</button>
+                        <button class="btn btn-secondary" onclick="openModalMovimiento()"><i class="fa-solid fa-arrows-spin"></i> Registrar Movimiento</button>
+                    </div>
+                </header>
+
+                <div class="inv-stats-grid" id="inv-dashboard-stats">
+                    <div class="inv-stat-card info">
+                        <span class="stat-label"><i class="fa-solid fa-box"></i> Total Artículos</span>
+                        <span class="stat-value" id="inv-stat-total-articulos">0</span>
+                    </div>
+                    <div class="inv-stat-card success">
+                        <span class="stat-label"><i class="fa-solid fa-cubes"></i> Total Unidades</span>
+                        <span class="stat-value" id="inv-stat-total-unidades">0</span>
+                    </div>
+                    <div class="inv-stat-card warning">
+                        <span class="stat-label"><i class="fa-solid fa-triangle-exclamation"></i> Stock Bajo</span>
+                        <span class="stat-value" id="inv-stat-stock-bajo">0</span>
+                    </div>
+                    <div class="inv-stat-card danger">
+                        <span class="stat-label"><i class="fa-solid fa-circle-exclamation"></i> Sin Stock</span>
+                        <span class="stat-value" id="inv-stat-sin-stock">0</span>
+                    </div>
+                    <div class="inv-stat-card info">
+                        <span class="stat-label"><i class="fa-solid fa-arrow-right-arrow-left"></i> Últimos Movimientos</span>
+                        <span class="stat-value" id="inv-stat-ultimos-mov">0</span>
+                    </div>
+                </div>
+
+                <div class="inv-charts-grid">
+                    <div class="chart-card">
+                        <h3>Artículos por Categoría</h3>
+                        <div class="chart-container" style="height:250px;">
+                            <canvas id="chart-inv-categorias"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Stock por Categoría</h3>
+                        <div class="chart-container" style="height:250px;">
+                            <canvas id="chart-inv-stock"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-card">
+                    <div class="table-header-tools">
+                        <h3><i class="fa-solid fa-clock-rotate-left"></i> Últimos Movimientos</h3>
+                        <button class="btn btn-secondary" onclick="switchView('movimientos-inventario')">Ver todos</button>
+                    </div>
+                    <div class="movement-timeline" id="inv-ultimos-movimientos">
+                        <p style="color:var(--text-secondary);padding:1rem;text-align:center;">Cargando movimientos...</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ==================== VIEW: ARTÍCULOS ==================== -->
+            <section id="view-articulos" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Artículos del Inventario</h1>
+                        <p class="page-subtitle">Administración completa de todos los artículos</p>
+                    </div>
+                    <div class="editor-only" style="display:flex;gap:0.5rem;align-items:center;">
+                        <button class="btn" onclick="openModalArticulo()"><i class="fa-solid fa-plus"></i> Nuevo Artículo</button>
+                        <button class="btn btn-secondary" onclick="exportarArticulosExcel()"><i class="fa-solid fa-file-excel"></i> Exportar</button>
+                    </div>
+                </header>
+
+                <div class="table-card">
+                    <div class="inv-filters">
+                        <div class="form-group">
+                            <label for="filtro-articulo-categoria">Categoría</label>
+                            <select id="filtro-articulo-categoria" onchange="listarArticulos()">
+                                <option value="todas">Todas</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="filtro-articulo-estado">Estado</label>
+                            <select id="filtro-articulo-estado" onchange="listarArticulos()">
+                                <option value="todos">Todos</option>
+                                <option value="activos">Activos</option>
+                                <option value="inactivos">Inactivos</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="filtro-articulo-stock">Stock</label>
+                            <select id="filtro-articulo-stock" onchange="listarArticulos()">
+                                <option value="todos">Todos</option>
+                                <option value="bajo">Stock Bajo</option>
+                                <option value="sin">Sin Stock</option>
+                                <option value="con">Con Stock</option>
+                            </select>
+                        </div>
+                        <input type="text" id="buscar-articulos" class="search-input" placeholder="Buscar por nombre, código, marca..." oninput="listarArticulos()" style="flex:1;min-width:200px;">
+                    </div>
+                    <div class="table-responsive">
+                        <table class="inv-table">
+                            <thead>
+                                <tr>
+                                    <th>Código</th>
+                                    <th>Nombre</th>
+                                    <th>Categoría</th>
+                                    <th>Marca</th>
+                                    <th>Stock Total</th>
+                                    <th>Estado</th>
+                                    <th class="editor-only" style="text-align:right;">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="articulos-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ==================== VIEW: MOVIMIENTOS ==================== -->
+            <section id="view-movimientos-inventario" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Movimientos de Inventario</h1>
+                        <p class="page-subtitle">Historial completo de ingresos, egresos y ajustes</p>
+                    </div>
+                    <div class="editor-only">
+                        <button class="btn" onclick="openModalMovimiento()"><i class="fa-solid fa-plus"></i> Nuevo Movimiento</button>
+                    </div>
+                </header>
+
+                <div class="table-card">
+                    <div class="inv-filters">
+                        <div class="form-group">
+                            <label for="filtro-movimiento-tipo">Tipo</label>
+                            <select id="filtro-movimiento-tipo" onchange="listarMovimientosInventario()">
+                                <option value="todos">Todos</option>
+                                <option value="ingreso">Ingreso</option>
+                                <option value="egreso">Egreso</option>
+                                <option value="entrega">Entrega</option>
+                                <option value="devolucion">Devolución</option>
+                                <option value="ajuste">Ajuste</option>
+                                <option value="perdida">Pérdida</option>
+                                <option value="rotura">Rotura</option>
+                                <option value="transferencia">Transferencia</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="filtro-movimiento-articulo">Artículo</label>
+                            <select id="filtro-movimiento-articulo" onchange="listarMovimientosInventario()">
+                                <option value="todos">Todos</option>
+                            </select>
+                        </div>
+                        <input type="text" id="buscar-movimientos" class="search-input" placeholder="Buscar por artículo, motivo..." oninput="listarMovimientosInventario()" style="flex:1;min-width:200px;">
+                    </div>
+                    <div class="movement-timeline" id="movimientos-list">
+                        <p style="color:var(--text-secondary);padding:1rem;text-align:center;">Cargando movimientos...</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ==================== VIEW: CATEGORÍAS DE INVENTARIO ==================== -->
+            <section id="view-categorias-inventario" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Categorías de Inventario</h1>
+                        <p class="page-subtitle">Administración de categorías, subcategorías y talles</p>
+                    </div>
+                    <div class="editor-only" style="display:flex;gap:0.5rem;align-items:center;">
+                        <button class="btn" onclick="openModalCategoriaInventario()"><i class="fa-solid fa-plus"></i> Nueva Categoría</button>
+                        <button class="btn btn-secondary" onclick="openModalTalle()"><i class="fa-solid fa-plus"></i> Nuevo Talle</button>
+                    </div>
+                </header>
+
+                <div class="config-layout">
+                    <div class="table-card">
+                        <div class="table-header-tools">
+                            <h3>Categorías</h3>
+                        </div>
+                        <div class="table-responsive">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Nombre</th>
+                                        <th>Controla Talles</th>
+                                        <th>Estado</th>
+                                        <th class="editor-only" style="text-align:right;">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="categorias-inventario-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="table-card">
+                        <div class="table-header-tools">
+                            <h3>Talles</h3>
+                        </div>
+                        <div class="table-responsive">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Nombre</th>
+                                        <th>Descripción</th>
+                                        <th class="editor-only" style="text-align:right;">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="talles-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-card">
+                    <div class="table-header-tools">
+                        <h3>Subcategorías</h3>
+                        <button class="btn btn-secondary editor-only" onclick="openModalSubcategoria()"><i class="fa-solid fa-plus"></i> Nueva Subcategoría</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Nombre</th>
+                                    <th>Categoría Padre</th>
+                                    <th class="editor-only" style="text-align:right;">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="subcategorias-inventario-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ==================== VIEW: ENTREGAS ==================== -->
+            <section id="view-entregas-inventario" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Entregas de Indumentaria</h1>
+                        <p class="page-subtitle">Registro de entregas de prendas al personal</p>
+                    </div>
+                    <div class="editor-only">
+                        <button class="btn" onclick="openModalEntrega()"><i class="fa-solid fa-plus"></i> Nueva Entrega</button>
+                    </div>
+                </header>
+
+                <div class="table-card">
+                    <div class="inv-filters">
+                        <div class="form-group">
+                            <label for="filtro-entrega-persona">Persona</label>
+                            <select id="filtro-entrega-persona" onchange="listarEntregas()">
+                                <option value="todas">Todas</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="filtro-entrega-evento">Evento</label>
+                            <select id="filtro-entrega-evento" onchange="listarEntregas()">
+                                <option value="todos">Todos</option>
+                            </select>
+                        </div>
+                        <input type="text" id="buscar-entregas" class="search-input" placeholder="Buscar por persona, artículo..." oninput="listarEntregas()" style="flex:1;min-width:200px;">
+                    </div>
+                    <div id="entregas-list" style="padding:1rem;">
+                        <p style="color:var(--text-secondary);text-align:center;">Cargando entregas...</p>
                     </div>
                 </div>
             </section>
@@ -656,13 +914,17 @@
                 <h2 class="modal-title" id="competencia-modal-title">Agregar Competencia</h2>
                 <button class="modal-close" onclick="closeModal('modal-competencia')">&times;</button>
             </div>
-            <form id="form-competencia" onsubmit="guardarCompetenciaForm(event)">
-                <input type="hidden" id="competencia-id">
-                <div class="form-grid">
-                    <div class="form-group full-width">
-                        <label for="competencia-nombre">Nombre de la Competencia</label>
-                        <input type="text" id="competencia-nombre" required>
-                    </div>
+                <form id="form-competencia" onsubmit="guardarCompetenciaForm(event)">
+                    <input type="hidden" id="competencia-id">
+                    <div class="form-grid">
+                        <div class="form-group full-width">
+                            <label for="competencia-codigo">Código de Competencia <span style="color:var(--text-secondary);font-size:0.8rem;">(solo editable por admin)</span></label>
+                            <input type="text" id="competencia-codigo" readonly class="blur-readonly" style="background:rgba(0,0,0,0.2);cursor:not-allowed;" placeholder="Se asigna automáticamente al guardar">
+                        </div>
+                        <div class="form-group full-width">
+                            <label for="competencia-nombre">Nombre de la Competencia</label>
+                            <input type="text" id="competencia-nombre" required>
+                        </div>
                     <div class="form-group full-width">
                         <label for="competencia-circuito">Autódromo</label>
                         <select id="competencia-circuito" required>
@@ -688,6 +950,11 @@
                     <div class="form-group full-width">
                         <label for="competencia-documentos">Enlace a Documentos/OneDrive (PDFs, etc.)</label>
                         <input type="url" id="competencia-documentos" placeholder="https://onedrive.live.com/...">
+                    </div>
+                    <div class="form-group full-width" id="admin-edit-codigo-group" style="display:none;">
+                        <label for="competencia-codigo-admin">Editar Código Manualmente (Solo Admin)</label>
+                        <input type="text" id="competencia-codigo-admin" placeholder="Ej: TC2000-2024-001">
+                        <small style="color:var(--text-secondary);">Modificar este código afectará a todas las referencias en gastos y rendiciones.</small>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -791,6 +1058,7 @@
                                 <option value="">Seleccione proveedor...</option>
                             </select>
                             <button type="button" class="btn btn-secondary" style="padding:0.5rem 0.75rem;font-size:0.85rem;" onclick="agregarProveedorRapido()" title="Nuevo proveedor"><i class="fa-solid fa-plus"></i></button>
+                            <button type="button" class="btn btn-secondary" style="padding:0.5rem 0.75rem;font-size:0.85rem;" onclick="abrirModalGestorProveedores()" title="Gestionar proveedores"><i class="fa-solid fa-gear"></i></button>
                         </div>
                     </div>
                     <div class="form-group">
@@ -817,7 +1085,11 @@
                     </div>
                     <div class="form-group">
                         <label for="detalle-concepto">Concepto</label>
-                        <select id="detalle-concepto" required onchange="onCambioConceptoDetalle()"></select>
+                        <div style="display:flex;gap:0.5rem;align-items:flex-end;">
+                            <select id="detalle-concepto" required onchange="onCambioConceptoDetalle()" style="flex:1;"></select>
+                            <button type="button" class="btn btn-secondary" style="padding:0.5rem 0.75rem;font-size:0.85rem;" onclick="agregarConceptoRapidoDetalle()" title="Nuevo concepto"><i class="fa-solid fa-plus"></i></button>
+                            <button type="button" class="btn btn-secondary" style="padding:0.5rem 0.75rem;font-size:0.85rem;" onclick="abrirModalGestorConceptos()" title="Gestionar conceptos"><i class="fa-solid fa-gear"></i></button>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="detalle-descripcion">Descripción</label>
@@ -1113,6 +1385,345 @@
         </div>
     </div>
 
+    <!-- ==================== MODALES DE INVENTARIO ==================== -->
+
+    <!-- MODAL: ARTÍCULO -->
+    <div id="modal-articulo" class="modal-overlay">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <h2 class="modal-title" id="articulo-modal-title">Nuevo Artículo</h2>
+                <button class="modal-close" onclick="closeModal('modal-articulo')">&times;</button>
+            </div>
+            <form id="form-articulo" onsubmit="guardarArticuloForm(event)">
+                <input type="hidden" id="articulo-id">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="articulo-codigo">Código</label>
+                        <input type="text" id="articulo-codigo" placeholder="Ej: IND-001" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="articulo-nombre">Nombre</label>
+                        <input type="text" id="articulo-nombre" placeholder="Ej: Campera CDA" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="articulo-descripcion">Descripción</label>
+                        <textarea id="articulo-descripcion" rows="2" placeholder="Descripción del artículo..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="articulo-categoria">Categoría</label>
+                        <select id="articulo-categoria" required onchange="onCambioCategoriaArticulo()">
+                            <option value="">Seleccione...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="articulo-subcategoria">Subcategoría</label>
+                        <select id="articulo-subcategoria">
+                            <option value="">Sin subcategoría</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="articulo-marca">Marca</label>
+                        <input type="text" id="articulo-marca" placeholder="Ej: Nike, Toyota, etc.">
+                    </div>
+                    <div class="form-group">
+                        <label for="articulo-modelo">Modelo</label>
+                        <input type="text" id="articulo-modelo" placeholder="Modelo / Referencia">
+                    </div>
+                    <div class="form-group">
+                        <label for="articulo-color">Color</label>
+                        <input type="text" id="articulo-color" placeholder="Ej: Rojo, Azul">
+                    </div>
+                    <div class="form-group">
+                        <label for="articulo-stock-minimo">Stock Mínimo</label>
+                        <input type="number" id="articulo-stock-minimo" min="0" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label for="articulo-estado">Estado</label>
+                        <select id="articulo-estado">
+                            <option value="true">Activo</option>
+                            <option value="false">Inactivo</option>
+                        </select>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="articulo-observaciones">Observaciones</label>
+                        <textarea id="articulo-observaciones" rows="2" placeholder="Notas adicionales..."></textarea>
+                    </div>
+                </div>
+
+                <!-- Sección de Talles (solo visible si la categoría controla talles) -->
+                <div id="seccion-talles-articulo" style="display:none;border:1px solid var(--accent-blue);border-radius:8px;padding:1rem;margin:1rem 0;background:rgba(0,210,211,0.03);">
+                    <div class="form-title" style="font-size:1rem;margin-bottom:0.5rem;">
+                        <i class="fa-solid fa-ruler"></i> Stock por Talle
+                        <small style="color:var(--text-secondary);font-weight:400;font-size:0.8rem;"> (Ingresá el stock inicial para cada talle)</small>
+                    </div>
+                    <div class="size-matrix" id="size-matrix-articulo"></div>
+                </div>
+
+                <!-- Stock único (cuando no controla talles) -->
+                <div id="seccion-stock-unico" style="display:none;margin:1rem 0;">
+                    <div class="form-group">
+                        <label for="articulo-stock-inicial">Stock Inicial</label>
+                        <input type="number" id="articulo-stock-inicial" min="0" value="0">
+                    </div>
+                </div>
+
+                <!-- Imagen principal -->
+                <div class="form-group full-width" style="margin-top:0.5rem;">
+                    <label for="articulo-imagen">Imagen Principal (URL)</label>
+                    <input type="url" id="articulo-imagen" placeholder="https://ejemplo.com/imagen.jpg">
+                </div>
+
+                <!-- Galería de imágenes -->
+                <div class="form-group full-width">
+                    <label>Galería de Imágenes</label>
+                    <div class="article-gallery" id="articulo-gallery"></div>
+                    <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+                        <input type="url" id="articulo-nueva-imagen" placeholder="URL de imagen..." style="flex:1;">
+                        <button type="button" class="btn btn-secondary" onclick="agregarImagenArticulo()"><i class="fa-solid fa-plus"></i> Agregar</button>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-articulo')">Cancelar</button>
+                    <button type="submit" class="btn">Guardar Artículo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: MOVIMIENTO -->
+    <div id="modal-movimiento" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="movimiento-modal-title">Registrar Movimiento</h2>
+                <button class="modal-close" onclick="closeModal('modal-movimiento')">&times;</button>
+            </div>
+            <form id="form-movimiento" onsubmit="guardarMovimientoForm(event)">
+                <input type="hidden" id="movimiento-id">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label for="movimiento-articulo">Artículo</label>
+                        <select id="movimiento-articulo" required onchange="onCambioArticuloMovimiento()">
+                            <option value="">Seleccione un artículo...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="movimiento-tipo">Tipo de Movimiento</label>
+                        <select id="movimiento-tipo" required>
+                            <option value="">Seleccione...</option>
+                            <option value="ingreso">Ingreso</option>
+                            <option value="egreso">Egreso</option>
+                            <option value="entrega">Entrega</option>
+                            <option value="devolucion">Devolución</option>
+                            <option value="compra">Compra</option>
+                            <option value="reposicion">Reposición</option>
+                            <option value="ajuste">Ajuste</option>
+                            <option value="perdida">Pérdida</option>
+                            <option value="rotura">Rotura</option>
+                            <option value="transferencia">Transferencia</option>
+                            <option value="inventario">Inventario</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="movimiento-cantidad">Cantidad</label>
+                        <input type="number" id="movimiento-cantidad" min="1" required>
+                    </div>
+                    <div class="form-group" id="movimiento-talle-group" style="display:none;">
+                        <label for="movimiento-talle">Talle</label>
+                        <select id="movimiento-talle">
+                            <option value="">Sin talle</option>
+                        </select>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="movimiento-motivo">Motivo</label>
+                        <input type="text" id="movimiento-motivo" placeholder="Ej: Reposición de stock, Rotura en carrera..." required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="movimiento-observaciones">Observaciones</label>
+                        <textarea id="movimiento-observaciones" rows="2" placeholder="Detalle adicional..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-movimiento')">Cancelar</button>
+                    <button type="submit" class="btn">Registrar Movimiento</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: ENTREGA -->
+    <div id="modal-entrega" class="modal-overlay">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <h2 class="modal-title" id="entrega-modal-title">Nueva Entrega de Indumentaria</h2>
+                <button class="modal-close" onclick="closeModal('modal-entrega')">&times;</button>
+            </div>
+            <form id="form-entrega" onsubmit="guardarEntregaForm(event)">
+                <input type="hidden" id="entrega-id">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="entrega-persona">Persona</label>
+                        <select id="entrega-persona" required>
+                            <option value="">Seleccione...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="entrega-evento">Evento / Competencia</label>
+                        <select id="entrega-evento">
+                            <option value="">Sin evento</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="entrega-fecha">Fecha de Entrega</label>
+                        <input type="date" id="entrega-fecha" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="entrega-observaciones">Observaciones</label>
+                        <textarea id="entrega-observaciones" rows="2" placeholder="Motivo de la entrega..."></textarea>
+                    </div>
+                </div>
+
+                <div class="form-title" style="font-size:1rem;margin-top:1rem;">
+                    <i class="fa-solid fa-shirt"></i> Artículos a Entregar
+                </div>
+                <div id="entrega-detalles-container">
+                    <div class="entrega-detalle-row" style="display:flex;gap:0.5rem;align-items:flex-end;margin-bottom:0.5rem;">
+                        <div class="form-group" style="flex:2;">
+                            <label>Artículo</label>
+                            <select class="entrega-articulo-select" required onchange="onCambioArticuloEntrega(this)">
+                                <option value="">Seleccione...</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex:1;">
+                            <label>Talle</label>
+                            <select class="entrega-talle-select">
+                                <option value="">Sin talle</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex:0.5;">
+                            <label>Cantidad</label>
+                            <input type="number" class="entrega-cantidad-input" min="1" value="1" required>
+                        </div>
+                        <button type="button" class="action-btn delete" onclick="eliminarFilaEntrega(this)" style="margin-bottom:0.5rem;" title="Quitar"><i class="fa-solid fa-times"></i></button>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-secondary" onclick="agregarFilaEntrega()" style="margin-bottom:1rem;"><i class="fa-solid fa-plus"></i> Agregar otro artículo</button>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-entrega')">Cancelar</button>
+                    <button type="submit" class="btn">Confirmar Entrega</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: CATEGORÍA DE INVENTARIO -->
+    <div id="modal-categoria-inventario" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="categoria-inv-modal-title">Nueva Categoría de Inventario</h2>
+                <button class="modal-close" onclick="closeModal('modal-categoria-inventario')">&times;</button>
+            </div>
+            <form id="form-categoria-inventario" onsubmit="guardarCategoriaInventarioForm(event)">
+                <input type="hidden" id="categoria-inv-id">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label for="categoria-inv-nombre">Nombre</label>
+                        <input type="text" id="categoria-inv-nombre" placeholder="Ej: Indumentaria" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="categoria-inv-descripcion">Descripción</label>
+                        <textarea id="categoria-inv-descripcion" rows="2" placeholder="Descripción de la categoría..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="categoria-inv-controla-talles">Controla Talles</label>
+                        <select id="categoria-inv-controla-talles">
+                            <option value="false">No</option>
+                            <option value="true">Sí</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="categoria-inv-activo">Activo</label>
+                        <select id="categoria-inv-activo">
+                            <option value="true">Sí</option>
+                            <option value="false">No</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-categoria-inventario')">Cancelar</button>
+                    <button type="submit" class="btn">Guardar Categoría</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: SUBCATEGORÍA -->
+    <div id="modal-subcategoria" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="subcategoria-modal-title">Nueva Subcategoría</h2>
+                <button class="modal-close" onclick="closeModal('modal-subcategoria')">&times;</button>
+            </div>
+            <form id="form-subcategoria" onsubmit="guardarSubcategoriaForm(event)">
+                <input type="hidden" id="subcategoria-id">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label for="subcategoria-nombre">Nombre</label>
+                        <input type="text" id="subcategoria-nombre" placeholder="Ej: Camperas, Remeras" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="subcategoria-categoria">Categoría Padre</label>
+                        <select id="subcategoria-categoria" required>
+                            <option value="">Seleccione...</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-subcategoria')">Cancelar</button>
+                    <button type="submit" class="btn">Guardar Subcategoría</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: TALLE -->
+    <div id="modal-talle" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="talle-modal-title">Nuevo Talle</h2>
+                <button class="modal-close" onclick="closeModal('modal-talle')">&times;</button>
+            </div>
+            <form id="form-talle" onsubmit="guardarTalleForm(event)">
+                <input type="hidden" id="talle-id">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label for="talle-nombre">Nombre del Talle</label>
+                        <input type="text" id="talle-nombre" placeholder="Ej: XS, M, XL, 42, 48, Único" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="talle-descripcion">Descripción (opcional)</label>
+                        <input type="text" id="talle-descripcion" placeholder="Ej: Extra Small, Talle 42">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-talle')">Cancelar</button>
+                    <button type="submit" class="btn">Guardar Talle</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <style>
+        .blur-readonly {
+            filter: blur(2px);
+            transition: filter 0.3s;
+            user-select: none;
+        }
+        .blur-readonly:hover {
+            filter: blur(0);
+        }
+    </style>
     <!-- Scripts -->
     <script src="db.js"></script>
     <script src="app.js"></script>
