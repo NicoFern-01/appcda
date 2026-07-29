@@ -520,6 +520,43 @@ tr:hover td {
     align-items: center;
 }
 
+/* Cost indicator styles for competition cards */
+.costo-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: var(--transition);
+    white-space: nowrap;
+    user-select: none;
+}
+
+.costo-label:hover {
+    opacity: 0.85;
+    transform: scale(1.02);
+}
+
+.costo-auto {
+    border-bottom: 2px dashed rgba(0, 210, 211, 0.3);
+    padding-bottom: 1px;
+}
+
+.costo-manual {
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 1px;
+    position: relative;
+}
+
+.costo-manual::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+    border-radius: 1px;
+}
+
 .data-card-meta {
     font-size: 0.85rem;
     color: var(--text-secondary);

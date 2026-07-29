@@ -189,7 +189,7 @@ function switchView(viewId) {
 
 async function cargarDatosVista(viewId) {
     switch(viewId) {
-        case 'dashboard':    await renderDashboard(); break;
+        case 'dashboard':    dashboardDirty = true; await renderDashboard(); break;
         case 'calendario':   await listarCompetencias(); break;
         case 'gastos':       await listarGastos(); break;
         case 'carga-detallada': await listarRendiciones(); break;
@@ -204,22 +204,32 @@ async function renderDashboard() {
     if (!dashboardDirty) return;
     dashboardDirty = false;
 
-    const [gastos, competencias, staff, categorias] = await Promise.all([
+    const [gastos, competencias, staff, categorias, conceptos, rendiciones, detalleGastos] = await Promise.all([
         getTodos('gastos'),
         getTodos('competencias'),
         getTodos('staff'),
-        getTodos('categorias')
+        getTodos('categorias'),
+        getTodos('conceptos'),
+        getTodos('rendiciones'),
+        getTodos('detalleGastos')
     ]);
 
-    const totalGasto = gastos.reduce((sum, g) => sum + Number(g.monto), 0);
+    // ============ TOTAL GENERAL: Sumar gastos simples + detallados ============
+    const totalGastoSimple = gastos.reduce((sum, g) => sum + Number(g.monto), 0);
+    const totalGastoDetallado = detalleGastos.reduce((sum, d) => sum + Number(d.total || 0), 0);
+    const totalGasto = totalGastoSimple + totalGastoDetallado;
     document.getElementById('stat-gasto-total').innerText = formatearMoneda(totalGasto);
     document.getElementById('stat-competencias-count').innerText = competencias.length;
     document.getElementById('stat-staff-count').innerText = staff.length;
 
+    // ============ GASTOS POR CATEGORÍA (deportiva) ============
+    // Para gastos simples: usamos g.categoriaId → nombre de categoría
+    // Para gastos detallados: rendicion → competencia → categoriasIds
     const gastosPorCat = {};
     categorias.forEach(c => { gastosPorCat[c.nombre] = 0; });
     gastosPorCat['General / Compartido'] = 0;
 
+    // Gastos SIMPLES
     gastos.forEach(g => {
         if (g.categoriaId === 'general') {
             gastosPorCat['General / Compartido'] += Number(g.monto);
@@ -229,22 +239,55 @@ async function renderDashboard() {
         }
     });
 
-    if (chartCategoriasInstance) chartCategoriasInstance.destroy();
-    chartCategoriasInstance = new Chart(document.getElementById('chart-categorias').getContext('2d'), {
-        type: 'bar',
-        data: {
-            labels: Object.keys(gastosPorCat),
-            datasets: [{
-                label: 'Gastos ($)',
-                data: Object.values(gastosPorCat),
-                backgroundColor: ['#ff4757','#00d2d3','#2ed573','#ff9f43','#1e90ff','#a55eea','#ff6b81'],
-                borderWidth: 0,
-                borderRadius: 4
-            }]
-        },
-        options: chartBarOptions()
+    // Gastos DETALLADOS: rendicion → competenciaId → categoriasIds
+    detalleGastos.forEach(d => {
+        const rendicion = rendiciones.find(r => Number(r.id) === Number(d.rendicionId));
+        if (!rendicion) {
+            gastosPorCat['General / Compartido'] += Number(d.total || 0);
+            return;
+        }
+        const comp = competencias.find(c => Number(c.id) === Number(rendicion.competenciaId));
+        if (!comp || !comp.categoriasIds || comp.categoriasIds.length === 0) {
+            gastosPorCat['General / Compartido'] += Number(d.total || 0);
+            return;
+        }
+        // Distribuir el gasto entre todas las categorías de la competencia
+        const monto = Number(d.total || 0) / comp.categoriasIds.length;
+        comp.categoriasIds.forEach(catId => {
+            const cat = categorias.find(c => c.id === Number(catId));
+            if (cat) {
+                gastosPorCat[cat.nombre] = (gastosPorCat[cat.nombre] || 0) + monto;
+            } else {
+                gastosPorCat['General / Compartido'] += monto;
+            }
+        });
     });
 
+    if (chartCategoriasInstance) chartCategoriasInstance.destroy();
+    const catKeys = Object.keys(gastosPorCat).filter(k => gastosPorCat[k] > 0);
+    const catVals = catKeys.map(k => gastosPorCat[k]);
+    chartCategoriasInstance = new Chart(document.getElementById('chart-categorias').getContext('2d'), {
+        type: 'doughnut',
+        data: {
+            labels: catKeys.length > 0 ? catKeys : ['Sin Gastos'],
+            datasets: [{
+                data: catKeys.length > 0 ? catVals : [0],
+                backgroundColor: ['#ff4757','#00d2d3','#2ed573','#ff9f43','#1e90ff','#a55eea','#ff6b81','#f368e0','#01a3a4'],
+                borderWidth: 2,
+                borderColor: '#1f2a40'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'right', labels: { color: '#94a3b8', font: { family: 'Outfit' } } },
+                tooltip: { callbacks: { label: (ctx) => ` $${ctx.raw.toLocaleString()}` } }
+            }
+        }
+    });
+
+    // ============ EVOLUCIÓN MENSUAL / ANUAL ============
     const intervalEl = document.getElementById('dashboard-gastos-interval');
     const interval = intervalEl ? intervalEl.value : 'monthly';
 
@@ -254,17 +297,36 @@ async function renderDashboard() {
     if (interval === 'monthly') {
         const mesesNombres = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
         const gastosMensuales = Array(12).fill(0);
+        // Gastos simples
         gastos.forEach(g => {
             if (g.fecha) gastosMensuales[new Date(g.fecha).getMonth()] += Number(g.monto);
+        });
+        // Gastos detallados: usar fecha del detalle o fecha de la rendición
+        detalleGastos.forEach(d => {
+            let fecha = d.fecha;
+            if (!fecha) {
+                const rendicion = rendiciones.find(r => Number(r.id) === Number(d.rendicionId));
+                if (rendicion) fecha = rendicion.fecha;
+            }
+            if (fecha) gastosMensuales[new Date(fecha).getMonth()] += Number(d.total || 0);
         });
         labels = mesesNombres;
         dataPoints = gastosMensuales;
     } else {
         const mapaAnios = {};
-        gastos.forEach(g => {
-            if (!g.fecha) return;
-            const y = new Date(g.fecha).getFullYear();
-            mapaAnios[y] = (mapaAnios[y] || 0) + Number(g.monto);
+        const sumarAlAnio = (fecha, monto) => {
+            if (!fecha) return;
+            const y = new Date(fecha).getFullYear();
+            mapaAnios[y] = (mapaAnios[y] || 0) + Number(monto);
+        };
+        gastos.forEach(g => sumarAlAnio(g.fecha, g.monto));
+        detalleGastos.forEach(d => {
+            let fecha = d.fecha;
+            if (!fecha) {
+                const rendicion = rendiciones.find(r => Number(r.id) === Number(d.rendicionId));
+                if (rendicion) fecha = rendicion.fecha;
+            }
+            sumarAlAnio(fecha, d.total || 0);
         });
         const sortedAnios = Object.keys(mapaAnios).map(Number).sort((a,b)=>a-b);
         labels = sortedAnios.map(String);
@@ -291,10 +353,18 @@ async function renderDashboard() {
         options: chartLineOptions()
     });
 
+    // ============ GASTOS POR CONCEPTO ============
+    // Gastos simples: usan g.concepto (texto)
+    // Gastos detallados: usan d.conceptoId → conceptos.nombre
     const gastosPorConcepto = {};
     gastos.forEach(g => {
         const k = g.concepto.trim();
         gastosPorConcepto[k] = (gastosPorConcepto[k] || 0) + Number(g.monto);
+    });
+    detalleGastos.forEach(d => {
+        const conc = conceptos.find(c => c.id === Number(d.conceptoId));
+        const k = conc ? conc.nombre.trim() : 'Sin concepto';
+        gastosPorConcepto[k] = (gastosPorConcepto[k] || 0) + Number(d.total || 0);
     });
     const top = Object.entries(gastosPorConcepto).sort((a, b) => b[1] - a[1]).slice(0, 6);
 
@@ -363,11 +433,13 @@ async function generarCodigoCompetencia() {
 
 async function listarCompetencias() {
     await actualizarSelectoresFormularios();
-    const [competencias, circuitos, categorias, gastos] = await Promise.all([
+    const [competencias, circuitos, categorias, gastos, rendiciones, detalleGastos] = await Promise.all([
         getTodos('competencias'),
         getTodos('circuitos'),
         getTodos('categorias'),
-        getTodos('gastos')
+        getTodos('gastos'),
+        getTodos('rendiciones'),
+        getTodos('detalleGastos')
     ]);
     const listContainer = document.getElementById('calendario-list');
     listContainer.innerHTML = '';
@@ -410,9 +482,26 @@ async function listarCompetencias() {
             const li = document.createElement('li');
             li.className = 'competition-list-item';
             const codigoHtml = esAdmin() ? comp.codigo : `<span class="blur-readonly" style="display:inline-block;font-family:monospace;font-size:0.85rem;">${comp.codigo || 'SIN CÓDIGO'}</span>`;
-            li.innerHTML = `<button class="link-like" onclick="editarCompetencia(${comp.id})">${comp.nombre}</button>${docBtn}` +
-                           `<div class="meta"><i class="fa-solid fa-hashtag"></i> ${codigoHtml}</div>` +
-                           `<div class="meta">${formatearFechaVisual(comp.fechaInicio)} - ${formatearFechaVisual(comp.fechaFin)}</div>`;
+            const puedeEditarComp = puedeEditar() || esSupervisor();
+            const accionesHtml = puedeEditarComp ? `
+                <div class="list-actions">
+                    <button class="action-btn" onclick="verCompetencia(${comp.id})" title="Ver"><i class="fa-solid fa-eye"></i></button>
+                    <button class="action-btn" onclick="editarCompetencia(${comp.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
+                    <button class="action-btn delete" onclick="eliminarCompetencia(${comp.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            ` : `
+                <div class="list-actions">
+                    <button class="action-btn" onclick="verCompetencia(${comp.id})" title="Ver"><i class="fa-solid fa-eye"></i></button>
+                </div>
+            `;
+            li.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
+                <div style="flex:1;min-width:200px;">
+                    <button class="link-like" onclick="editarCompetencia(${comp.id})">${comp.nombre}</button>${docBtn}
+                    <div class="meta"><i class="fa-solid fa-hashtag"></i> ${codigoHtml}</div>
+                    <div class="meta">${formatearFechaVisual(comp.fechaInicio)} - ${formatearFechaVisual(comp.fechaFin)}</div>
+                </div>
+                ${accionesHtml}
+            </div>`;
             ul.appendChild(li);
         });
         listContainer.appendChild(ul);
@@ -427,12 +516,30 @@ async function listarCompetencias() {
             const cat = categorias.find(c => c.id === Number(id));
             return cat ? cat.nombre : '';
         }).filter(Boolean);
-        const costoComp = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + Number(g.monto), 0);
+        // Sumar gastos simples asociados directamente a la competencia
+        const costoSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + Number(g.monto), 0);
+        // Sumar gastos detallados de rendiciones asociadas a esta competencia
+        const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(comp.id));
+        const costoDetallado = rendicionesComp.reduce((s, r) => {
+            const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
+            return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
+        }, 0);
+        const costoAutoCalc = costoSinples + costoDetallado;
+        // Si tiene gastoTotal manual guardado, usamos ese; sino el auto-calculado
+        const tieneManual = comp.gastoTotal !== undefined && comp.gastoTotal !== null;
+        const costoComp = tieneManual ? Number(comp.gastoTotal) : costoAutoCalc;
+        const costoClass = tieneManual ? 'costo-manual' : 'costo-auto';
+        const tooltipText = tieneManual ? 'Total editado manualmente. Haga clic para modificar o restaurar cálculo automático.' : 'Total calculado automáticamente de todos los gastos. Haga clic para editar.';
 
-        const editorActions = puedeEditar() ? `
-            <button class="action-btn" onclick="editarCompetencia(${comp.id})"><i class="fa-solid fa-pen-to-square"></i></button>
-            <button class="action-btn delete" onclick="eliminarCompetencia(${comp.id})"><i class="fa-solid fa-trash"></i></button>
+        const puedeEditarComp = puedeEditar() || esSupervisor();
+        const viewBtn = `<button class="action-btn" onclick="verCompetencia(${comp.id})" title="Ver detalle"><i class="fa-solid fa-eye"></i></button>`;
+        const editActions = puedeEditarComp ? `
+            <button class="action-btn" onclick="editarCompetencia(${comp.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
+            <button class="action-btn delete" onclick="eliminarCompetencia(${comp.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
         ` : '';
+        const editorActions = viewBtn + editActions;
+
+        const puedeEditarTotal = puedeEditar() || esSupervisor();
 
         const docLink = comp.documentosUrl ? `
             <a href="${comp.documentosUrl}" target="_blank" class="action-btn" title="Ver OneDrive" style="color: var(--accent); display: inline-flex; align-items: center; gap: 6px;">
@@ -442,11 +549,23 @@ async function listarCompetencias() {
 
         const card = document.createElement('div');
         card.className = 'data-card';
+        card.dataset.compId = comp.id;
         const codigoVisible = esAdmin() ? comp.codigo : `<span class="blur-readonly" style="display:inline-block;font-family:monospace;font-size:0.9rem;">${comp.codigo || 'SIN CÓDIGO'}</span>`;
+        
+        let totalHtml;
+        if (puedeEditarTotal) {
+            totalHtml = `<span class="costo-label ${costoClass}" style="color:var(--accent);font-weight:700;cursor:pointer;" onclick="editarTotalCompetenciaInplace(${comp.id})" title="${tooltipText}">
+                $${costoComp.toLocaleString(undefined,{minimumFractionDigits:2})}
+                ${tieneManual ? '<i class="fa-solid fa-pencil" style="font-size:0.7rem;margin-left:4px;opacity:0.7;"></i>' : '<i class="fa-regular fa-pen-to-square" style="font-size:0.65rem;margin-left:4px;opacity:0.4;"></i>'}
+            </span>`;
+        } else {
+            totalHtml = `<span style="color:var(--accent);font-weight:700;">$${costoComp.toLocaleString(undefined,{minimumFractionDigits:2})}</span>`;
+        }
+        
         card.innerHTML = `
             <div class="data-card-title">
                 <span>${comp.nombre}</span>
-                <span style="color:var(--accent);font-weight:700;">$${costoComp.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                ${totalHtml}
             </div>
             <div class="data-card-meta"><i class="fa-solid fa-hashtag"></i> <span style="font-family:monospace;font-weight:600;">${codigoVisible}</span></div>
             <div class="data-card-meta"><i class="fa-solid fa-map-location-dot"></i> <span>${circNombre}</span></div>
@@ -460,6 +579,101 @@ async function listarCompetencias() {
         listContainer.appendChild(card);
     });
     updateCalendarioToggleButton();
+}
+
+async function verCompetencia(id) {
+    const comp = await obtenerPorId('competencias', id);
+    if (!comp) return;
+    const [circuitos, categorias, staff, gastos, rendiciones, detalleGastos] = await Promise.all([
+        getTodos('circuitos'), getTodos('categorias'), getTodos('staff'),
+        getTodos('gastos'), getTodos('rendiciones'), getTodos('detalleGastos')
+    ]);
+    const circ = circuitos.find(c => c.id === Number(comp.circuitoId));
+    const circNombre = circ ? `${circ.nombre} (${circ.ubicacion})` : 'Desconocido';
+    const catNombres = comp.categoriasIds.map(id => {
+        const cat = categorias.find(c => c.id === Number(id));
+        return cat ? cat.nombre : '';
+    }).filter(Boolean);
+    const staffNombres = (comp.staffIds || []).map(id => {
+        const s = staff.find(p => p.id === Number(id));
+        return s ? `${s.nombre} ${s.apellido} (${s.funcion})` : '';
+    }).filter(Boolean);
+
+    const costoSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + Number(g.monto), 0);
+    const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(comp.id));
+    const costoDetallado = rendicionesComp.reduce((s, r) => {
+        const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
+        return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
+    }, 0);
+    const costoAutoCalc = costoSinples + costoDetallado;
+    const tieneManual = comp.gastoTotal !== undefined && comp.gastoTotal !== null;
+    const costoComp = tieneManual ? Number(comp.gastoTotal) : costoAutoCalc;
+
+    if (!document.getElementById('modal-ver-competencia')) {
+        const modalHtml = `
+        <div id="modal-ver-competencia" class="modal-overlay">
+            <div class="modal modal-lg">
+                <div class="modal-header">
+                    <h2 class="modal-title"><i class="fa-solid fa-trophy"></i> <span id="ver-comp-nombre"></span></h2>
+                    <button class="modal-close" onclick="closeModal('modal-ver-competencia')">&times;</button>
+                </div>
+                <div class="modal-content" style="padding:1rem 0;">
+                    <div class="stats-grid" id="ver-comp-stats" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:1rem;"></div>
+                    <div class="form-card" style="margin-bottom:1rem;">
+                        <div class="form-title"><i class="fa-solid fa-circle-info"></i> Información General</div>
+                        <div id="ver-comp-info" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;padding:0.5rem 0;"></div>
+                    </div>
+                    <div class="form-card">
+                        <div class="form-title"><i class="fa-solid fa-users"></i> Personal Asignado</div>
+                        <div id="ver-comp-staff" style="display:flex;flex-wrap:wrap;gap:0.5rem;padding:0.5rem 0;"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-ver-competencia')">Cerrar</button>
+                </div>
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+    }
+
+    document.getElementById('ver-comp-nombre').textContent = comp.nombre;
+
+    document.getElementById('ver-comp-stats').innerHTML = `
+        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Código</h3><p style="font-size:1.1rem;font-family:monospace;">${comp.codigo || 'SIN CÓDIGO'}</p></div><div class="stat-icon"><i class="fa-solid fa-hashtag"></i></div></div>
+        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Total Gastos</h3><p style="font-size:1.1rem;color:var(--accent);font-weight:700;">${formatearMoneda(costoComp)}</p></div><div class="stat-icon"><i class="fa-solid fa-dollar-sign"></i></div></div>
+        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Categorías</h3><p style="font-size:1rem;">${catNombres.slice(0, 3).join(', ')}${catNombres.length > 3 ? ` (+${catNombres.length - 3})` : ''}</p></div><div class="stat-icon"><i class="fa-solid fa-tag"></i></div></div>
+        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Personal</h3><p style="font-size:1rem;">${staffNombres.length} asignados</p></div><div class="stat-icon"><i class="fa-solid fa-users"></i></div></div>
+    `;
+
+    const calcInfo = tieneManual ? 
+        `<div><strong>Total auto-calculado:</strong> ${formatearMoneda(costoAutoCalc)}</div>
+         <div><strong>Total manual:</strong> <span style="color:var(--accent);">${formatearMoneda(Number(comp.gastoTotal))}</span></div>` : 
+        `<div><strong>Total:</strong> ${formatearMoneda(costoAutoCalc)} <span style="color:var(--text-secondary);font-size:0.85rem;">(calculado automáticamente)</span></div>`;
+
+    const docLink = comp.documentosUrl ? `<a href="${comp.documentosUrl}" target="_blank" style="color:var(--accent);"><i class="fa-solid fa-folder-open"></i> Ver documentos</a>` : '<span style="color:var(--text-secondary);">No hay documentos</span>';
+
+    document.getElementById('ver-comp-info').innerHTML = `
+        <div><strong>Autódromo:</strong> ${circNombre}</div>
+        <div><strong>Código:</strong> <span style="font-family:monospace;">${comp.codigo || 'SIN CÓDIGO'}</span></div>
+        <div><strong>Fecha inicio:</strong> ${formatearFechaVisual(comp.fechaInicio)}</div>
+        <div><strong>Fecha fin:</strong> ${formatearFechaVisual(comp.fechaFin)}</div>
+        ${calcInfo}
+        <div><strong>Documentos:</strong> ${docLink}</div>
+        <div><strong>Gastos simples:</strong> ${formatearMoneda(costoSinples)}</div>
+        <div><strong>Gastos detallados:</strong> ${formatearMoneda(costoDetallado)}</div>
+    `;
+
+    const staffContainer = document.getElementById('ver-comp-staff');
+    staffContainer.innerHTML = '';
+    if (staffNombres.length === 0) {
+        staffContainer.innerHTML = '<span style="color:var(--text-secondary);">No hay personal asignado a esta competencia.</span>';
+    } else {
+        staffNombres.forEach(n => {
+            staffContainer.innerHTML += `<span class="tag">${n}</span>`;
+        });
+    }
+
+    openModal('modal-ver-competencia');
 }
 
 async function openModalCompetencia() {
@@ -570,6 +784,62 @@ async function limpiarCompetenciaDeStaff(competenciaId) {
             await guardar('staff', persona);
         }
     }
+}
+
+// ==================== EDICIÓN INLINE DEL TOTAL DE COMPETENCIA ====================
+async function editarTotalCompetenciaInplace(compId) {
+    if (!puedeEditar() && !esSupervisor()) return;
+    
+    const comp = await obtenerPorId('competencias', compId);
+    if (!comp) return;
+
+    // Calcular el valor auto-calculado para referencia (incluyendo gastos simples + detallados)
+    const gastos = await getTodos('gastos');
+    const rendiciones = await getTodos('rendiciones');
+    const detalleGastos = await getTodos('detalleGastos');
+    const costoSinples = gastos.filter(g => Number(g.competenciaId) === Number(compId)).reduce((s, g) => s + Number(g.monto), 0);
+    const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(compId));
+    const costoDetallado = rendicionesComp.reduce((s, r) => {
+        const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
+        return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
+    }, 0);
+    const costoAutoCalc = costoSinples + costoDetallado;
+    const valorActual = (comp.gastoTotal !== undefined && comp.gastoTotal !== null) ? Number(comp.gastoTotal) : costoAutoCalc;
+
+    // Mostrar opciones en un prompt personalizado
+    const opcion = prompt(
+        `Editar total de gastos para: ${comp.nombre}\n\n` +
+        `Valor actual: $${valorActual.toLocaleString(undefined,{minimumFractionDigits:2})}\n` +
+        `Auto-calculado (de gastos reales): $${costoAutoCalc.toLocaleString(undefined,{minimumFractionDigits:2})}\n\n` +
+        `- Ingresá un nuevo monto manual (ej: 500000)\n` +
+        `- Escribí "auto" para restaurar el cálculo automático\n` +
+        `- Presioná Cancelar para salir sin cambios`,
+        valorActual
+    );
+
+    if (opcion === null) return; // Cancelar
+
+    const opcionTrim = opcion.trim().toLowerCase();
+
+    if (opcionTrim === 'auto') {
+        // Restaurar al valor auto-calculado: eliminar el campo gastoTotal
+        delete comp.gastoTotal;
+        await guardar('competencias', comp);
+        dashboardDirty = true;
+        listarCompetencias();
+        return;
+    }
+
+    const nuevoMonto = parseFloat(opcionTrim.replace(/[$,.\s]/g, '').replace(',', '.'));
+    if (isNaN(nuevoMonto) || nuevoMonto < 0) {
+        alert('Por favor, ingresá un monto válido (número positivo).');
+        return;
+    }
+
+    comp.gastoTotal = nuevoMonto;
+    await guardar('competencias', comp);
+    dashboardDirty = true;
+    listarCompetencias();
 }
 
 // ==================== GASTOS ====================
@@ -3151,11 +3421,16 @@ async function listarArticulos() {
 
         const acciones = puedeEditar() ? `
             <td style="text-align:right;white-space:nowrap;">
+                <button class="action-btn" onclick="verArticulo(${art.id})" title="Ver detalle"><i class="fa-solid fa-eye"></i></button>
                 <button class="action-btn" onclick="editarArticulo(${art.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
                 <button class="action-btn" onclick="duplicarArticulo(${art.id})" title="Duplicar"><i class="fa-solid fa-copy"></i></button>
                 <button class="action-btn delete" onclick="eliminarArticulo(${art.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
             </td>
-        ` : '';
+        ` : `
+            <td style="text-align:right;white-space:nowrap;">
+                <button class="action-btn" onclick="verArticulo(${art.id})" title="Ver detalle"><i class="fa-solid fa-eye"></i></button>
+            </td>
+        `;
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -3175,6 +3450,114 @@ async function listarArticulos() {
     selectCat.innerHTML = '<option value="todas">Todas</option>';
     categorias.forEach(c => selectCat.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
     selectCat.value = savedCat;
+}
+
+async function verArticulo(id) {
+    const art = await obtenerPorId('articulos', id);
+    if (!art) return;
+    
+    const [categorias, articuloTalles, movimientos, imagenes] = await Promise.all([
+        getTodos('categoriasInventario'),
+        getTodos('articuloTalles'),
+        getTodos('movimientosInventario'),
+        getTodos('imagenesArticulo')
+    ]);
+    
+    const cat = categorias.find(c => c.id === Number(art.categoriaId));
+    const catName = cat ? cat.nombre : '-';
+    const sub = categorias.find(c => c.id === Number(art.subcategoriaId));
+    const subName = sub ? sub.nombre : '-';
+    
+    let stock = 0;
+    let stockDetalle = '';
+    if (art.controlaTalles) {
+        const talles = await getTodos('talles');
+        const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
+        stock = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
+        stockDetalle = tallesArt.map(t => {
+            const talle = talles.find(tl => tl.id === Number(t.talleId));
+            return `${talle ? talle.nombre : '?'}: ${t.stock}`;
+        }).join(', ') || 'Sin stock por talle';
+    } else {
+        stock = Number(art.stockUnico || 0);
+        stockDetalle = `${stock} unidades`;
+    }
+
+    if (!document.getElementById('modal-ver-articulo')) {
+        const modalHtml = `
+        <div id="modal-ver-articulo" class="modal-overlay">
+            <div class="modal modal-lg">
+                <div class="modal-header">
+                    <h2 class="modal-title"><span id="ver-art-codigo"></span></h2>
+                    <button class="modal-close" onclick="closeModal('modal-ver-articulo')">&times;</button>
+                </div>
+                <div class="modal-content" style="padding:1.5rem;">
+                    <div class="stats-grid" id="ver-art-stats" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:1.5rem;"></div>
+                    <div class="form-card" style="margin-bottom:1rem;">
+                        <div class="form-title"><i class="fa-solid fa-circle-info"></i> Información General</div>
+                        <div id="ver-art-info" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;padding:0.5rem 0;"></div>
+                    </div>
+                    ${art.imagenPrincipal ? `<div class="form-card" style="margin-bottom:1rem;"><div class="form-title"><i class="fa-solid fa-image"></i> Imagen Principal</div><img src="${escapeHtml(art.imagenPrincipal)}" style="max-width:100%;max-height:300px;border-radius:8px;" onerror="this.style.display='none'"></div>` : ''}
+                    ${imagenes.length > 0 ? `<div class="form-card" style="margin-bottom:1rem;"><div class="form-title"><i class="fa-solid fa-images"></i> Galería</div><div class="article-gallery" id="ver-art-galeria"></div></div>` : ''}
+                    <div class="form-card">
+                        <div class="form-title"><i class="fa-solid fa-warehouse"></i> Stock</div>
+                        <div id="ver-art-stock" style="padding:0.5rem 0;font-size:1.1rem;"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-ver-articulo')">Cerrar</button>
+                </div>
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+    }
+
+    document.getElementById('ver-art-codigo').textContent = art.codigo;
+
+    document.getElementById('ver-art-stats').innerHTML = `
+        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Nombre</h3><p style="font-size:1.1rem;font-weight:600;">${escapeHtml(art.nombre)}</p></div><div class="stat-icon"><i class="fa-solid fa-box"></i></div></div>
+        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Categoría</h3><p style="font-size:1.1rem;">${escapeHtml(catName)}</p></div><div class="stat-icon"><i class="fa-solid fa-tag"></i></div></div>
+        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Stock Total</h3><p style="font-size:1.1rem;color:var(--accent);font-weight:700;">${stock}</p></div><div class="stat-icon"><i class="fa-solid fa-cubes"></i></div></div>
+        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Estado</h3><p style="font-size:1.1rem;"><span class="badge ${art.activo !== false ? 'badge-active' : 'badge-inactive'}">${art.activo !== false ? 'Activo' : 'Inactivo'}</span></p></div><div class="stat-icon"><i class="fa-solid fa-circle-check"></i></div></div>
+    `;
+
+    document.getElementById('ver-art-info').innerHTML = `
+        <div><strong>Nombre:</strong> ${escapeHtml(art.nombre)}</div>
+        <div><strong>Código:</strong> <span style="font-family:monospace;">${escapeHtml(art.codigo)}</span></div>
+        <div><strong>Categoría:</strong> ${escapeHtml(catName)}</div>
+        ${subName !== '-' ? `<div><strong>Subcategoría:</strong> ${escapeHtml(subName)}</div>` : ''}
+        ${art.marca ? `<div><strong>Marca:</strong> ${escapeHtml(art.marca)}</div>` : ''}
+        ${art.modelo ? `<div><strong>Modelo:</strong> ${escapeHtml(art.modelo)}</div>` : ''}
+        ${art.color ? `<div><strong>Color:</strong> ${escapeHtml(art.color)}</div>` : ''}
+        <div><strong>Stock Mínimo:</strong> ${art.stockMinimo || 0}</div>
+        <div><strong>Controla Talles:</strong> ${art.controlaTalles ? 'Sí' : 'No'}</div>
+        ${art.observaciones ? `<div style="grid-column:1/-1;"><strong>Observaciones:</strong> ${escapeHtml(art.observaciones)}</div>` : ''}
+    `;
+
+    if (art.controlaTalles) {
+        const talles = await getTodos('talles');
+        const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
+        document.getElementById('ver-art-stock').innerHTML = tallesArt.length > 0 ? 
+            `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0.75rem;">${tallesArt.map(t => {
+                const talle = talles.find(tl => tl.id === Number(t.talleId));
+                return `<div style="background:var(--bg-secondary);padding:0.75rem;border-radius:6px;text-align:center;"><div style="font-size:0.85rem;color:var(--text-secondary);">${talle ? talle.nombre : '?'}</div><div style="font-size:1.3rem;font-weight:700;color:var(--accent-blue);">${t.stock || 0}</div></div>`;
+            }).join('')}</div>` : '<span style="color:var(--text-secondary);">Sin stock configurado por talle.</span>';
+    } else {
+        document.getElementById('ver-art-stock').innerHTML = `<span style="font-weight:700;font-size:1.4rem;color:var(--accent);">${stock}</span> <span style="color:var(--text-secondary);">unidades en stock</span>`;
+    }
+
+    if (imagenes.length > 0) {
+        const gal = document.getElementById('ver-art-galeria');
+        gal.innerHTML = '';
+        imagenes.forEach(img => {
+            const item = document.createElement('div');
+            item.className = 'article-gallery-item';
+            item.innerHTML = `<img src="${escapeHtml(img.url)}" alt="Imagen" onerror="this.style.display='none'">`;
+            gal.appendChild(item);
+        });
+    }
+
+    openModal('modal-ver-articulo');
 }
 
 async function openModalArticulo() {
