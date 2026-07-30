@@ -668,6 +668,12 @@ tr:hover td {
     transition: var(--transition);
 }
 
+/* Ensure edit modals always appear on top of view modals */
+#modal-editar-total-gastos,
+#modal-editar-total-gastos.active {
+    z-index: 2000 !important;
+}
+
 .modal-overlay.active {
     opacity: 1;
     pointer-events: auto;

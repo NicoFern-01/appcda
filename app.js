@@ -531,6 +531,14 @@ async function listarCompetencias() {
         const costoClass = tieneManual ? 'costo-manual' : 'costo-auto';
         const tooltipText = tieneManual ? 'Total editado manualmente. Haga clic para modificar o restaurar cálculo automático.' : 'Total calculado automáticamente de todos los gastos. Haga clic para editar.';
 
+        // Calcular monto a facturar para esta competencia
+        const montoFacturarSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + (Number(g.montoFacturar) || 0), 0);
+        const montoFacturarDetallado = rendicionesComp.reduce((s, r) => {
+            const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
+            return s + detallesRend.reduce((sd, d) => sd + (Number(d.montoFacturar) || 0), 0);
+        }, 0);
+        const montoFacturarComp = montoFacturarSinples + montoFacturarDetallado;
+
         const puedeEditarComp = puedeEditar() || esSupervisor();
         const viewBtn = `<button class="action-btn" onclick="verCompetencia(${comp.id})" title="Ver detalle"><i class="fa-solid fa-eye"></i></button>`;
         const editActions = puedeEditarComp ? `
@@ -540,6 +548,7 @@ async function listarCompetencias() {
         const editorActions = viewBtn + editActions;
 
         const puedeEditarTotal = puedeEditar() || esSupervisor();
+        const puedeEditarMontoFacturar = puedeEditar() || esSupervisor();
 
         const docLink = comp.documentosUrl ? `
             <a href="${comp.documentosUrl}" target="_blank" class="action-btn" title="Ver OneDrive" style="color: var(--accent); display: inline-flex; align-items: center; gap: 6px;">
@@ -561,6 +570,20 @@ async function listarCompetencias() {
         } else {
             totalHtml = `<span style="color:var(--accent);font-weight:700;">$${costoComp.toLocaleString(undefined,{minimumFractionDigits:2})}</span>`;
         }
+
+        const tieneMontoFacturarManual = comp.montoFacturarManual !== undefined && comp.montoFacturarManual !== null;
+        const montoFacturarDisplay = tieneMontoFacturarManual ? Number(comp.montoFacturarManual) : montoFacturarComp;
+        const montoFacturarClass = tieneMontoFacturarManual ? 'costo-manual' : 'costo-auto';
+        
+        let montoFacturarHtml;
+        if (puedeEditarMontoFacturar) {
+            montoFacturarHtml = `<span class="costo-label ${montoFacturarClass}" style="color:var(--accent);font-weight:700;cursor:pointer;white-space:nowrap;" onclick="editarMontoFacturarInplace(${comp.id})" title="${tieneMontoFacturarManual ? 'Valor editado manualmente. Haga clic para modificar o restaurar cálculo automático.' : 'Calculado automáticamente. Haga clic para editar.'}">
+                <i class="fa-solid fa-file-invoice" style="font-size:0.85rem;margin-right:4px;"></i>${formatearMoneda(montoFacturarDisplay)}
+                ${tieneMontoFacturarManual ? '<i class="fa-solid fa-pencil" style="font-size:0.7rem;margin-left:4px;opacity:0.7;"></i>' : '<i class="fa-regular fa-pen-to-square" style="font-size:0.65rem;margin-left:4px;opacity:0.4;"></i>'}
+            </span>`;
+        } else {
+            montoFacturarHtml = `<span style="color:var(--accent);font-weight:700;white-space:nowrap;"><i class="fa-solid fa-file-invoice" style="font-size:0.85rem;margin-right:4px;"></i>${formatearMoneda(montoFacturarDisplay)}</span>`;
+        }
         
         card.innerHTML = `
             <div class="data-card-title">
@@ -570,6 +593,7 @@ async function listarCompetencias() {
             <div class="data-card-meta"><i class="fa-solid fa-hashtag"></i> <span style="font-family:monospace;font-weight:600;">${codigoVisible}</span></div>
             <div class="data-card-meta"><i class="fa-solid fa-map-location-dot"></i> <span>${circNombre}</span></div>
             <div class="data-card-meta"><i class="fa-solid fa-calendar-day"></i> <span>${formatearFechaVisual(comp.fechaInicio)} al ${formatearFechaVisual(comp.fechaFin)}</span></div>
+            <div class="data-card-meta" style="color:var(--accent);">${montoFacturarHtml}</div>
             <div class="data-card-tags">${catNombres.map(n => `<span class="tag">${n}</span>`).join('')}</div>
             <div class="data-card-actions">
                 ${docLink}
@@ -609,6 +633,14 @@ async function verCompetencia(id) {
     const tieneManual = comp.gastoTotal !== undefined && comp.gastoTotal !== null;
     const costoComp = tieneManual ? Number(comp.gastoTotal) : costoAutoCalc;
 
+    // Calcular monto a facturar
+    const montoFacturarSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + (Number(g.montoFacturar) || 0), 0);
+    const montoFacturarDetallado = rendicionesComp.reduce((s, r) => {
+        const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
+        return s + detallesRend.reduce((sd, d) => sd + (Number(d.montoFacturar) || 0), 0);
+    }, 0);
+    const montoFacturarTotal = montoFacturarSinples + montoFacturarDetallado;
+
     if (!document.getElementById('modal-ver-competencia')) {
         const modalHtml = `
         <div id="modal-ver-competencia" class="modal-overlay">
@@ -638,9 +670,53 @@ async function verCompetencia(id) {
 
     document.getElementById('ver-comp-nombre').textContent = comp.nombre;
 
+    // Monto a Facturar en modal Ver (editable si tiene permisos)
+    const tieneMontoFacturarManual = comp.montoFacturarManual !== undefined && comp.montoFacturarManual !== null;
+    const montoFacturarDisplay = tieneMontoFacturarManual ? Number(comp.montoFacturarManual) : montoFacturarTotal;
+    
+    let montoFacturarStatCard;
+    if (puedeEditar() || esSupervisor()) {
+        montoFacturarStatCard = `
+            <div class="stat-card" style="padding:1rem;cursor:pointer;" onclick="editarMontoFacturarInplace(${comp.id})" title="Clic para editar">
+                <div class="stat-info"><h3 style="font-size:0.85rem;">Monto a Facturar</h3>
+                <p style="font-size:1.1rem;color:var(--accent);font-weight:700;">
+                    <i class="fa-solid fa-file-invoice" style="font-size:0.9rem;margin-right:4px;"></i>${formatearMoneda(montoFacturarDisplay)}
+                    ${tieneMontoFacturarManual ? '<i class="fa-solid fa-pencil" style="font-size:0.7rem;margin-left:4px;opacity:0.7;"></i>' : '<i class="fa-regular fa-pen-to-square" style="font-size:0.65rem;margin-left:4px;opacity:0.4;"></i>'}
+                </p></div>
+                <div class="stat-icon"><i class="fa-solid fa-file-invoice"></i></div>
+            </div>`;
+    } else {
+        montoFacturarStatCard = `
+            <div class="stat-card" style="padding:1rem;">
+                <div class="stat-info"><h3 style="font-size:0.85rem;">Monto a Facturar</h3><p style="font-size:1.1rem;color:var(--accent);font-weight:700;">${formatearMoneda(montoFacturarDisplay)}</p></div>
+                <div class="stat-icon"><i class="fa-solid fa-file-invoice"></i></div>
+            </div>`;
+    }
+
+    // Total Gastos en modal Ver (editable si tiene permisos)
+    let totalGastosStatCard;
+    if (puedeEditar() || esSupervisor()) {
+        totalGastosStatCard = `
+            <div class="stat-card" style="padding:1rem;cursor:pointer;" onclick="editarTotalCompetenciaInplace(${comp.id})" title="Clic para editar">
+                <div class="stat-info"><h3 style="font-size:0.85rem;">Total Gastos</h3>
+                <p style="font-size:1.1rem;color:var(--accent);font-weight:700;">
+                    <i class="fa-solid fa-dollar-sign" style="font-size:0.9rem;margin-right:4px;"></i>${formatearMoneda(costoComp)}
+                    ${tieneManual ? '<i class="fa-solid fa-pencil" style="font-size:0.7rem;margin-left:4px;opacity:0.7;"></i>' : '<i class="fa-regular fa-pen-to-square" style="font-size:0.65rem;margin-left:4px;opacity:0.4;"></i>'}
+                </p></div>
+                <div class="stat-icon"><i class="fa-solid fa-dollar-sign"></i></div>
+            </div>`;
+    } else {
+        totalGastosStatCard = `
+            <div class="stat-card" style="padding:1rem;">
+                <div class="stat-info"><h3 style="font-size:0.85rem;">Total Gastos</h3><p style="font-size:1.1rem;color:var(--accent);font-weight:700;">${formatearMoneda(costoComp)}</p></div>
+                <div class="stat-icon"><i class="fa-solid fa-dollar-sign"></i></div>
+            </div>`;
+    }
+
     document.getElementById('ver-comp-stats').innerHTML = `
         <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Código</h3><p style="font-size:1.1rem;font-family:monospace;">${comp.codigo || 'SIN CÓDIGO'}</p></div><div class="stat-icon"><i class="fa-solid fa-hashtag"></i></div></div>
-        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Total Gastos</h3><p style="font-size:1.1rem;color:var(--accent);font-weight:700;">${formatearMoneda(costoComp)}</p></div><div class="stat-icon"><i class="fa-solid fa-dollar-sign"></i></div></div>
+        ${totalGastosStatCard}
+        ${montoFacturarStatCard}
         <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Categorías</h3><p style="font-size:1rem;">${catNombres.slice(0, 3).join(', ')}${catNombres.length > 3 ? ` (+${catNombres.length - 3})` : ''}</p></div><div class="stat-icon"><i class="fa-solid fa-tag"></i></div></div>
         <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Personal</h3><p style="font-size:1rem;">${staffNombres.length} asignados</p></div><div class="stat-icon"><i class="fa-solid fa-users"></i></div></div>
     `;
@@ -743,6 +819,11 @@ async function guardarCompetenciaForm(e) {
         codigo = await generarCodigoCompetencia();
     }
 
+    // Obtener valores originales para preservar campos manuales
+    const competenciaOriginal = id ? await obtenerPorId('competencias', Number(id)) : {};
+    const gastoTotalManual = competenciaOriginal.gastoTotal;
+    const montoFacturarManual = competenciaOriginal.montoFacturarManual;
+
     const competencia = {
         nombre: document.getElementById('competencia-nombre').value,
         circuitoId: Number(document.getElementById('competencia-circuito').value),
@@ -751,7 +832,9 @@ async function guardarCompetenciaForm(e) {
         categoriasIds,
         staffIds,
         documentosUrl: document.getElementById('competencia-documentos').value.trim(),
-        codigo
+        codigo,
+        gastoTotal: gastoTotalManual,
+        montoFacturarManual: montoFacturarManual
     };
     if (id) competencia.id = Number(id);
 
@@ -786,10 +869,61 @@ async function limpiarCompetenciaDeStaff(competenciaId) {
     }
 }
 
+// ==================== EDICIÓN INLINE DEL MONTO A FACTURAR ====================
+async function editarMontoFacturarInplace(compId) {
+    if (!puedeEditar() && !esSupervisor()) return;
+    
+    const comp = await obtenerPorId('competencias', compId);
+    if (!comp) return;
+
+    // Calcular el valor auto-calculado para referencia
+    const gastos = await getTodos('gastos');
+    const rendiciones = await getTodos('rendiciones');
+    const detalleGastos = await getTodos('detalleGastos');
+    const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(compId));
+    const montoFacturarSinples = gastos.filter(g => Number(g.competenciaId) === Number(compId)).reduce((s, g) => s + (Number(g.montoFacturar) || 0), 0);
+    const montoFacturarDetallado = rendicionesComp.reduce((s, r) => {
+        const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
+        return s + detallesRend.reduce((sd, d) => sd + (Number(d.montoFacturar) || 0), 0);
+    }, 0);
+    const montoFacturarAutoCalc = montoFacturarSinples + montoFacturarDetallado;
+    const valorActual = (comp.montoFacturarManual !== undefined && comp.montoFacturarManual !== null) ? Number(comp.montoFacturarManual) : montoFacturarAutoCalc;
+
+    // Preparar datos para el modal
+    document.getElementById('modal-editar-total-title').textContent = `Editar Monto a Facturar - ${comp.nombre}`;
+    document.getElementById('modal-editar-total-competencia').textContent = `Competencia: ${comp.nombre}`;
+    document.getElementById('modal-editar-total-label').textContent = 'Monto a Facturar total:';
+    document.getElementById('modal-editar-total-helper').textContent = 'Ingresá el valor TOTAL que deseas facturar. Dejalo vacío para usar el cálculo automático.';
+    document.getElementById('modal-editar-total-desglose').innerHTML = `
+        <div style="padding:0.5rem;background:rgba(0,0,0,0.2);border-radius:6px;">
+            <div style="font-size:0.85rem;color:var(--text-secondary);">Monto a Facturar (Auto-calculado)</div>
+            <div style="font-size:1.1rem;font-weight:700;color:var(--accent);">${formatearMoneda(montoFacturarAutoCalc)}</div>
+        </div>
+        <div style="padding:0.5rem;background:rgba(0,0,0,0.2);border-radius:6px;">
+            <div style="font-size:0.85rem;color:var(--text-secondary);">Gastos Simples (incluidos)</div>
+            <div style="font-size:1.1rem;font-weight:700;color:var(--accent);">${formatearMoneda(montoFacturarSinples)}</div>
+        </div>
+        <div style="padding:0.5rem;background:rgba(0,210,211,0.1);border-radius:6px;grid-column:1/-1;">
+            <div style="font-size:0.85rem;color:var(--text-secondary);">Total Auto-calculado</div>
+            <div style="font-size:1.2rem;font-weight:700;color:var(--accent);">${formatearMoneda(montoFacturarAutoCalc)}</div>
+        </div>
+    `;
+
+    // Mostrar el valor actual total
+    document.getElementById('modal-editar-total-input').value = valorActual > 0 ? valorActual : '';
+
+    // Guardar datos temporales en el modal
+    document.getElementById('modal-editar-total-gastos').dataset.compId = compId;
+    document.getElementById('modal-editar-total-gastos').dataset.costoAutoCalc = montoFacturarAutoCalc;
+    document.getElementById('modal-editar-total-gastos').dataset.tipo = 'montoFacturar';
+
+    openModal('modal-editar-total-gastos');
+}
+
 // ==================== EDICIÓN INLINE DEL TOTAL DE COMPETENCIA ====================
 async function editarTotalCompetenciaInplace(compId) {
     if (!puedeEditar() && !esSupervisor()) return;
-    
+
     const comp = await obtenerPorId('competencias', compId);
     if (!comp) return;
 
@@ -806,50 +940,156 @@ async function editarTotalCompetenciaInplace(compId) {
     const costoAutoCalc = costoSinples + costoDetallado;
     const valorActual = (comp.gastoTotal !== undefined && comp.gastoTotal !== null) ? Number(comp.gastoTotal) : costoAutoCalc;
 
-    // Mostrar opciones en un prompt personalizado
-    const opcion = prompt(
-        `Editar total de gastos para: ${comp.nombre}\n\n` +
-        `Valor actual: $${valorActual.toLocaleString(undefined,{minimumFractionDigits:2})}\n` +
-        `Auto-calculado (de gastos reales): $${costoAutoCalc.toLocaleString(undefined,{minimumFractionDigits:2})}\n\n` +
-        `- Ingresá un nuevo monto manual (ej: 500000)\n` +
-        `- Escribí "auto" para restaurar el cálculo automático\n` +
-        `- Presioná Cancelar para salir sin cambios`,
-        valorActual
-    );
+    // Preparar datos para el modal
+    document.getElementById('modal-editar-total-title').textContent = `Editar Total de Gastos - ${comp.nombre}`;
+    document.getElementById('modal-editar-total-competencia').textContent = `Competencia: ${comp.nombre}`;
+    document.getElementById('modal-editar-total-desglose').innerHTML = `
+        <div style="padding:0.5rem;background:rgba(0,0,0,0.2);border-radius:6px;">
+            <div style="font-size:0.85rem;color:var(--text-secondary);">Gastos Simples</div>
+            <div style="font-size:1.1rem;font-weight:700;color:var(--accent);">${formatearMoneda(costoSinples)}</div>
+        </div>
+        <div style="padding:0.5rem;background:rgba(0,0,0,0.2);border-radius:6px;">
+            <div style="font-size:0.85rem;color:var(--text-secondary);">Gastos Detallados</div>
+            <div style="font-size:1.1rem;font-weight:700;color:var(--accent);">${formatearMoneda(costoDetallado)}</div>
+        </div>
+        <div style="padding:0.5rem;background:rgba(0,210,211,0.1);border-radius:6px;grid-column:1/-1;">
+            <div style="font-size:0.85rem;color:var(--text-secondary);">Total Auto-calculado</div>
+            <div style="font-size:1.2rem;font-weight:700;color:var(--accent);">${formatearMoneda(costoAutoCalc)}</div>
+        </div>
+    `;
 
-    if (opcion === null) return; // Cancelar
+    // Calcular el valor a sumar (si hay valor manual guardado, es la diferencia; si no, 0)
+    const valorSumar = (comp.gastoTotal !== undefined && comp.gastoTotal !== null) ? Math.max(0, Number(comp.gastoTotal) - costoAutoCalc) : 0;
+    document.getElementById('modal-editar-total-input').value = valorSumar > 0 ? valorSumar : '';
 
-    const opcionTrim = opcion.trim().toLowerCase();
+    // Guardar datos temporales en el modal
+    document.getElementById('modal-editar-total-gastos').dataset.compId = compId;
+    document.getElementById('modal-editar-total-gastos').dataset.costoAutoCalc = costoAutoCalc;
 
-    if (opcionTrim === 'auto') {
-        // Restaurar al valor auto-calculado: eliminar el campo gastoTotal
-        delete comp.gastoTotal;
-        await guardar('competencias', comp);
-        dashboardDirty = true;
-        listarCompetencias();
-        return;
+    openModal('modal-editar-total-gastos');
+}
+
+async function guardarTotalGastosManual() {
+    const compId = document.getElementById('modal-editar-total-gastos').dataset.compId;
+    const costoAutoCalc = parseFloat(document.getElementById('modal-editar-total-gastos').dataset.costoAutoCalc);
+    const inputSumar = document.getElementById('modal-editar-total-input').value;
+    const tipo = document.getElementById('modal-editar-total-gastos').dataset.tipo || 'gastoTotal';
+
+    if (!compId) return;
+
+    const comp = await obtenerPorId('competencias', Number(compId));
+    if (!comp) return;
+
+    if (inputSumar === '' || inputSumar === null || isNaN(Number(inputSumar))) {
+        // Si está vacío, eliminar el valor manual y usar auto-calculado
+        if (tipo === 'montoFacturar') {
+            delete comp.montoFacturarManual;
+        } else {
+            delete comp.gastoTotal;
+        }
+    } else {
+        const valorIngresado = parseFloat(Number(inputSumar).toFixed(2));
+        if (tipo === 'montoFacturar') {
+            // El usuario ingresa el TOTAL deseado directamente
+            comp.montoFacturarManual = valorIngresado;
+        } else {
+            // Para gastoTotal: el usuario ingresa un extra a sumar al auto-calculado
+            comp.gastoTotal = costoAutoCalc + valorIngresado;
+        }
     }
 
-    const nuevoMonto = parseFloat(opcionTrim.replace(/[$,.\s]/g, '').replace(',', '.'));
-    if (isNaN(nuevoMonto) || nuevoMonto < 0) {
-        alert('Por favor, ingresá un monto válido (número positivo).');
-        return;
-    }
-
-    comp.gastoTotal = nuevoMonto;
     await guardar('competencias', comp);
     dashboardDirty = true;
     listarCompetencias();
+    closeModal('modal-editar-total-gastos');
+}
+
+async function restaurarTotalGastosAuto() {
+    const compId = document.getElementById('modal-editar-total-gastos').dataset.compId;
+    if (!compId) return;
+
+    const comp = await obtenerPorId('competencias', Number(compId));
+    if (!comp) return;
+
+    delete comp.gastoTotal;
+    await guardar('competencias', comp);
+    dashboardDirty = true;
+    listarCompetencias();
+    closeModal('modal-editar-total-gastos');
 }
 
 // ==================== GASTOS ====================
 
-async function listarGastos() {
-    const [gastos, competencias, staff, categorias] = await Promise.all([
+// ==================== FUNCIÓN DE RESUMEN AUTOMÁTICO ====================
+// Agrupa los gastos por competencia y suma los montos por categoría.
+// Incluye el campo "montoFacturar" para cada gasto.
+async function generarResumenGastosPorCompetencia() {
+    const [gastos, competencias, categorias] = await Promise.all([
         getTodos('gastos'),
         getTodos('competencias'),
-        getTodos('staff'),
         getTodos('categorias')
+    ]);
+
+    const resumen = {};
+
+    // Inicializar resumen para cada competencia existente
+    competencias.forEach(comp => {
+        resumen[comp.id] = {
+            id: comp.id,
+            nombre: comp.nombre,
+            codigo: comp.codigo || '',
+            categorias: {},
+            total: 0,
+            montoFacturar: 0
+        };
+    });
+
+    // Procesar cada gasto
+    gastos.forEach(g => {
+        const compId = Number(g.competenciaId);
+        if (!resumen[compId]) {
+            // Gasto sin competencia asociada
+            resumen[compId] = {
+                id: compId,
+                nombre: 'Sin competencia',
+                codigo: '',
+                categorias: {},
+                total: 0,
+                montoFacturar: 0
+            };
+        }
+
+        const monto = Number(g.monto) || 0;
+        const montoFacturar = Number(g.montoFacturar) || 0;
+
+        // Determinar nombre de categoría
+        let catNombre;
+        if (g.categoriaId === 'general' || g.categoriaId === 'general') {
+            catNombre = 'General / Compartido';
+        } else {
+            const cat = categorias.find(c => c.id === Number(g.categoriaId));
+            catNombre = cat ? cat.nombre : 'Desconocida';
+        }
+
+        if (!resumen[compId].categorias[catNombre]) {
+            resumen[compId].categorias[catNombre] = { total: 0, montoFacturar: 0 };
+        }
+        resumen[compId].categorias[catNombre].total += monto;
+        resumen[compId].categorias[catNombre].montoFacturar += montoFacturar;
+
+        resumen[compId].total += monto;
+        resumen[compId].montoFacturar += montoFacturar;
+    });
+
+    return resumen;
+}
+
+async function listarGastos() {
+    const [competencias, gastos, rendiciones, detalleGastos] = await Promise.all([
+        getTodos('competencias'),
+        getTodos('gastos'),
+        getTodos('rendiciones'),
+        getTodos('detalleGastos')
     ]);
     const catFiltro = document.getElementById('filtro-categoria-gastos').value;
     const compFiltro = document.getElementById('filtro-competencia-gastos').value;
@@ -857,54 +1097,66 @@ async function listarGastos() {
     const tbody = document.getElementById('gastos-table-body');
     tbody.innerHTML = '';
 
-    const filtrados = gastos.filter(g => {
-        if (catFiltro !== 'todos' && String(g.categoriaId) !== String(catFiltro)) return false;
-        if (compFiltro !== 'todos' && String(g.competenciaId) !== String(compFiltro)) return false;
+    // Cerrar panel resumen
+    cerrarResumenCompetencia();
+
+    // Filtrar competencias
+    let competenciasFiltradas = competencias.filter(comp => {
+        if (catFiltro !== 'todos' && (!comp.categoriasIds || !comp.categoriasIds.map(x => Number(x)).includes(Number(catFiltro)))) return false;
+        if (compFiltro && compFiltro !== 'todos' && Number(comp.id) !== Number(compFiltro)) return false;
         if (buscador) {
-            const c = g.concepto.toLowerCase().includes(buscador);
-            const n = g.observaciones ? g.observaciones.toLowerCase().includes(buscador) : false;
-            const staffName = staff.find(s => Number(s.id) === Number(g.staffId));
-            const p = staffName ? `${staffName.nombre} ${staffName.apellido}`.toLowerCase().includes(buscador) : false;
-            if (!c && !n && !p) return false;
+            const texto = `${comp.nombre} ${comp.codigo || ''}`.toLowerCase();
+            if (!texto.includes(buscador)) return false;
         }
         return true;
-    }).sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+    }).sort((a, b) => new Date(b.fechaInicio) - new Date(a.fechaInicio));
 
-    if (filtrados.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${puedeEditar() ? 8 : 7}" style="text-align:center;color:var(--text-secondary);">No se encontraron gastos.</td></tr>`;
+    if (competenciasFiltradas.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="${puedeEditar() ? 8 : 7}" style="text-align:center;color:var(--text-secondary);">No se encontraron competencias.</td></tr>`;
         return;
     }
 
-    filtrados.forEach(g => {
-        const comp = competencias.find(c => c.id === Number(g.competenciaId));
-        const compNombre = comp ? comp.nombre : 'General / Sin Carrera';
-        const compCodigo = comp && comp.codigo ? comp.codigo : 'SIN CÓDIGO';
-        const codigoVisible = esAdmin() ? compCodigo : `<span class="blur-readonly" style="font-family:monospace;font-size:0.85rem;">${compCodigo}</span>`;
-        
-        let catNombre = 'General / Compartido';
-        if (g.categoriaId !== 'general') {
-            const cat = categorias.find(c => c.id === Number(g.categoriaId));
-            catNombre = cat ? cat.nombre : 'Desconocida';
-        }
+    // Mostrar listado de competencias con sus totales
+    competenciasFiltradas.forEach(comp => {
+        const costoSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + Number(g.monto), 0);
+        const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(comp.id));
+        const costoDetallado = rendicionesComp.reduce((s, r) => {
+            const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
+            return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
+        }, 0);
+        const costoTotal = costoSinples + costoDetallado;
+
+        const montoFacturarSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + (Number(g.montoFacturar) || 0), 0);
+        const montoFacturarDetallado = rendicionesComp.reduce((s, r) => {
+            const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
+            return s + detallesRend.reduce((sd, d) => sd + (Number(d.montoFacturar) || 0), 0);
+        }, 0);
+        const montoFacturarTotal = montoFacturarSinples + montoFacturarDetallado;
 
         const acciones = puedeEditar() ? `
-            <td style="text-align:right;">
-                <button class="action-btn" onclick="editarGasto(${g.id})"><i class="fa-solid fa-pen-to-square"></i></button>
-                <button class="action-btn delete" onclick="eliminarGasto(${g.id})"><i class="fa-solid fa-trash"></i></button>
+            <td style="text-align:right;white-space:nowrap;">
+                <button class="action-btn" onclick="verCompetencia(${comp.id})" title="Ver"><i class="fa-solid fa-eye"></i></button>
+                <button class="action-btn" onclick="editarCompetencia(${comp.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
+                <button class="action-btn delete" onclick="eliminarCompetencia(${comp.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
             </td>
-        ` : '';
+        ` : `
+            <td style="text-align:right;white-space:nowrap;">
+                <button class="action-btn" onclick="verCompetencia(${comp.id})" title="Ver"><i class="fa-solid fa-eye"></i></button>
+            </td>
+        `;
 
-        const staffMember = staff.find(s => Number(s.id) === Number(g.staffId));
-        const staffNombre = staffMember ? `${staffMember.nombre} ${staffMember.apellido}` : '-';
+        const staffCount = comp.staffIds ? comp.staffIds.length : 0;
+        const gastosCount = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).length;
+
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td>${formatearFechaVisual(g.fecha)}</td>
-            <td>${compNombre}<br><small style="color:var(--text-secondary);"><i class="fa-solid fa-hashtag"></i> ${codigoVisible}</small></td>
-            <td><span class="badge ${g.categoriaId === 'general' ? 'badge-success' : 'badge-info'}">${catNombre}</span></td>
-            <td>${staffNombre}</td>
-            <td style="font-weight:600;">${g.concepto}</td>
-            <td style="color:var(--accent);font-weight:700;">$${Number(g.monto).toLocaleString(undefined,{minimumFractionDigits:2})}</td>
-            <td style="color:var(--text-secondary);max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${g.observaciones||''}">${g.observaciones||'-'}</td>
+            <td><strong>${comp.codigo || 'SIN CÓDIGO'}</strong></td>
+            <td style="font-weight:600;">${comp.nombre}</td>
+            <td><span style="font-size:0.85rem;color:var(--text-secondary);">${formatearFechaVisual(comp.fechaInicio)}<br>${formatearFechaVisual(comp.fechaFin)}</span></td>
+            <td><span style="font-size:0.85rem;color:var(--text-secondary);">${staffCount} asignados</span></td>
+            <td style="font-size:0.85rem;color:var(--text-secondary);">${gastosCount} gastos</td>
+            <td style="color:var(--accent);font-weight:700;">${formatearMoneda(costoTotal)}</td>
+            <td style="color:var(--accent);font-weight:700;">${formatearMoneda(montoFacturarTotal)}</td>
             ${acciones}
         `;
         tbody.appendChild(tr);
@@ -918,6 +1170,21 @@ async function openModalGasto() {
     document.getElementById('gasto-id').value = '';
     document.getElementById('gasto-fecha').value = new Date().toISOString().split('T')[0];
     document.getElementById('gasto-modal-title').innerText = 'Cargar Gasto';
+    // Auto-completar Monto a Facturar con el valor de Monto por defecto
+    const montoInput = document.getElementById('gasto-monto');
+    const montoFacturarInput = document.getElementById('gasto-monto-facturar');
+    if (montoInput && montoFacturarInput) {
+        // Si el campo monto tiene valor, copiarlo a monto a facturar
+        if (montoInput.value) {
+            montoFacturarInput.value = montoInput.value;
+        }
+        // Evento para sincronizar mientras el usuario escribe
+        montoInput.addEventListener('input', function() {
+            if (!montoFacturarInput.value) {
+                montoFacturarInput.value = montoInput.value;
+            }
+        });
+    }
     openModal('modal-gasto');
 }
 
@@ -933,6 +1200,7 @@ async function editarGasto(id) {
     document.getElementById('gasto-categoria').value = g.categoriaId;
     document.getElementById('gasto-concepto').value = g.concepto;
     document.getElementById('gasto-monto').value = g.monto;
+    document.getElementById('gasto-monto-facturar').value = g.montoFacturar || '';
     document.getElementById('gasto-fecha').value = g.fecha;
     document.getElementById('gasto-notas').value = g.observaciones || '';
     document.getElementById('gasto-modal-title').innerText = 'Editar Gasto';
@@ -943,12 +1211,15 @@ async function guardarGastoForm(e) {
     e.preventDefault();
     if (!puedeEditar()) return;
     const id = document.getElementById('gasto-id').value;
+    const monto = Number(document.getElementById('gasto-monto').value);
+    const montoFacturarInput = document.getElementById('gasto-monto-facturar').value;
     const gasto = {
         competenciaId: document.getElementById('gasto-competencia').value,
         staffId: document.getElementById('gasto-staff').value ? Number(document.getElementById('gasto-staff').value) : null,
         categoriaId: document.getElementById('gasto-categoria').value === 'general' ? 'general' : Number(document.getElementById('gasto-categoria').value),
         concepto: document.getElementById('gasto-concepto').value,
-        monto: Number(document.getElementById('gasto-monto').value),
+        monto: monto,
+        montoFacturar: montoFacturarInput ? Number(montoFacturarInput) : monto,
         fecha: document.getElementById('gasto-fecha').value,
         observaciones: document.getElementById('gasto-notas').value
     };
@@ -964,7 +1235,163 @@ async function eliminarGasto(id) {
     if (!confirm('¿Eliminar este registro de gasto?')) return;
     await eliminar('gastos', id);
     dashboardDirty = true;
-    listarGastos();
+    await listarGastos();
+}
+
+async function eliminarCompetencia(id) {
+    if (!puedeEditar()) return;
+    if (!confirm('¿Eliminar esta competencia y todos sus gastos asociados?')) return;
+    await eliminar('competencias', id);
+    const gastos = await getTodos('gastos');
+    for (const g of gastos) {
+        if (Number(g.competenciaId) === Number(id)) await eliminar('gastos', g.id);
+    }
+    await limpiarCompetenciaDeStaff(id);
+    dashboardDirty = true;
+    await listarGastos();
+}
+
+// ==================== PANEL RESUMEN DE COMPETENCIA ====================
+async function mostrarResumenCompetencia(compId, competencias, gastos, staff, categorias) {
+    const comp = await obtenerPorId('competencias', compId);
+    if (!comp) { cerrarResumenCompetencia(); return; }
+
+    const panel = document.getElementById('resumen-competencia-panel');
+    panel.style.display = 'block';
+
+    const circ = await obtenerPorId('circuitos', Number(comp.circuitoId));
+    const circNombre = circ ? `${circ.nombre} (${circ.ubicacion})` : 'Desconocido';
+    const catNombres = comp.categoriasIds.map(id => {
+        const cat = categorias.find(c => c.id === Number(id));
+        return cat ? cat.nombre : '';
+    }).filter(Boolean);
+    const staffNombres = (comp.staffIds || []).map(id => {
+        const s = staff.find(p => p.id === Number(id));
+        return s ? `${s.nombre} ${s.apellido} (${s.funcion})` : '';
+    }).filter(Boolean);
+
+    // Calcular totales
+    const costoSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + Number(g.monto), 0);
+    const rendiciones = await getTodos('rendiciones');
+    const detalleGastos = await getTodos('detalleGastos');
+    const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(comp.id));
+    const costoDetallado = rendicionesComp.reduce((s, r) => {
+        const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
+        return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
+    }, 0);
+    const costoAutoCalc = costoSinples + costoDetallado;
+    const tieneManual = comp.gastoTotal !== undefined && comp.gastoTotal !== null;
+    const costoComp = tieneManual ? Number(comp.gastoTotal) : costoAutoCalc;
+
+    // Calcular monto a facturar
+    const montoFacturarSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + (Number(g.montoFacturar) || 0), 0);
+    const montoFacturarDetallado = rendicionesComp.reduce((s, r) => {
+        const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
+        return s + detallesRend.reduce((sd, d) => sd + (Number(d.montoFacturar) || 0), 0);
+    }, 0);
+    const montoFacturarTotal = montoFacturarSinples + montoFacturarDetallado;
+    const tieneMontoFacturarManual = comp.montoFacturarManual !== undefined && comp.montoFacturarManual !== null;
+    const montoFacturarDisplay = tieneMontoFacturarManual ? Number(comp.montoFacturarManual) : montoFacturarTotal;
+
+    // Generar HTML de estadísticas (editable si tiene permisos)
+    const puedeEditarComp = puedeEditar() || esSupervisor();
+    let totalGastosHtml, montoFacturarHtml;
+    
+    if (puedeEditarComp) {
+        totalGastosHtml = `
+            <div class="stat-card" style="padding:1rem;cursor:pointer;" onclick="editarTotalCompetenciaInplace(${comp.id})" title="Clic para editar">
+                <div class="stat-info"><h3 style="font-size:0.85rem;">Total Gastos</h3>
+                <p style="font-size:1.1rem;color:var(--accent);font-weight:700;">${formatearMoneda(costoComp)}
+                    ${tieneManual ? '<i class="fa-solid fa-pencil" style="font-size:0.7rem;margin-left:4px;opacity:0.7;"></i>' : '<i class="fa-regular fa-pen-to-square" style="font-size:0.65rem;margin-left:4px;opacity:0.4;"></i>'}
+                </p></div>
+                <div class="stat-icon"><i class="fa-solid fa-dollar-sign"></i></div>
+            </div>`;
+        montoFacturarHtml = `
+            <div class="stat-card" style="padding:1rem;cursor:pointer;" onclick="editarMontoFacturarInplace(${comp.id})" title="Clic para editar">
+                <div class="stat-info"><h3 style="font-size:0.85rem;">Monto a Facturar</h3>
+                <p style="font-size:1.1rem;color:var(--accent);font-weight:700;">${formatearMoneda(montoFacturarDisplay)}
+                    ${tieneMontoFacturarManual ? '<i class="fa-solid fa-pencil" style="font-size:0.7rem;margin-left:4px;opacity:0.7;"></i>' : '<i class="fa-regular fa-pen-to-square" style="font-size:0.65rem;margin-left:4px;opacity:0.4;"></i>'}
+                </p></div>
+                <div class="stat-icon"><i class="fa-solid fa-file-invoice"></i></div>
+            </div>`;
+    } else {
+        totalGastosHtml = `
+            <div class="stat-card" style="padding:1rem;">
+                <div class="stat-info"><h3 style="font-size:0.85rem;">Total Gastos</h3><p style="font-size:1.1rem;color:var(--accent);font-weight:700;">${formatearMoneda(costoComp)}</p></div>
+                <div class="stat-icon"><i class="fa-solid fa-dollar-sign"></i></div>
+            </div>`;
+        montoFacturarHtml = `
+            <div class="stat-card" style="padding:1rem;">
+                <div class="stat-info"><h3 style="font-size:0.85rem;">Monto a Facturar</h3><p style="font-size:1.1rem;color:var(--accent);font-weight:700;">${formatearMoneda(montoFacturarDisplay)}</p></div>
+                <div class="stat-icon"><i class="fa-solid fa-file-invoice"></i></div>
+            </div>`;
+    }
+
+    document.getElementById('resumen-comp-stats').innerHTML = `
+        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Código</h3><p style="font-size:1.1rem;font-family:monospace;">${comp.codigo || 'SIN CÓDIGO'}</p></div><div class="stat-icon"><i class="fa-solid fa-hashtag"></i></div></div>
+        ${totalGastosHtml}
+        ${montoFacturarHtml}
+        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Categorías</h3><p style="font-size:1rem;">${catNombres.slice(0, 3).join(', ')}${catNombres.length > 3 ? ` (+${catNombres.length - 3})` : ''}</p></div><div class="stat-icon"><i class="fa-solid fa-tag"></i></div></div>
+        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Personal</h3><p style="font-size:1rem;">${staffNombres.length} asignados</p></div><div class="stat-icon"><i class="fa-solid fa-users"></i></div></div>
+    `;
+
+    document.getElementById('resumen-comp-info').innerHTML = `
+        <div><strong>Autódromo:</strong> ${circNombre}</div>
+        <div><strong>Código:</strong> <span style="font-family:monospace;">${comp.codigo || 'SIN CÓDIGO'}</span></div>
+        <div><strong>Fecha inicio:</strong> ${formatearFechaVisual(comp.fechaInicio)}</div>
+        <div><strong>Fecha fin:</strong> ${formatearFechaVisual(comp.fechaFin)}</div>
+        <div><strong>Total auto-calculado:</strong> ${formatearMoneda(costoAutoCalc)}</div>
+        <div><strong>Gastos simples:</strong> ${formatearMoneda(costoSinples)}</div>
+        <div><strong>Gastos detallados:</strong> ${formatearMoneda(costoDetallado)}</div>
+        <div><strong>Monto a facturar auto:</strong> ${formatearMoneda(montoFacturarTotal)}</div>
+    `;
+}
+
+function cerrarResumenCompetencia() {
+    const panel = document.getElementById('resumen-competencia-panel');
+    if (panel) panel.style.display = 'none';
+}
+
+// ==================== GASTO EXTRAORDINARIO ====================
+async function guardarGastoExtraordinario() {
+    if (!puedeEditar()) return;
+    
+    const compFiltro = document.getElementById('filtro-competencia-gastos').value;
+    if (!compFiltro || compFiltro === 'todos') {
+        alert('Seleccioná una competencia para agregar el gasto extraordinario.');
+        return;
+    }
+
+    const monto = Number(document.getElementById('extra-monto').value);
+    const concepto = document.getElementById('extra-concepto').value.trim();
+    const detalle = document.getElementById('extra-detalle').value.trim();
+
+    if (!monto || !concepto) {
+        alert('Ingresá el monto y concepto del gasto extraordinario.');
+        return;
+    }
+
+    const gasto = {
+        competenciaId: Number(compFiltro),
+        staffId: null,
+        categoriaId: 'general',
+        concepto: concepto,
+        monto: monto,
+        montoFacturar: monto,
+        fecha: new Date().toISOString().split('T')[0],
+        observaciones: detalle || 'Gasto extraordinario'
+    };
+
+    await guardar('gastos', gasto);
+    dashboardDirty = true;
+    
+    // Limpiar formulario
+    document.getElementById('extra-monto').value = '';
+    document.getElementById('extra-concepto').value = '';
+    document.getElementById('extra-detalle').value = '';
+    
+    mostrarToast('Gasto extraordinario guardado correctamente.');
+    await listarGastos();
 }
 
 // ==================== STAFF ====================
@@ -989,13 +1416,14 @@ async function listarStaff() {
                s.funcion.toLowerCase().includes(buscador) ||
                (s.matricula || '').toLowerCase().includes(buscador) ||
                (s.mail || '').toLowerCase().includes(buscador) ||
-               (s.numeroRegistroGrado || '').toLowerCase().includes(buscador) ||
-               (s.equipos || '').toLowerCase().includes(buscador) ||
-               compMatches;
+                (s.mail2 || '').toLowerCase().includes(buscador) ||
+                (s.numeroRegistroGrado || '').toLowerCase().includes(buscador) ||
+                (s.equipos || '').toLowerCase().includes(buscador) ||
+                compMatches;
     });
 
     if (filtrado.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${puedeEditar() ? 8 : 7}" style="text-align:center;color:var(--text-secondary);">No hay personal registrado.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${puedeEditar() ? 9 : 8}" style="text-align:center;color:var(--text-secondary);">No hay personal registrado.</td></tr>`;
         return;
     }
 
@@ -1013,6 +1441,7 @@ async function listarStaff() {
             <td><span class="badge badge-info">${s.funcion}</span></td>
             <td>${s.matricula || '-'}</td>
             <td>${s.mail || '-'}</td>
+            <td>${s.mail2 || '-'}</td>
             <td>${s.numeroRegistroGrado || '-'}</td>
             <td>${s.equipos || '-'}</td>
             ${acciones}
@@ -1028,9 +1457,10 @@ async function openModalStaff() {
     document.getElementById('staff-id').value = '';
     document.getElementById('staff-matricula').value = '';
     document.getElementById('staff-mail').value = '';
+    document.getElementById('staff-mail2').value = '';
     document.getElementById('staff-numero-registro-grado').value = '';
     document.getElementById('staff-equipos').value = '';
-    document.getElementById('staff-modal-title').innerText = 'Agregar Staff';
+    document.getElementById('staff-modal-title').innerText = 'Agregar Personal';
     openModal('modal-staff');
 }
 
@@ -1046,9 +1476,10 @@ async function editarStaff(id) {
     document.getElementById('staff-funcion').value = s.funcion;
     document.getElementById('staff-matricula').value = s.matricula || '';
     document.getElementById('staff-mail').value = s.mail || '';
+    document.getElementById('staff-mail2').value = s.mail2 || '';
     document.getElementById('staff-numero-registro-grado').value = s.numeroRegistroGrado || '';
     document.getElementById('staff-equipos').value = s.equipos || '';
-    document.getElementById('staff-modal-title').innerText = 'Editar Staff';
+    document.getElementById('staff-modal-title').innerText = 'Editar Personal';
     openModal('modal-staff');
 }
 
@@ -1063,6 +1494,7 @@ async function guardarStaffForm(e) {
         funcion: document.getElementById('staff-funcion').value,
         matricula: document.getElementById('staff-matricula').value,
         mail: document.getElementById('staff-mail').value,
+        mail2: document.getElementById('staff-mail2').value,
         numeroRegistroGrado: document.getElementById('staff-numero-registro-grado').value,
         equipos: document.getElementById('staff-equipos').value
     };
@@ -2663,6 +3095,7 @@ async function agregarFilaGasto() {
     document.getElementById('detalle-otros-impuestos').value = '';
     document.getElementById('detalle-cantidad-km').value = '';
     document.getElementById('detalle-valor-km').value = '';
+    document.getElementById('detalle-monto-facturar').value = '';
     document.getElementById('campos-kilometros').style.display = 'none';
     document.getElementById('detalle-total').textContent = '$0.00';
     document.getElementById('detalle-adjuntos-list').innerHTML = '';
@@ -2695,6 +3128,7 @@ async function editarFilaGasto(index) {
     document.getElementById('detalle-percepcion-iibb').value = detalle.percepcionIIBB || '';
     document.getElementById('detalle-percepcion-iva').value = detalle.percepcionIVA || '';
     document.getElementById('detalle-otros-impuestos').value = detalle.otrosImpuestos || '';
+    document.getElementById('detalle-monto-facturar').value = detalle.montoFacturar || '';
     document.getElementById('detalle-cantidad-km').value = detalle.cantidadKm || '';
     document.getElementById('detalle-valor-km').value = detalle.valorKm || '';
 
@@ -2765,6 +3199,7 @@ async function guardarDetalleGastoForm(e) {
         otrosImpuestos: Number(document.getElementById('detalle-otros-impuestos').value) || 0,
         cantidadKm: Number(document.getElementById('detalle-cantidad-km').value) || 0,
         valorKm: Number(document.getElementById('detalle-valor-km').value) || 0,
+        montoFacturar: document.getElementById('detalle-monto-facturar').value ? Number(document.getElementById('detalle-monto-facturar').value) : null,
         total: 0
     };
     detalle.total = calcularTotalFila(detalle);
