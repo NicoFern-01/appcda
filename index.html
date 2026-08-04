@@ -976,26 +976,8 @@
                 <div class="form-grid">
                     <div class="form-group full-width">
                         <label for="gasto-competencia">Competencia (Carrera)</label>
-                        <select id="gasto-competencia" required onchange="actualizarStaffGastoPorCompetencia()">
+                        <select id="gasto-competencia" required>
                             <option value="">Seleccione la carrera...</option>
-                        </select>
-                    </div>
-                    <div class="form-group full-width">
-                        <label for="gasto-categoria">Categoría Imputada</label>
-                        <div style="display: flex; gap: 0.5rem; align-items: flex-end;">
-                            <select id="gasto-categoria" required style="flex: 1;">
-                                <option value="">Seleccione categoría...</option>
-                                <option value="general">Gasto General / Compartido</option>
-                            </select>
-                            <button type="button" class="btn btn-secondary" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;" title="Gestionar categorías" onclick="abrirModalGestorCategorias()">
-                                <i class="fa-solid fa-gear"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <div class="form-group full-width">
-                        <label for="gasto-staff">Personal asignado</label>
-                        <select id="gasto-staff" style="width: 100%;">
-                            <option value="">Seleccioná primero una competencia</option>
                         </select>
                     </div>
                     <div class="form-group full-width">
@@ -1026,7 +1008,7 @@
                         <input type="date" id="gasto-fecha" required>
                     </div>
                     <div class="form-group full-width">
-                        <label for="gasto-notas">Observaciones</label>
+                        <label for="gasto-notas">Gasto simple</label>
                         <textarea id="gasto-notas" rows="3" placeholder="Detalle adicional..."></textarea>
                     </div>
                 </div>
@@ -1751,6 +1733,23 @@
                 <button type="button" class="btn btn-secondary" onclick="restaurarTotalGastosAuto()">Restaurar Automático</button>
                 <button type="button" class="btn btn-secondary" onclick="closeModal('modal-editar-total-gastos')">Cancelar</button>
                 <button type="button" class="btn" onclick="guardarTotalGastosManual()">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: ALERTA / CONFIRMACIÓN PERSONALIZADA -->
+    <div id="modal-alerta" class="modal-overlay">
+        <div class="modal" style="max-width: 420px; text-align: center;">
+            <div class="modal-header" style="border-bottom: none; justify-content: center; padding-bottom: 0;">
+                <div id="alerta-icono" style="font-size: 2.5rem; margin-bottom: 0.5rem;"></div>
+            </div>
+            <div class="modal-content" style="padding: 1rem 1.5rem;">
+                <h3 class="modal-title" id="alerta-titulo" style="font-size: 1.1rem; margin-bottom: 0.75rem;"></h3>
+                <p id="alerta-mensaje" style="color: var(--text-secondary); font-size: 0.95rem; line-height: 1.5; margin: 0;"></p>
+            </div>
+            <div class="modal-footer" style="border-top: none; justify-content: center; gap: 0.75rem; padding-top: 0.5rem;">
+                <button id="alerta-btn-cancelar" class="btn btn-secondary" style="display: none;" onclick="cerrarAlerta(false)">Cancelar</button>
+                <button id="alerta-btn-confirmar" class="btn" onclick="cerrarAlerta(true)">Aceptar</button>
             </div>
         </div>
     </div>

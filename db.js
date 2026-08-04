@@ -17,6 +17,60 @@ let useFirebase = false;
 // Variables de módulos de Firebase
 let initializeApp, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, writeBatch;
 
+// ==================== HASH DE CONTRASEÑAS SEGURO (Web Crypto API) ====================
+// Usa SHA-256 con salt aleatorio. No almacena la contraseña en texto plano.
+async function hashPassword(password) {
+    const encoder = new TextEncoder();
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    // Combinar salt + password
+    const data = encoder.encode(saltHex + password);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    return `sha256$${saltHex}$${hashHex}`;
+}
+
+// Verificar contraseña contra un hash almacenado
+async function verificarPassword(password, storedHash) {
+    if (!storedHash) return false;
+    
+    // Soporte para hashes antiguos (formato 'hash_...') - migración
+    if (storedHash.startsWith('hash_')) {
+        // Hash antiguo no seguro - comparar y marcar para migración
+        const oldHash = hashPasswordLegacy(password);
+        return oldHash === storedHash;
+    }
+    
+    // Formato nuevo: sha256$salt$hash
+    const parts = storedHash.split('$');
+    if (parts.length !== 3 || parts[0] !== 'sha256') return false;
+    
+    const saltHex = parts[1];
+    const expectedHash = parts[2];
+    
+    const encoder = new TextEncoder();
+    const data = encoder.encode(saltHex + password);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    return hashHex === expectedHash;
+}
+
+// Hash legacy (solo para migración de datos existentes)
+function hashPasswordLegacy(password) {
+    let hash = 0;
+    for (let i = 0; i < password.length; i++) {
+        const char = password.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+    return 'hash_' + Math.abs(hash).toString(16) + '_' + password.length;
+}
+
 async function inicializarFirebase() {
     const configStr = localStorage.getItem('firebase_config');
     if (!configStr) {
@@ -56,11 +110,9 @@ async function inicializarFirebase() {
         }
 
         useFirebase = true;
-        window.useFirebase = true; // exposición global para depuración
         console.log('Sincronización con Firebase Firestore activa.');
 
         // Sincronizar automáticamente todos los datos locales a Firebase
-        // Esto resuelve el problema de datos creados antes de que Firebase termine de inicializar
         try {
             await sincronizarLocalAFirebase();
         } catch (syncErr) {
@@ -223,17 +275,6 @@ function openDB() {
     });
 }
 
-// Función hash simple para contraseñas (no criptográfica, suficiente para uso local)
-function hashPassword(password) {
-    let hash = 0;
-    for (let i = 0; i < password.length; i++) {
-        const char = password.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash = hash & hash;
-    }
-    return 'hash_' + Math.abs(hash).toString(16) + '_' + password.length;
-}
-
 // Inicializar base de datos con datos por defecto si están vacías
 async function inicializarDatosPorDefecto() {
     const db = await openDB();
@@ -296,13 +337,20 @@ async function inicializarDatosPorDefecto() {
     // Comprobar si hay usuarios - crear admin por defecto si no existe ninguno
     const usuarios = await getTodos('usuarios');
     if (usuarios.length === 0) {
+        // Generar una contraseña aleatoria segura y mostrarla al usuario
+        const tempPassword = generarPasswordTemporal();
+        const passwordHash = await hashPassword(tempPassword);
         await guardar('usuarios', {
             username: 'admin',
-            passwordHash: hashPassword('admin123'),
+            passwordHash,
             nombre: 'Administrador',
             rol: 'admin', // 'admin' | 'editor' | 'viewer'
-            activo: true
+            activo: true,
+            requiereCambioPassword: true
         });
+        console.warn(`⚠️ Usuario admin creado con contraseña temporal: ${tempPassword}`);
+        console.warn('⚠️ IMPORTANTE: Cambie esta contraseña inmediatamente desde Configuración > Usuarios.');
+        alert(`Se creó el usuario administrador inicial.\n\nUsuario: admin\nContraseña temporal: ${tempPassword}\n\nIMPORTANTE: Cambie esta contraseña inmediatamente desde Configuración > Usuarios.`);
     }
 
     // ==================== DATOS POR DEFECTO DE INVENTARIO ====================
@@ -363,6 +411,17 @@ async function inicializarDatosPorDefecto() {
     }
 }
 
+// Generar contraseña temporal segura
+function generarPasswordTemporal() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
+    let password = '';
+    const array = new Uint32Array(12);
+    crypto.getRandomValues(array);
+    for (let i = 0; i < 12; i++) {
+        password += chars[array[i] % chars.length];
+    }
+    return password;
+}
 
 // Helper genérico para guardar o actualizar un elemento
 async function guardar(storeName, item) {

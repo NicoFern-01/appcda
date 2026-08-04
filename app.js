@@ -86,16 +86,17 @@ async function handleLogin(event) {
 
     try {
         const usuarios = await getTodos('usuarios');
-        const passwordHash = await hashPassword(password);
-        const usuario = usuarios.find(u =>
-            u.username === username &&
-            u.passwordHash === passwordHash &&
-            u.activo === true
-        );
+        const usuario = usuarios.find(u => u.username === username && u.activo === true);
 
         if (usuario) {
-            currentUser = usuario;
-            iniciarSesion(usuario);
+            const passwordValida = await verificarPassword(password, usuario.passwordHash);
+            if (passwordValida) {
+                currentUser = usuario;
+                iniciarSesion(usuario);
+            } else {
+                errorEl.style.display = 'flex';
+                document.getElementById('login-password').value = '';
+            }
         } else {
             errorEl.style.display = 'flex';
             document.getElementById('login-password').value = '';
@@ -124,8 +125,9 @@ function iniciarSesion(usuario) {
     switchView('dashboard');
 }
 
-function handleLogout() {
-    if (confirm('¿Deseas cerrar la sesión?')) {
+async function handleLogout() {
+    const confirmado = await mostrarConfirmacion('Cerrar sesión', '¿Deseas cerrar la sesión?', 'question');
+    if (confirmado) {
         currentUser = null;
         document.getElementById('app-main').style.display = 'none';
         document.getElementById('login-screen').style.display = 'flex';
@@ -958,9 +960,8 @@ async function editarTotalCompetenciaInplace(compId) {
         </div>
     `;
 
-    // Calcular el valor a sumar (si hay valor manual guardado, es la diferencia; si no, 0)
-    const valorSumar = (comp.gastoTotal !== undefined && comp.gastoTotal !== null) ? Math.max(0, Number(comp.gastoTotal) - costoAutoCalc) : 0;
-    document.getElementById('modal-editar-total-input').value = valorSumar > 0 ? valorSumar : '';
+    // Mostrar el valor total actual (consistente con montoFacturarManual)
+    document.getElementById('modal-editar-total-input').value = valorActual > 0 ? valorActual : '';
 
     // Guardar datos temporales en el modal
     document.getElementById('modal-editar-total-gastos').dataset.compId = compId;
@@ -993,8 +994,8 @@ async function guardarTotalGastosManual() {
             // El usuario ingresa el TOTAL deseado directamente
             comp.montoFacturarManual = valorIngresado;
         } else {
-            // Para gastoTotal: el usuario ingresa un extra a sumar al auto-calculado
-            comp.gastoTotal = costoAutoCalc + valorIngresado;
+            // Para gastoTotal: el usuario ingresa el TOTAL deseado directamente (consistente)
+            comp.gastoTotal = valorIngresado;
         }
     }
 
@@ -1064,7 +1065,7 @@ async function generarResumenGastosPorCompetencia() {
 
         // Determinar nombre de categoría
         let catNombre;
-        if (g.categoriaId === 'general' || g.categoriaId === 'general') {
+        if (g.categoriaId === 'general') {
             catNombre = 'General / Compartido';
         } else {
             const cat = categorias.find(c => c.id === Number(g.categoriaId));
@@ -1150,8 +1151,8 @@ async function listarGastos() {
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td><strong>${comp.codigo || 'SIN CÓDIGO'}</strong></td>
-            <td style="font-weight:600;">${comp.nombre}</td>
+            <td><strong>${escapeHtml(comp.codigo || 'SIN CÓDIGO')}</strong></td>
+            <td style="font-weight:600;">${escapeHtml(comp.nombre)}</td>
             <td><span style="font-size:0.85rem;color:var(--text-secondary);">${formatearFechaVisual(comp.fechaInicio)}<br>${formatearFechaVisual(comp.fechaFin)}</span></td>
             <td><span style="font-size:0.85rem;color:var(--text-secondary);">${staffCount} asignados</span></td>
             <td style="font-size:0.85rem;color:var(--text-secondary);">${gastosCount} gastos</td>
@@ -1170,21 +1171,6 @@ async function openModalGasto() {
     document.getElementById('gasto-id').value = '';
     document.getElementById('gasto-fecha').value = new Date().toISOString().split('T')[0];
     document.getElementById('gasto-modal-title').innerText = 'Cargar Gasto';
-    // Auto-completar Monto a Facturar con el valor de Monto por defecto
-    const montoInput = document.getElementById('gasto-monto');
-    const montoFacturarInput = document.getElementById('gasto-monto-facturar');
-    if (montoInput && montoFacturarInput) {
-        // Si el campo monto tiene valor, copiarlo a monto a facturar
-        if (montoInput.value) {
-            montoFacturarInput.value = montoInput.value;
-        }
-        // Evento para sincronizar mientras el usuario escribe
-        montoInput.addEventListener('input', function() {
-            if (!montoFacturarInput.value) {
-                montoFacturarInput.value = montoInput.value;
-            }
-        });
-    }
     openModal('modal-gasto');
 }
 
@@ -1195,12 +1181,8 @@ async function editarGasto(id) {
     await actualizarSelectoresFormularios();
     document.getElementById('gasto-id').value = g.id;
     document.getElementById('gasto-competencia').value = g.competenciaId;
-    await actualizarStaffGastoPorCompetencia();
-    document.getElementById('gasto-staff').value = g.staffId || '';
-    document.getElementById('gasto-categoria').value = g.categoriaId;
     document.getElementById('gasto-concepto').value = g.concepto;
     document.getElementById('gasto-monto').value = g.monto;
-    document.getElementById('gasto-monto-facturar').value = g.montoFacturar || '';
     document.getElementById('gasto-fecha').value = g.fecha;
     document.getElementById('gasto-notas').value = g.observaciones || '';
     document.getElementById('gasto-modal-title').innerText = 'Editar Gasto';
@@ -1212,14 +1194,13 @@ async function guardarGastoForm(e) {
     if (!puedeEditar()) return;
     const id = document.getElementById('gasto-id').value;
     const monto = Number(document.getElementById('gasto-monto').value);
-    const montoFacturarInput = document.getElementById('gasto-monto-facturar').value;
     const gasto = {
-        competenciaId: document.getElementById('gasto-competencia').value,
-        staffId: document.getElementById('gasto-staff').value ? Number(document.getElementById('gasto-staff').value) : null,
-        categoriaId: document.getElementById('gasto-categoria').value === 'general' ? 'general' : Number(document.getElementById('gasto-categoria').value),
+        competenciaId: Number(document.getElementById('gasto-competencia').value),
+        staffId: null,
+        categoriaId: 'general',
         concepto: document.getElementById('gasto-concepto').value,
         monto: monto,
-        montoFacturar: montoFacturarInput ? Number(montoFacturarInput) : monto,
+        montoFacturar: monto,
         fecha: document.getElementById('gasto-fecha').value,
         observaciones: document.getElementById('gasto-notas').value
     };
@@ -1234,19 +1215,6 @@ async function eliminarGasto(id) {
     if (!puedeEditar()) return;
     if (!confirm('¿Eliminar este registro de gasto?')) return;
     await eliminar('gastos', id);
-    dashboardDirty = true;
-    await listarGastos();
-}
-
-async function eliminarCompetencia(id) {
-    if (!puedeEditar()) return;
-    if (!confirm('¿Eliminar esta competencia y todos sus gastos asociados?')) return;
-    await eliminar('competencias', id);
-    const gastos = await getTodos('gastos');
-    for (const g of gastos) {
-        if (Number(g.competenciaId) === Number(id)) await eliminar('gastos', g.id);
-    }
-    await limpiarCompetenciaDeStaff(id);
     dashboardDirty = true;
     await listarGastos();
 }
@@ -1436,14 +1404,14 @@ async function listarStaff() {
         ` : '';
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td style="font-weight:600;">${s.nombre} ${s.apellido}</td>
-            <td>${s.dni}</td>
-            <td><span class="badge badge-info">${s.funcion}</span></td>
-            <td>${s.matricula || '-'}</td>
-            <td>${s.mail || '-'}</td>
-            <td>${s.mail2 || '-'}</td>
-            <td>${s.numeroRegistroGrado || '-'}</td>
-            <td>${s.equipos || '-'}</td>
+            <td style="font-weight:600;">${escapeHtml(s.nombre)} ${escapeHtml(s.apellido)}</td>
+            <td>${escapeHtml(s.dni)}</td>
+            <td><span class="badge badge-info">${escapeHtml(s.funcion)}</span></td>
+            <td>${escapeHtml(s.matricula || '-')}</td>
+            <td>${escapeHtml(s.mail || '-')}</td>
+            <td>${escapeHtml(s.mail2 || '-')}</td>
+            <td>${escapeHtml(s.numeroRegistroGrado || '-')}</td>
+            <td>${escapeHtml(s.equipos || '-')}</td>
             ${acciones}
         `;
         tbody.appendChild(tr);
@@ -1568,8 +1536,8 @@ async function listarConfiguraciones() {
         ` : '';
         catBody.innerHTML += `
             <tr>
-                <td style="font-weight:600;">${c.nombre}</td>
-                <td style="color:var(--text-secondary);max-width:200px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;">${c.descripcion}</td>
+                <td style="font-weight:600;">${escapeHtml(c.nombre)}</td>
+                <td style="color:var(--text-secondary);max-width:200px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;">${escapeHtml(c.descripcion)}</td>
                 ${acciones}
             </tr>`;
     });
@@ -1586,8 +1554,8 @@ async function listarConfiguraciones() {
         ` : '';
         circBody.innerHTML += `
             <tr>
-                <td style="font-weight:600;">${c.nombre}</td>
-                <td>${c.ubicacion}</td>
+                <td style="font-weight:600;">${escapeHtml(c.nombre)}</td>
+                <td>${escapeHtml(c.ubicacion)}</td>
                 ${acciones}
             </tr>`;
     });
@@ -1689,11 +1657,11 @@ async function listarUsuarios() {
         tbody.innerHTML += `
             <tr>
                 <td style="font-weight:600;">
-                    ${u.username}
+                    ${escapeHtml(u.username)}
                     ${esElMismo ? '<span class="badge badge-info" style="font-size:0.7rem;margin-left:0.5rem;">Yo</span>' : ''}
                 </td>
-                <td>${u.nombre}</td>
-                <td><span class="badge ${rolesBadge[u.rol]}">${rolesNombres[u.rol] || u.rol}</span></td>
+                <td>${escapeHtml(u.nombre)}</td>
+                <td><span class="badge ${rolesBadge[u.rol]}">${rolesNombres[u.rol] || escapeHtml(u.rol)}</span></td>
                 <td><span class="badge ${u.activo ? 'badge-active' : 'badge-inactive'}">${u.activo ? 'Activo' : 'Inactivo'}</span></td>
                 <td style="text-align:right;">
                     <button class="action-btn" onclick="editarUsuario(${u.id})"><i class="fa-solid fa-pen-to-square"></i></button>
@@ -1793,7 +1761,22 @@ async function exportarDatos() {
         circuitos: await getTodos('circuitos'),
         staff: await getTodos('staff'),
         competencias: await getTodos('competencias'),
-        gastos: await getTodos('gastos')
+        gastos: await getTodos('gastos'),
+        conceptos: await getTodos('conceptos'),
+        rendiciones: await getTodos('rendiciones'),
+        detalleGastos: await getTodos('detalleGastos'),
+        adjuntos: await getTodos('adjuntos'),
+        proveedores: await getTodos('proveedores'),
+        campeonatos: await getTodos('campeonatos'),
+        categoriasInventario: await getTodos('categoriasInventario'),
+        subcategoriasInventario: await getTodos('subcategoriasInventario'),
+        talles: await getTodos('talles'),
+        articulos: await getTodos('articulos'),
+        articuloTalles: await getTodos('articuloTalles'),
+        movimientosInventario: await getTodos('movimientosInventario'),
+        entregasInventario: await getTodos('entregasInventario'),
+        detalleEntregas: await getTodos('detalleEntregas'),
+        imagenesArticulo: await getTodos('imagenesArticulo')
     };
     const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(backup, null, 2))}`;
     const a = document.createElement('a');
@@ -1877,17 +1860,6 @@ async function actualizarSelectoresFormularios() {
     selectGastoComp.innerHTML = '<option value="">Seleccione la carrera...</option>';
     competencias.forEach(c => selectGastoComp.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
     selectGastoComp.value = savedComp;
-
-    const selectGastoCat = document.getElementById('gasto-categoria');
-    const savedCat = selectGastoCat.value;
-    selectGastoCat.innerHTML = '<option value="">Seleccione categoría...</option><option value="general">Gasto General / Compartido</option>';
-    categorias.forEach(cat => selectGastoCat.innerHTML += `<option value="${cat.id}">${cat.nombre}</option>`);
-    selectGastoCat.value = savedCat;
-
-    const selectGastoStaff = document.getElementById('gasto-staff');
-    const savedStaff = selectGastoStaff ? selectGastoStaff.value : '';
-    await actualizarStaffGastoPorCompetencia();
-    if (selectGastoStaff) selectGastoStaff.value = savedStaff;
 
     const datalistConceptos = document.getElementById('conceptos-sugeridos');
     const conceptos = await getTodos('conceptos');
@@ -1975,6 +1947,73 @@ async function actualizarStaffGastoPorCompetencia() {
 // Gestión de Modales
 function openModal(modalId) { document.getElementById(modalId).classList.add('active'); }
 function closeModal(modalId) { document.getElementById(modalId).classList.remove('active'); }
+
+// ==================== ALERTA / CONFIRMACIÓN PERSONALIZADA ====================
+let _alertaResolve = null;
+
+function mostrarAlerta(titulo, mensaje, icono = 'info') {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('modal-alerta');
+        const iconoEl = document.getElementById('alerta-icono');
+        const tituloEl = document.getElementById('alerta-titulo');
+        const mensajeEl = document.getElementById('alerta-mensaje');
+        const btnCancelar = document.getElementById('alerta-btn-cancelar');
+        const btnConfirmar = document.getElementById('alerta-btn-confirmar');
+
+        const iconos = {
+            info: '<i class="fa-solid fa-circle-info" style="color: var(--accent-blue);"></i>',
+            warning: '<i class="fa-solid fa-triangle-exclamation" style="color: #ff9f43;"></i>',
+            error: '<i class="fa-solid fa-circle-exclamation" style="color: var(--accent);"></i>',
+            success: '<i class="fa-solid fa-circle-check" style="color: var(--accent-green);"></i>',
+            question: '<i class="fa-solid fa-circle-question" style="color: var(--accent-blue);"></i>'
+        };
+
+        iconoEl.innerHTML = iconos[icono] || iconos.info;
+        tituloEl.textContent = titulo;
+        mensajeEl.textContent = mensaje;
+        btnCancelar.style.display = 'none';
+        btnConfirmar.textContent = 'Aceptar';
+
+        _alertaResolve = resolve;
+        openModal('modal-alerta');
+    });
+}
+
+function mostrarConfirmacion(titulo, mensaje, icono = 'question') {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('modal-alerta');
+        const iconoEl = document.getElementById('alerta-icono');
+        const tituloEl = document.getElementById('alerta-titulo');
+        const mensajeEl = document.getElementById('alerta-mensaje');
+        const btnCancelar = document.getElementById('alerta-btn-cancelar');
+        const btnConfirmar = document.getElementById('alerta-btn-confirmar');
+
+        const iconos = {
+            info: '<i class="fa-solid fa-circle-info" style="color: var(--accent-blue);"></i>',
+            warning: '<i class="fa-solid fa-triangle-exclamation" style="color: #ff9f43;"></i>',
+            error: '<i class="fa-solid fa-circle-exclamation" style="color: var(--accent);"></i>',
+            success: '<i class="fa-solid fa-circle-check" style="color: var(--accent-green);"></i>',
+            question: '<i class="fa-solid fa-circle-question" style="color: var(--accent-blue);"></i>'
+        };
+
+        iconoEl.innerHTML = iconos[icono] || iconos.question;
+        tituloEl.textContent = titulo;
+        mensajeEl.textContent = mensaje;
+        btnCancelar.style.display = '';
+        btnConfirmar.textContent = 'Confirmar';
+
+        _alertaResolve = resolve;
+        openModal('modal-alerta');
+    });
+}
+
+function cerrarAlerta(resultado) {
+    closeModal('modal-alerta');
+    if (_alertaResolve) {
+        _alertaResolve(resultado);
+        _alertaResolve = null;
+    }
+}
 
 // Helpers de formato
 function formatearMoneda(valor) {
@@ -2391,10 +2430,10 @@ async function listarRendiciones() {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td style="font-weight:600;">${r.id}</td>
-            <td>${comp ? comp.nombre : '-'}</td>
-            <td>${circ ? circ.nombre : '-'}</td>
+            <td>${comp ? escapeHtml(comp.nombre) : '-'}</td>
+            <td>${circ ? escapeHtml(circ.nombre) : '-'}</td>
             <td>${formatearFechaVisual(r.fecha)}</td>
-            <td>${resp ? `${resp.nombre} ${resp.apellido}` : '-'}</td>
+            <td>${resp ? `${escapeHtml(resp.nombre)} ${escapeHtml(resp.apellido)}` : '-'}</td>
             <td style="text-align:center;">${cantGastos}</td>
             <td style="color:var(--accent);font-weight:700;">${formatearMoneda(totalGastos)}</td>
             <td><span class="badge ${estadoBadge}">${estadoText}</span></td>
@@ -2566,12 +2605,12 @@ async function verRendicion(id) {
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td style="text-align:center;font-weight:600;">${i + 1}</td>
-                <td>${prov ? prov.nombre : '-'}</td>
-                <td>${d.tipoComprobante || '-'}</td>
-                <td>${d.numeroComprobante || '-'}</td>
+                <td>${prov ? escapeHtml(prov.nombre) : '-'}</td>
+                <td>${escapeHtml(d.tipoComprobante || '-')}</td>
+                <td>${escapeHtml(d.numeroComprobante || '-')}</td>
                 <td>${formatearFechaVisual(d.fecha)}</td>
-                <td>${conc ? conc.nombre : '-'}</td>
-                <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${d.descripcion || ''}">${d.descripcion || '-'}</td>
+                <td>${conc ? escapeHtml(conc.nombre) : '-'}</td>
+                <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(d.descripcion || '')}">${escapeHtml(d.descripcion || '-')}</td>
                 <td style="text-align:right;">${formatearMoneda(Number(d.basico || 0))}</td>
                 <td style="text-align:right;">${formatearMoneda(Number(d.iva || 0))}</td>
                 <td style="text-align:right;color:var(--accent);font-weight:700;">${formatearMoneda(total)}</td>
@@ -2730,9 +2769,9 @@ async function llenarFormularioRendicion(r) {
 function obtenerDatosFormularioRendicion() {
     return {
         id: document.getElementById('rendicion-id').value ? Number(document.getElementById('rendicion-id').value) : null,
-        competenciaId: document.getElementById('rendicion-competencia').value,
-        autodromoId: document.getElementById('rendicion-autodromo').value,
-        responsableId: document.getElementById('rendicion-responsable').value,
+        competenciaId: Number(document.getElementById('rendicion-competencia').value),
+        autodromoId: Number(document.getElementById('rendicion-autodromo').value),
+        responsableId: Number(document.getElementById('rendicion-responsable').value),
         fecha: document.getElementById('rendicion-fecha').value,
         observaciones: document.getElementById('rendicion-observaciones').value,
         estado: 'completo'
@@ -2990,12 +3029,12 @@ async function renderizarDetalleGastos() {
 
         tr.innerHTML = `
             <td style="font-weight:600;text-align:center;">${index + 1}</td>
-            <td>${proveedor}</td>
-            <td>${detalle.tipoComprobante || '-'}</td>
-            <td>${detalle.numeroComprobante || '-'}</td>
+            <td>${escapeHtml(proveedor)}</td>
+            <td>${escapeHtml(detalle.tipoComprobante || '-')}</td>
+            <td>${escapeHtml(detalle.numeroComprobante || '-')}</td>
             <td>${formatearFechaVisual(detalle.fecha)}</td>
-            <td>${concepto}</td>
-            <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${detalle.descripcion || ''}">${detalle.descripcion || '-'}</td>
+            <td>${escapeHtml(concepto)}</td>
+            <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(detalle.descripcion || '')}">${escapeHtml(detalle.descripcion || '-')}</td>
             <td style="text-align:right;font-weight:500;">${formatearMoneda(Number(detalle.basico || 0))}</td>
             <td style="text-align:right;">${formatearMoneda(Number(detalle.iva || 0))}</td>
             <td style="text-align:right;">${formatearMoneda(Number(detalle.impuestosInternos || 0))}</td>
@@ -3319,10 +3358,24 @@ function renderizarAdjuntosModal() {
         const icono = adj.tipoArchivo?.includes('pdf') ? 'fa-file-pdf' :
                       adj.tipoArchivo?.includes('image') ? 'fa-file-image' :
                       adj.tipoArchivo?.includes('xml') ? 'fa-file-code' : 'fa-file';
-        div.innerHTML = `
-            <span ondblclick="abrirArchivoAdjunto('${adj.nombre}', '${adj.archivo}')"><i class="fa-regular ${icono}"></i> ${adj.nombre}</span>
-            <button type="button" class="action-btn delete" onclick="eliminarAdjuntoModal(${idx})" style="padding:0.15rem 0.3rem;"><i class="fa-solid fa-times"></i></button>
-        `;
+        
+        // Usar textContent para el nombre y event listeners en lugar de inline onclick
+        const span = document.createElement('span');
+        span.style.cssText = 'display:flex;align-items:center;gap:0.4rem;cursor:pointer;';
+        span.innerHTML = `<i class="fa-regular ${icono}"></i>`;
+        span.appendChild(document.createTextNode(' ' + adj.nombre));
+        span.title = 'Haga doble clic para abrir';
+        span.ondblclick = () => abrirArchivoAdjunto(adj.nombre, adj.archivo);
+        
+        const btnEliminar = document.createElement('button');
+        btnEliminar.type = 'button';
+        btnEliminar.className = 'action-btn delete';
+        btnEliminar.style.cssText = 'padding:0.15rem 0.3rem;';
+        btnEliminar.innerHTML = '<i class="fa-solid fa-times"></i>';
+        btnEliminar.onclick = () => eliminarAdjuntoModal(idx);
+        
+        div.appendChild(span);
+        div.appendChild(btnEliminar);
         container.appendChild(div);
     });
 }
@@ -3330,14 +3383,29 @@ function renderizarAdjuntosModal() {
 function abrirArchivoAdjunto(nombre, archivoData) {
     if (!archivoData) return;
     try {
-        const win = window.open('');
-        if (archivoData.startsWith('data:')) {
-            win.document.write(`<html><head><title>${nombre}</title></head><body style="margin:0;display:flex;justify-content:center;align-items:center;height:100vh;background:#f0f0f0;">
-                <embed src="${archivoData}" style="width:100%;height:100%;border:none;" type="${archivoData.split(';')[0].split(':')[1]}">
+        // Validar que sea un data URL seguro (solo tipos permitidos)
+        const tiposPermitidos = ['image/', 'application/pdf', 'text/plain', 'text/csv', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument', 'application/msword', 'application/zip', 'application/xml', 'text/xml'];
+        const esDataUrl = archivoData.startsWith('data:');
+        const esSeguro = esDataUrl && tiposPermitidos.some(t => archivoData.startsWith('data:' + t));
+        
+        if (!esSeguro) {
+            mostrarToast('Tipo de archivo no permitido para visualización.', 'error');
+            return;
+        }
+        
+        const win = window.open('', '_blank');
+        if (!win) { mostrarToast('El navegador bloqueó la ventana emergente.', 'error'); return; }
+        
+        if (esDataUrl) {
+            const mimeType = archivoData.split(';')[0].split(':')[1] || 'application/octet-stream';
+            // Escapar el nombre para evitar inyección HTML
+            const nombreSeguro = escapeHtml(nombre);
+            win.document.write(`<html><head><title>${nombreSeguro}</title></head><body style="margin:0;display:flex;justify-content:center;align-items:center;height:100vh;background:#f0f0f0;">
+                <embed src="${archivoData}" style="width:100%;height:100%;border:none;" type="${mimeType}">
                 </body></html>`);
             win.document.title = nombre;
         } else {
-            win.document.write(`<pre>${archivoData}</pre>`);
+            win.document.write(`<pre>${escapeHtml(archivoData)}</pre>`);
         }
     } catch(e) {
         mostrarToast('Error al abrir el archivo.', 'error');
@@ -3539,9 +3607,9 @@ async function imprimirRendicion() {
         .totals .value { font-size: 1.2rem; font-weight: bold; color: #ff4757; }
     </style></head><body>
     <h1>Rendición de Gastos ${rendicionActual.id ? '#'.concat(rendicionActual.id) : ''}</h1>
-    <p><strong>Competencia:</strong> ${comp ? comp.nombre : '-'} | <strong>Autódromo:</strong> ${circ ? circ.nombre : '-'} | <strong>Responsable:</strong> ${resp ? resp.nombre + ' ' + resp.apellido : '-'}</p>
-    <p><strong>Fecha:</strong> ${datos.fecha} | <strong>Estado:</strong> ${datos.estado}</p>
-    <p><strong>Observaciones:</strong> ${datos.observaciones || '-'}</p>`;
+    <p><strong>Competencia:</strong> ${comp ? escapeHtml(comp.nombre) : '-'} | <strong>Autódromo:</strong> ${circ ? escapeHtml(circ.nombre) : '-'} | <strong>Responsable:</strong> ${resp ? escapeHtml(resp.nombre + ' ' + resp.apellido) : '-'}</p>
+    <p><strong>Fecha:</strong> ${escapeHtml(datos.fecha)} | <strong>Estado:</strong> ${escapeHtml(datos.estado)}</p>
+    <p><strong>Observaciones:</strong> ${escapeHtml(datos.observaciones || '-')}</p>`;
 
     if (detallesActuales.length > 0) {
         html += `<table><thead><tr>
@@ -3553,9 +3621,9 @@ async function imprimirRendicion() {
             var prov = await obtenerNombreProveedor(d.proveedorId);
             var conc = await obtenerNombreConcepto(d.conceptoId);
             html += `<tr>
-                <td>${idx+1}</td><td>${prov}</td><td>${d.tipoComprobante || '-'}</td>
-                <td>${d.numeroComprobante || '-'}</td><td>${formatearFechaVisual(d.fecha)}</td>
-                <td>${conc}</td>
+                <td>${idx+1}</td><td>${escapeHtml(prov)}</td><td>${escapeHtml(d.tipoComprobante || '-')}</td>
+                <td>${escapeHtml(d.numeroComprobante || '-')}</td><td>${formatearFechaVisual(d.fecha)}</td>
+                <td>${escapeHtml(conc)}</td>
                 <td style="text-align:right;">${formatearMoneda(Number(d.basico || 0))}</td>
                 <td style="text-align:right;">${formatearMoneda(Number(d.iva || 0))}</td>
                 <td style="text-align:right;">${formatearMoneda(Number(d.percepcionIIBB || 0))}</td>
@@ -3589,12 +3657,22 @@ async function exportarExcelRendicion() {
     let csv = '\uFEFF';
     csv += 'N.,Proveedor,Tipo Comp.,N Comprobante,Fecha,Concepto,Descripcion,Basico,IVA,Imp Internos,IIBB,Percep IVA,Otros Imp.,Total\r\n';
 
+    // Función para sanitizar campos CSV contra inyección de fórmulas
+    function sanitizarCSV(valor) {
+        const str = String(valor || '').replace(/,/g, ' ');
+        // Prevenir CSV Injection: si empieza con =, +, -, @, tab o retorno, anteponer comilla simple
+        if (/^[=+\-@\t\r]/.test(str)) {
+            return "'" + str;
+        }
+        return str;
+    }
+
     for (let idx = 0; idx < detallesActuales.length; idx++) {
         var d2 = detallesActuales[idx];
-        var prov = (await obtenerNombreProveedor(d2.proveedorId) || '-').replace(/,/g, ' ');
-        var conc = (await obtenerNombreConcepto(d2.conceptoId) || '-').replace(/,/g, ' ');
-        var desc = (d2.descripcion || '').replace(/,/g, ' ');
-        var linea = String(idx + 1) + ',' + prov + ',' + (d2.tipoComprobante || '') + ',' + (d2.numeroComprobante || '') + ',' + (d2.fecha || '') + ',' + conc + ',' + desc;
+        var prov = sanitizarCSV(await obtenerNombreProveedor(d2.proveedorId) || '-');
+        var conc = sanitizarCSV(await obtenerNombreConcepto(d2.conceptoId) || '-');
+        var desc = sanitizarCSV(d2.descripcion || '');
+        var linea = String(idx + 1) + ',' + prov + ',' + sanitizarCSV(d2.tipoComprobante || '') + ',' + sanitizarCSV(d2.numeroComprobante || '') + ',' + (d2.fecha || '') + ',' + conc + ',' + desc;
         linea += ',' + (Number(d2.basico || 0).toFixed(2)) + ',' + (Number(d2.iva || 0).toFixed(2)) + ',' + (Number(d2.impuestosInternos || 0).toFixed(2));
         linea += ',' + (Number(d2.percepcionIIBB || 0).toFixed(2)) + ',' + (Number(d2.percepcionIVA || 0).toFixed(2)) + ',' + (Number(d2.otrosImpuestos || 0).toFixed(2));
         linea += ',' + (calcularTotalFila(d2).toFixed(2));
@@ -4962,6 +5040,23 @@ async function guardarEntregaForm(e) {
 
         if (!articuloId || !cantidad) continue;
 
+        const art = await obtenerPorId('articulos', Number(articuloId));
+        if (!art) { mostrarToast('Artículo no encontrado.', 'error'); return; }
+
+        // Validar stock suficiente antes de descontar
+        let stockActual = 0;
+        if (art.controlaTalles && talleId) {
+            const tallesArt = await getTodos('articuloTalles');
+            const talleArt = tallesArt.find(t => Number(t.articuloId) === Number(articuloId) && Number(t.talleId) === Number(talleId));
+            stockActual = talleArt ? Number(talleArt.stock || 0) : 0;
+        } else {
+            stockActual = Number(art.stockUnico || 0);
+        }
+        if (cantidad > stockActual) {
+            mostrarToast(`Stock insuficiente para "${art.nombre}". Stock actual: ${stockActual}`, 'error');
+            return;
+        }
+
         const detalle = {
             entregaId: entrega.id,
             articuloId: Number(articuloId),
@@ -4970,7 +5065,6 @@ async function guardarEntregaForm(e) {
         };
         await guardar('detalleEntregas', detalle);
 
-        const art = await obtenerPorId('articulos', Number(articuloId));
         if (art.controlaTalles && talleId) {
             const tallesArt = await getTodos('articuloTalles');
             const talleArt = tallesArt.find(t => Number(t.articuloId) === Number(articuloId) && Number(t.talleId) === Number(talleId));
