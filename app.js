@@ -130,6 +130,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
     }
+    // Verificar que exista algún mecanismo de persistencia
+    try {
+        const lsOk = storageAvailable('localStorage');
+        const idbOk = (typeof indexedDBAvailable === 'function') ? indexedDBAvailable() : !!window.indexedDB;
+        if (!lsOk && !idbOk) {
+            alert('Atención: No se detecta soporte de almacenamiento (IndexedDB ni localStorage). La app no podrá guardar usuarios ni configuración. Ejecutá la app desde un servidor HTTP/HTTPS y deshabilitá el modo incógnito.');
+        }
+    } catch (e) {
+        console.warn('No se pudo verificar almacenamiento:', e);
+    }
 
     // Responsive helpers: collapse sidebar on small screens and enhance tables for stacking
     function checkViewportSidebar() {
@@ -2438,15 +2448,14 @@ function guardarYConectarFirebase() {
 
         // Intentar guardar la configuración en localStorage; capturar fallos (file://, modo privado, bloqueos)
         try {
-            if (!storageAvailable('localStorage')) throw new Error('localStorage no disponible');
-            localStorage.setItem('firebase_config', JSON.stringify(config));
+            // intentamos persistir via setConfig (IndexedDB/appConfig o localStorage)
+            const saved = await setConfig('firebase_config', JSON.stringify(config));
+            if (!saved) throw new Error('No se pudo guardar la configuración');
             statusEl.innerHTML = '<span style="color: #2ed573;">⌛ Conectando con Firebase...</span>';
             setTimeout(() => { location.reload(); }, 500);
         } catch (storageErr) {
-            console.error('No se pudo guardar la configuración en localStorage:', storageErr);
-            statusEl.innerHTML = `<span style="color:#ff6b6b;">⚠️ No se pudo guardar la configuración en localStorage: ${storageErr.message || storageErr}. Asegurate de ejecutar la app desde un servidor (ej: <code>npx http-server</code> o <code>python -m http.server 8000</code>) y de no usar modo incógnito.</span>`;
-            // Mostrar instrucciones adicionales en consola
-            console.warn('Si estás ejecutando desde file:// o en modo privado, guardá la configuración en el navegador alojado vía HTTP/HTTPS.');
+            console.error('No se pudo guardar la configuración de Firebase:', storageErr);
+            statusEl.innerHTML = `<span style="color:#ff6b6b;">⚠️ No se pudo guardar la configuración de Firebase: ${storageErr.message || storageErr}. Asegurate de permitir almacenamiento en el navegador o serví la app por HTTP/HTTPS.</span>`;
         }
     } catch (e) {
         statusEl.innerHTML = `<span style="color: #ff6b6b;">⚠️ Error: El texto no es un JSON válido. Revisá el formato.</span>`;
@@ -2494,8 +2503,8 @@ function desconectarFirebase() {
     }, 500);
 }
 
-function actualizarEstadoFirebaseUI() {
-    const configStr = localStorage.getItem('firebase_config');
+async function actualizarEstadoFirebaseUI() {
+    const configStr = await getConfig('firebase_config');
     const btnConectar = document.getElementById('btn-conectar-firebase');
     const btnMigrar = document.getElementById('btn-migrar-firebase');
     const btnDesconectar = document.getElementById('btn-desconectar-firebase');
