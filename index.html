@@ -88,6 +88,10 @@
                             <i class="fa-solid fa-file-invoice"></i>
                             <span>Carga Detallada</span>
                         </div>
+                        <div class="menu-item submenu-item" onclick="switchView('personal-competencia')">
+                            <i class="fa-solid fa-user-tie"></i>
+                            <span>Personal por Competencia</span>
+                        </div>
                     </div>
                 </li>
                 <li>
@@ -142,6 +146,11 @@
                 </button>
             </div>
         </aside>
+
+        <!-- botón hamburger para colapsar sidebar (visible en todas las vistas) -->
+        <button id="btn-toggle-sidebar" class="btn-hamburger" onclick="toggleSidebar()" title="Toggle sidebar">
+            <i class="fa-solid fa-bars"></i>
+        </button>
 
         <!-- MAIN CONTENT -->
         <main>
@@ -473,6 +482,66 @@
                         <span style="flex:1;"></span>
                         <button class="btn btn-secondary" onclick="duplicarRendicion()"><i class="fa-solid fa-copy"></i> Duplicar</button>
                         <button class="btn btn-secondary" onclick="cancelarEdicionRendicion()"><i class="fa-solid fa-times"></i> Cancelar</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: PERSONAL POR COMPETENCIA -->
+            <section id="view-personal-competencia" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Personal por Competencia</h1>
+                        <p class="page-subtitle">Costos laborales de personal asociados a una competencia</p>
+                    </div>
+                    <div class="editor-only" style="display:flex;gap:0.5rem;align-items:center;">
+                        <button class="btn btn-secondary" onclick="exportarExcelPersonalCompetencia()"><i class="fa-solid fa-file-excel"></i> Descargar Excel</button>
+                        <button class="btn" onclick="guardarPersonalCompetencia()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
+                    </div>
+                </header>
+
+                <div class="form-card" style="margin-bottom:1rem;">
+                    <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;align-items:end;">
+                        <div class="form-group">
+                            <label for="personal-comp-select">Competencia (ID)</label>
+                            <select id="personal-comp-select" onchange="cargarPersonalCompetencia()">
+                                <option value="">Seleccione una competencia...</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Cantidad de días de la competencia</label>
+                            <input type="number" id="personal-comp-dias" min="0" style="background:rgba(0,0,0,0.2);font-weight:700;color:var(--accent);font-size:1.1rem;text-align:center;width:80px;" value="0">
+                        </div>
+                        <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0;">
+                            <span style="font-weight:600;font-size:0.9rem;">Total Gastos Personal:</span>
+                            <span id="personal-comp-total" style="font-weight:700;color:var(--accent);font-size:1.3rem;">$0.00</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-card">
+                    <div class="table-responsive" style="overflow-x:auto;">
+                        <table class="personal-comp-table">
+                            <thead>
+                                <tr>
+                                    <th style="min-width:260px;">Rol / Función</th>
+                                    <th style="min-width:80px;text-align:center;">Cantidad de Personas</th>
+                                    <th style="min-width:130px;text-align:right;">Sueldo Bruto x Persona</th>
+                                    <th style="min-width:120px;text-align:right;">Participación ACA (13.75%)</th>
+                                    <th style="min-width:110px;text-align:right;">SAC Mensualizado (/12)</th>
+                                    <th style="min-width:130px;text-align:right;">Costo Laboral Base p/pers</th>
+                                    <th style="min-width:120px;text-align:right;">Total Salario Bruto</th>
+                                    <th style="min-width:120px;text-align:right;">Cont. Patronales (27.3%)</th>
+                                    <th style="min-width:130px;text-align:right;">Salario + Cargas (Total Fila)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="personal-comp-table-body"></tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="8" style="text-align:right;font-weight:700;font-size:1rem;padding:0.75rem;">TOTAL GASTOS PERSONAL</td>
+                                    <td id="personal-comp-total-fila" style="text-align:right;font-weight:700;font-size:1.1rem;color:var(--accent);padding:0.75rem;">$0.00</td>
+                                </tr>
+                            </tfoot>
+                        </table>
                     </div>
                 </div>
             </section>
@@ -1277,8 +1346,16 @@
                     </div>
                     <div class="form-group" id="password-field-group">
                         <label for="usuario-password">Contraseña</label>
-                        <input type="password" id="usuario-password" placeholder="Ingrese contraseña" autocomplete="new-password">
-                        <small id="password-hint" style="color: var(--text-secondary); font-size:0.8rem; margin-top: 0.25rem;">Dejar en blanco para no cambiar la contraseña (al editar).</small>
+                        <div class="password-input-wrapper">
+                            <input type="password" id="usuario-password" placeholder="Ingrese contraseña" autocomplete="new-password">
+                        </div>
+                    </div>
+                    <div class="form-group" id="password-confirm-field-group" style="display: none;">
+                        <label for="usuario-password-confirm">Confirmar Contraseña</label>
+                        <div class="password-input-wrapper">
+                            <input type="password" id="usuario-password-confirm" placeholder="Repita la contraseña" autocomplete="new-password">
+                        </div>
+                        <small id="password-mismatch" style="color: #ff6b6b; font-size:0.8rem; margin-top: 0.25rem; display: none;">Las contraseñas no coinciden.</small>
                     </div>
                     <div class="form-group">
                         <label for="usuario-activo">Estado</label>
@@ -1286,6 +1363,9 @@
                             <option value="true">Activo</option>
                             <option value="false">Inactivo</option>
                         </select>
+                        <button type="button" class="toggle-pass toggle-pass-both" title="Mostrar/Ocultar contraseñas" onclick="toggleBothPasswordVisibility('usuario-password','usuario-password-confirm','toggle-pass-icon-both')">
+                            <i class="fa-solid fa-eye" id="toggle-pass-icon-both"></i>
+                        </button>
                     </div>
                 </div>
                 <div class="modal-footer">

@@ -1,7 +1,7 @@
 ﻿// db.js - Gestión de Base de Datos Local con IndexedDB e integración con Firebase
 
 const DB_NAME = 'ControlAutomovilismoDB';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 let dbInstance = null;
 
@@ -73,6 +73,14 @@ function hashPasswordLegacy(password) {
 
 async function inicializarFirebase() {
     const configStr = localStorage.getItem('firebase_config');
+    // Si estamos en file://, advertir que la carga desde la CDN puede fallar
+    if (location.protocol === 'file:') {
+        console.warn('Ejecutando desde file:// — recomendamos servir la app por HTTP (ej: `npx http-server` o `python -m http.server`) para que Firebase funcione correctamente.');
+        try {
+            const statusEl = document.getElementById('firebase-status-message');
+            if (statusEl) statusEl.innerHTML = '<span style="color:#ff9f43;">⚠️ Ejecutando desde file:// — serví la app por HTTP/HTTPS para habilitar Firebase.</span>';
+        } catch (e) {}
+    }
     if (!configStr) {
         useFirebase = false;
         return false;
@@ -122,6 +130,10 @@ async function inicializarFirebase() {
         return true;
     } catch (e) {
         console.error('Error al inicializar Firebase:', e);
+        try {
+            const statusEl = document.getElementById('firebase-status-message');
+            if (statusEl) statusEl.innerHTML = `<span style="color: #ff6b6b;">❌ Error al inicializar Firebase: ${e.message || e}. Asegurate de ejecutar la app por HTTP/HTTPS y de que el JSON de configuración sea válido.</span>`;
+        } catch (inner) {}
         useFirebase = false;
         return false;
     }
@@ -261,6 +273,11 @@ function openDB() {
             // Imágenes de artículos
             if (!db.objectStoreNames.contains('imagenesArticulo')) {
                 db.createObjectStore('imagenesArticulo', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Personal por competencia (costos laborales)
+            if (!db.objectStoreNames.contains('personalCompetencia')) {
+                db.createObjectStore('personalCompetencia', { keyPath: 'id', autoIncrement: true });
             }
         };
 
@@ -577,7 +594,7 @@ async function sincronizarLocalAFirebase() {
         return;
     }
 
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia'];
     let total = 0;
 
     for (const storeName of stores) {
@@ -605,7 +622,7 @@ async function sincronizarLocalAFirebase() {
 async function importarTodo(datos) {
     limpiarCacheCompleto(); // limpiar todo el caché antes de importar
     const db = await openDB();
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia'];
     
     for (const storeName of stores) {
         if (datos[storeName]) {

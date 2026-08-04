@@ -2,75 +2,72 @@
 
 ## Resumen Ejecutivo
 
-Se realizó una auditoría completa del código de la aplicación **Control de Automovilismo** (app.js, db.js, index.html). Se identificaron **problemas de seguridad** (XSS, CSV injection, exposición de datos sensibles) e **inconsistencias** (funciones duplicadas, headers de tabla que no coinciden con los datos, código muerto, UX inconsistente).
+Se realizó un análisis exhaustivo del código de la aplicación **Control CDA** (app.js, db.js, index.html). Se identificaron **10 problemas de seguridad** y **10 inconsistencias** de diversa gravedad. La mayoría son de severidad media, con dos problemas críticos de seguridad que requieren atención inmediata.
 
 ---
 
 ## 🔴 PROBLEMAS DE SEGURIDAD
 
-### S1. Vulnerabilidades XSS (Cross-Site Scripting) - ALTA SEVERIDAD
+### S1. CRÍTICO: Contraseña temporal expuesta en consola y alerta
+**Archivo:** `db.js` líneas 356-358  
+**Severidad:** CRÍTICA  
+**Descripción:** Al crear el usuario admin por defecto, la contraseña temporal se muestra mediante `console.warn()` y `alert()`. La contraseña queda visible en:
+- La consola del navegador (persistente hasta que se limpia)
+- Posibles logs de errores del navegador
+- Capturas de pantalla si se comparte
 
-**Descripción:** Existen múltiples lugares donde se usa `innerHTML` con datos controlados por el usuario sin escapar. Aunque existe una función `escapeHtml()`, no se usa de manera consistente.
-
-**Ubicaciones afectadas (app.js):**
-
-#### a) Opciones de `<select>` sin escapar
-En `actualizarSelectoresFormularios()`, `cargarSelectoresRendicion()`, `cargarSelectoresArticulo()`, `listarEntregas()`, `openModalEntrega()`, `onCambioArticuloMovimiento()`:
 ```javascript
-selectCircuito.innerHTML += `<option value="${c.id}">${c.nombre} (${c.ubicacion})</option>`;
-selectGastoComp.innerHTML += `<option value="${c.id}">${c.nombre}</option>`;
-selComp.innerHTML += `<option value="${c.id}">${c.nombre}</option>`;
-selResp.innerHTML += `<option value="${s.id}">${s.nombre} ${s.apellido}</option>`;
-selProv.innerHTML += `<option value="${p.id}">${p.nombre}</option>`;
-selPersona.innerHTML += `<option value="${s.id}">${s.nombre} ${s.apellido}</option>`;
-selArt.innerHTML += `<option value="${a.id}">${a.codigo} - ${a.nombre}</option>`;
-```
-Si un usuario malintencionado crea un circuito, staff, proveedor o artículo con un nombre como `<img src=x onerror=alert(1)>`, el código se ejecutará en el navegador de todos los usuarios.
-
-#### b) `verCompetencia()` - Staff sin escapar
-```javascript
-staffContainer.innerHTML += `<span class="tag">${n}</span>`;
-```
-Donde `n` es `${s.nombre} ${s.apellido} (${s.funcion})` — no escapado.
-
-#### c) `verRendicion()` - Datos sin escapar
-```javascript
-<p style="font-size:1rem;">${comp ? comp.nombre : '-'}</p>
-<p style="font-size:1rem;">${circ ? circ.nombre : '-'}</p>
-<p style="font-size:1rem;">${resp ? `${resp.nombre} ${resp.apellido}` : '-'}</p>
+console.warn(`⚠️ Usuario admin creado con contraseña temporal: ${tempPassword}`);
+alert(`Se creó el usuario administrador inicial.\n\nUsuario: admin\nContraseña temporal: ${tempPassword}...`);
 ```
 
-#### d) `renderDashboardInventario()` - Nombre de artículo sin escapar
-```javascript
-<div class="mov-title">${artName}</div>
-```
-
-#### e) `listarMovimientosInventario()` - `talleText` sin escapar
-```javascript
-<div class="mov-title">${escapeHtml(artName)}${talleText}</div>
-```
-`artName` está escapado pero `talleText` no.
-
-#### f) `mostrarToast()` - Mensaje sin escapar
-```javascript
-toast.innerHTML = `<i class="fa-solid ..."></i> ${mensaje}`;
-```
-
-#### g) `migrarDatosLocalesAFirebase()` - Error sin escapar
-```javascript
-statusEl.innerHTML = `...${e.message || e}...`;
-```
-
-**Recomendación:** Usar `escapeHtml()` en TODOS los lugares donde se insertan datos de usuario en `innerHTML`. Para opciones de `<select>`, considerar usar `document.createElement('option')` con `textContent`.
+**Recomendación:** Mostrar la contraseña solo en el `alert()` (que es modal y desaparece al cerrar) y NO en `console.warn()`. Considerar forzar el cambio de contraseña en el primer inicio de sesión (ya existe `requiereCambioPassword` pero no se implementa la verificación).
 
 ---
 
-### S2. CSV Injection en `exportarArticulosExcel()` - MEDIA SEVERIDAD
+### S2. CRÍTICO: Falta de rate limiting / bloqueo de cuenta en login
+**Archivo:** `app.js` función `handleLogin()`  
+**Severidad:** CRÍTICA  
+**Descripción:** El sistema de login no implementa:
+- Rate limiting (límite de intentos por tiempo)
+- Bloqueo de cuenta tras N intentos fallidos
+- Delay exponencial entre intentos
+- CAPTCHA
 
-**Descripción:** La función `exportarArticulosExcel()` no sanitiza los datos antes de exportarlos a CSV. Si un usuario malintencionado ingresa un valor como `=CMD|calc.exe!A1` en el nombre o descripción de un artículo, podría ejecutar código al abrir el archivo en Excel.
+Un atacante podría realizar intentos de fuerza bruta sin restricciones.
 
-**Ubicación:** `app.js` - función `exportarArticulosExcel()`
+**Recomendación:** Implementar un contador de intentos fallidos por usuario con bloqueo temporal (ej: 5 intentos → bloqueo 15 minutos). Usar `localStorage` o `sessionStorage` para tracking básico.
+
+---
+
+### S3. ALTA: Hash de contraseña legacy inseguro sin migración automática
+**Archivo:** `db.js` líneas 64-72  
+**Severidad:** ALTA  
+**Descripción:** El hash legacy (`hashPasswordLegacy`) usa un algoritmo trivial (operaciones bit a bit simples) que es vulnerable a colisiones y ingeniería inversa. Aunque existe soporte para verificar hashes antiguos, **no hay mecanismo de migración automática** que actualice el hash a SHA-256 cuando el usuario inicia sesión con un hash legacy.
+
 ```javascript
+function hashPasswordLegacy(password) {
+    let hash = 0;
+    for (let i = 0; i < password.length; i++) {
+        const char = password.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+    return 'hash_' + Math.abs(hash).toString(16) + '_' + password.length;
+}
+```
+
+**Recomendación:** En `verificarPassword()`, si se detecta un hash legacy y la contraseña es válida, re-hashear con SHA-256 y actualizar el registro del usuario automáticamente.
+
+---
+
+### S4. ALTA: CSV Injection en exportación de artículos
+**Archivo:** `app.js` función `exportarArticulosExcel()`  
+**Severidad:** ALTA  
+**Descripción:** A diferencia de `exportarExcelRendicion()` y `exportarExcelPersonalCompetencia()` que implementan `sanitizarCSV()`, la función `exportarArticulosExcel()` **NO sanitiza** los campos contra inyección de fórmulas. Un usuario malicioso podría ingresar un nombre de artículo como `=CMD()|'calc'!A1` que se ejecutaría al abrir el CSV en Excel.
+
+```javascript
+// FALTA sanitizar:
 const linea = [
     art.codigo, art.nombre, (art.descripcion || '').replace(/,/g, ' '),
     catName, art.marca || '', art.modelo || '', art.color || '',
@@ -78,236 +75,249 @@ const linea = [
 ].join(',');
 ```
 
-**Comparación:** La función `exportarExcelRendicion()` SÍ tiene sanitización con `sanitizarCSV()`, lo que hace la inconsistencia evidente.
-
-**Recomendación:** Aplicar la misma función `sanitizarCSV()` en `exportarArticulosExcel()`.
+**Recomendación:** Aplicar la misma función `sanitizarCSV()` usada en otras exportaciones a todos los campos de texto.
 
 ---
 
-### S3. Sincronización de hashes de contraseña a Firebase - MEDIA SEVERIDAD
+### S5. MEDIA: Sin timeout de sesión
+**Archivo:** `app.js`  
+**Severidad:** MEDIA  
+**Descripción:** No existe un mecanismo de timeout/caducidad de sesión. Una vez que el usuario inicia sesión, la sesión permanece activa indefinidamente hasta que se cierra manualmente o se cierra el navegador. En un entorno compartido, esto representa un riesgo.
 
-**Descripción:** La función `sincronizarLocalAFirebase()` sincroniza TODOS los datos locales a Firebase, incluyendo la tabla `usuarios` que contiene hashes de contraseña.
+**Recomendación:** Implementar un timeout de sesión (ej: 30 minutos de inactividad) usando `setTimeout` que se reinicia con actividad del usuario.
 
-**Ubicación:** `db.js` - función `sincronizarLocalAFirebase()`
+---
+
+### S6. MEDIA: Configuración de Firebase sin reglas de seguridad
+**Archivo:** `db.js` función `inicializarFirebase()`  
+**Severidad:** MEDIA  
+**Descripción:** La configuración de Firebase se almacena en `localStorage` y se usa directamente. Si bien las claves de Firebase son públicas por diseño, **no se verifican ni configuran las reglas de seguridad de Firestore**. Cualquiera con la configuración podría acceder a los datos si las reglas de Firestore permiten acceso público.
+
+**Recomendación:** Documentar la necesidad de configurar reglas de seguridad en Firestore que requieran autenticación. Considerar integrar Firebase Auth en lugar de solo Firestore.
+
+---
+
+### S7. MEDIA: `document.write` en visualización de adjuntos
+**Archivo:** `app.js` función `abrirArchivoAdjunto()`  
+**Severidad:** MEDIA  
+**Descripción:** Se usa `document.write()` para renderizar archivos adjuntos en una nueva ventana. Aunque se usa `escapeHtml()` para el nombre del archivo, el uso de `document.write` es una práctica desaconsejada que puede ser explotada si el contenido del archivo es malicioso.
+
 ```javascript
-const stores = ['categorias', ..., 'usuarios', ...];
+win.document.write(`<html><head><title>${nombreSeguro}</title></head>...`);
 ```
 
-**Recomendación:** Excluir la tabla `usuarios` de la sincronización automática, o implementar reglas de seguridad en Firebase que restrinjan el acceso a esa colección.
+**Recomendación:** Usar `DOMParser` o crear elementos del DOM directamente en lugar de `document.write()`.
 
 ---
 
-### S4. Hash de contraseñas con SHA-256 (no ideal) - BAJA SEVERIDAD
+### S8. MEDIA: Falta de validación de entrada en formularios
+**Archivo:** `app.js` múltiples funciones  
+**Severidad:** MEDIA  
+**Descripción:** Varios formularios no validan adecuadamente los datos antes de guardar:
+- Campos numéricos no verifican rangos (ej: montos negativos en algunos casos)
+- Campos de texto no tienen límite de longitud
+- No se validan formatos de email en el campo `staff-mail`
+- No se validan formatos de CUIT/CUIL en proveedores
 
-**Descripción:** Se usa SHA-256 con salt para hashear contraseñas. Si bien es mejor que texto plano, SHA-256 es un hash rápido y no es ideal para contraseñas.
-
-**Ubicación:** `db.js` - función `hashPassword()`
-
-**Recomendación:** Para una aplicación del lado del cliente, SHA-256 con salt es aceptable. Si se busca mayor seguridad, considerar PBKDF2 (disponible en Web Crypto API) con múltiples iteraciones.
-
----
-
-### S5. Autorización solo del lado del cliente - BAJA SEVERIDAD (inherente)
-
-**Descripción:** Todas las verificaciones de permisos (`puedeEditar()`, `esAdmin()`, `esSupervisor()`) se ejecutan en el navegador y pueden ser eludidas desde la consola de desarrollador.
-
-**Recomendación:** Esto es inherente a aplicaciones del lado del cliente. Si se requiere seguridad real, implementar validación del lado del servidor o reglas de seguridad en Firebase.
+**Recomendación:** Agregar validación de entrada en todas las funciones `guardar*Form()` antes de persistir.
 
 ---
 
-### S6. Apertura insegura de archivos adjuntos - BAJA SEVERIDAD
+### S9. BAJA: Uso de `confirm()` y `alert()` nativos
+**Archivo:** `app.js` múltiples funciones  
+**Severidad:** BAJA  
+**Descripción:** A pesar de tener funciones personalizadas `mostrarConfirmacion()` y `mostrarAlerta()`, muchas funciones aún usan `confirm()` y `alert()` nativos del navegador. Estos pueden ser bloqueados por configuración del navegador y no siguen el diseño de la app.
 
-**Descripción:** La función `abrirArchivoAdjunto()` usa `window.open()` y `document.write()` para mostrar archivos. Aunque valida tipos MIME, un atacante podría manipular el data URL.
+**Recomendación:** Reemplazar todos los `confirm()` y `alert()` nativos con las versiones personalizadas existentes.
 
-**Ubicación:** `app.js` - función `abrirArchivoAdjunto()`
+---
 
-**Recomendación:** Considerar usar `URL.createObjectURL()` con un Blob en lugar de `document.write()`.
+### S10. BAJA: Información sensible en mensajes de error
+**Archivo:** `db.js` múltiples funciones  
+**Severidad:** BAJA  
+**Descripción:** Los mensajes de error de las operaciones de BD incluyen detalles internos que podrían exponer información sobre la estructura de la base de datos:
+
+```javascript
+reject(`Error al guardar en ${storeName}: ` + event.target.error);
+reject(`Error al leer de ${storeName}: ` + event.target.error);
+```
+
+**Recomendación:** Usar mensajes genéricos para el usuario y registrar detalles técnicos solo en consola.
 
 ---
 
 ## 🟡 INCONSISTENCIAS
 
-### I1. Función `cargarDatosVista` duplicada - ALTA SEVERIDAD
+### I1. CRÍTICA: Función `cargarDatosVista` duplicada
+**Archivo:** `app.js`  
+**Severidad:** CRÍTICA  
+**Descripción:** La función `cargarDatosVista(viewId)` está definida **DOS VECES**:
+1. Primera definición (~línea 200): No incluye las vistas de inventario
+2. Segunda definición (~línea 1400): Incluye todas las vistas de inventario
 
-**Descripción:** Existen DOS definiciones de `cargarDatosVista` en app.js:
+La segunda definición sobrescribe la primera, pero esto es confuso y propenso a errores. Si alguien edita la primera definición pensando que es la activa, los cambios no tendrán efecto.
 
-1. **Primera definición** (~línea 192):
+**Recomendación:** Eliminar la primera definición y mantener solo una versión completa.
+
+---
+
+### I2. ALTA: Uso inconsistente de `escapeHtml`
+**Archivo:** `app.js`  
+**Severidad:** ALTA  
+**Descripción:** El uso de `escapeHtml()` es inconsistente:
+- `listarGastos()`: Usa `escapeHtml(comp.nombre)` ✅
+- `listarCompetencias()`: Usa `comp.nombre` directamente en template literals ❌
+- `verCompetencia()`: Usa `comp.nombre` sin escapar en el título del modal ❌
+- `listarRendiciones()`: Usa `escapeHtml(comp.nombre)` ✅
+
+Esto puede causar XSS si un usuario ingresa HTML/JavaScript en el nombre de una competencia.
+
+**Recomendación:** Auditar todos los `innerHTML` y usar `escapeHtml()` consistentemente en todos los datos de usuario.
+
+---
+
+### I3. ALTA: Mezcla de `confirm()` nativo y `mostrarConfirmacion()` personalizado
+**Archivo:** `app.js`  
+**Severidad:** MEDIA  
+**Descripción:** El código mezcla dos sistemas de confirmación:
+- `eliminarCompetencia()`: Usa `confirm()` nativo ❌
+- `eliminarGasto()`: Usa `confirm()` nativo ❌
+- `eliminarStaff()`: Usa `confirm()` nativo ❌
+- `handleLogout()`: Usa `mostrarConfirmacion()` ✅
+- `cancelarEdicionRendicion()`: Usa `confirm()` nativo ❌
+
+**Recomendación:** Estandarizar usando `mostrarConfirmacion()` en todas partes.
+
+---
+
+### I4. MEDIA: Uso de `var` en lugar de `let`/`const`
+**Archivo:** `app.js` funciones `imprimirRendicion()` y `exportarExcelRendicion()`  
+**Severidad:** MEDIA  
+**Descripción:** Estas funciones usan `var` para declarar variables, lo cual es inconsistente con el resto del código que usa `let`/`const`:
+
 ```javascript
-async function cargarDatosVista(viewId) {
-    switch(viewId) {
-        case 'dashboard':    dashboardDirty = true; await renderDashboard(); break;
-        case 'calendario':   await listarCompetencias(); break;
-        // ...
-    }
+var prov = await obtenerNombreProveedor(d2.proveedorId);
+var conc = await obtenerNombreConcepto(d2.conceptoId);
+var d2 = detallesActuales[idx];
+```
+
+**Recomendación:** Reemplazar `var` con `const` o `let` según corresponda.
+
+---
+
+### I5. MEDIA: `invalidarCache` inconsistente
+**Archivo:** `app.js`  
+**Severidad:** MEDIA  
+**Descripción:** Algunas funciones llaman `invalidarCache()` después de guardar/eliminar y otras no:
+- `guardarArticuloForm()`: Llama `invalidarCache('articulos')` ✅
+- `guardarGastoForm()`: NO llama `invalidarCache('gastos')` ❌
+- `guardarCompetenciaForm()`: NO llama `invalidarCache('competencias')` ❌
+- `guardarStaffForm()`: NO llama `invalidarCache('staff')` ❌
+
+Aunque `guardar()` actualiza el caché internamente, no llamar `invalidarCache` puede causar problemas si hay lógica adicional que modifica datos.
+
+**Recomendación:** Estandarizar el manejo de caché después de operaciones de escritura.
+
+---
+
+### I6. MEDIA: Ineficiencia N+1 en `listarEntregas()`
+**Archivo:** `app.js` función `listarEntregas()`  
+**Severidad:** MEDIA  
+**Descripción:** Dentro del loop que procesa cada detalle de cada entrega, se llama `getTodos('articulos')` y `getTodos('talles')` por cada item, causando un problema de N+1 queries:
+
+```javascript
+for (const det of detallesEntrega) {
+    const articulos = await getTodos('articulos'); // ← Se llama por CADA detalle
+    const art = articulos.find(a => Number(a.id) === Number(det.articuloId));
+    // ...
+    const talles = await getTodos('talles'); // ← Se llama por CADA detalle
 }
 ```
 
-2. **Segunda definición** (~línea 3730, en MÓDULO: INVENTARIO):
-```javascript
-async function cargarDatosVista(viewId) {
-    switch(viewId) {
-        case 'dashboard':    await renderDashboard(); break;  // ← NO establece dashboardDirty
-        case 'calendario':   await listarCompetencias(); break;
-        // ... incluye vistas de inventario
-    }
-}
-```
-
-**Problema:** La segunda definición sobrescribe la primera. Como resultado, `dashboardDirty` nunca se establece en `true` al cambiar a la vista del dashboard, lo que puede causar que el dashboard no se actualice cuando los datos cambian.
-
-**Recomendación:** Eliminar la primera definición y mantener solo la segunda, agregando `dashboardDirty = true` antes de `await renderDashboard()`.
+**Recomendación:** Mover las llamadas `getTodos()` fuera del loop y reutilizar los datos.
 
 ---
 
-### I2. Headers de tabla de gastos no coinciden con los datos - ALTA SEVERIDAD
+### I7. BAJA: Inconsistencia en comparación de IDs
+**Archivo:** `app.js`  
+**Severidad:** BAJA  
+**Descripción:** Los IDs se comparan de diferentes maneras a lo largo del código:
+- `Number(g.competenciaId) === Number(comp.id)` 
+- `String(a.id) !== String(id)`
+- `parseInt(id)`
+- `Number(x.id) === Number(id)`
 
-**Descripción:** Los headers de la tabla de gastos en HTML no coinciden con lo que el JavaScript renderiza.
+Esta inconsistencia puede causar bugs sutiles cuando los IDs vienen de diferentes fuentes (URL, DOM, BD).
 
-**HTML (index.html):**
-```html
-<th>Fecha Carga</th>
-<th>Competencia</th>
-<th>Categoría</th>
-<th>Personal</th>
-<th>Concepto</th>
-<th>Monto</th>
-<th>Observaciones</th>
-<th>Acciones</th>
-```
-
-**JavaScript (app.js - `listarGastos()`):**
-```javascript
-tr.innerHTML = `
-    <td>${comp.codigo}</td>           ← Código
-    <td>${comp.nombre}</td>           ← Nombre
-    <td>${comp.fechaInicio}</td>     ← Fecha
-    <td>${staffCount}</td>           ← Staff count
-    <td>${gastosCount}</td>          ← Gastos count
-    <td>${costoTotal}</td>           ← Total
-    <td>${montoFacturarTotal}</td>   ← Monto a facturar
-    <td>${acciones}</td>              ← Acciones
-`;
-```
-
-**Recomendación:** Actualizar los headers en HTML para que coincidan con los datos renderizados: Código, Competencia, Fecha, Staff, Gastos, Total, Monto a Facturar, Acciones.
+**Recomendación:** Estandarizar usando `Number()` para todas las comparaciones de IDs.
 
 ---
 
-### I3. Uso inconsistente de `confirm()` vs `mostrarConfirmacion()` - MEDIA SEVERIDAD
+### I8. BAJA: `mostrarToast` no maneja bien el tipo 'warning'
+**Archivo:** `app.js` función `mostrarToast()`  
+**Severidad:** BAJA  
+**Descripción:** La función verifica `tipo === 'success'` y `tipo === 'error'`, pero cualquier otro tipo (incluyendo 'warning') usa el icono de advertencia por defecto. No hay un caso explícito para 'warning' o 'info'.
 
-**Descripción:** Algunas funciones usan el diálogo nativo `confirm()` mientras que otras usan el modal personalizado `mostrarConfirmacion()`.
-
-**Usan `confirm()` nativo:**
-- `eliminarCompetencia()`
-- `eliminarGasto()`
-- `eliminarStaff()`
-- `eliminarCategoria()`
-- `eliminarCircuito()`
-- `eliminarUsuario()`
-- `eliminarRendicion()`
-- `eliminarArticulo()`
-- `cancelarEdicionRendicion()`
-- `desconectarFirebase()`
-- `eliminarCategoriaGasto()`
-- `eliminarConceptoGasto()`
-- `eliminarProveedorModal()`
-- `eliminarFilaGasto()`
-- `eliminarTalle()`
-- `eliminarSubcategoria()`
-- `eliminarEntrega()`
-
-**Usan `mostrarConfirmacion()` personalizado:**
-- `handleLogout()`
-
-**Recomendación:** Estandarizar el uso de `mostrarConfirmacion()` en todas las confirmaciones de eliminación.
+**Recomendación:** Agregar casos explícitos para 'warning' e 'info' con iconos apropiados.
 
 ---
 
-### I4. Código muerto: `actualizarStaffGastoPorCompetencia()` - BAJA SEVERIDAD
+### I9. BAJA: Falta de manejo de errores en operaciones asíncronas
+**Archivo:** `app.js`  
+**Severidad:** BAJA  
+**Descripción:** Muchas funciones asíncronas no tienen bloques `try/catch`:
+- `listarCompetencias()`: Sin try/catch
+- `listarGastos()`: Sin try/catch
+- `listarStaff()`: Sin try/catch
 
-**Descripción:** La función `actualizarStaffGastoPorCompetencia()` aún existe en app.js pero ya no se usa porque el campo `gasto-staff` fue eliminado del formulario de gastos. La función verifica si existe `selectGastoStaff` y retorna temprano si no existe.
+Si una operación de BD falla, la promesa no se maneja y la UI puede quedar en estado inconsistente.
 
-**Ubicación:** `app.js` - función `actualizarStaffGastoPorCompetencia()`
-
-**Recomendación:** Eliminar la función `actualizarStaffGastoPorCompetencia()` ya que es código muerto.
-
----
-
-### I5. Elementos HTML inexistentes referenciados en JavaScript - MEDIA SEVERIDAD
-
-**Descripción:** Varias funciones de JavaScript intentan acceder a elementos que no existen en el HTML:
-
-1. `mostrarResumenCompetencia()` referencia `resumen-competencia-panel` (no existe en HTML)
-2. `guardarGastoExtraordinario()` referencia `extra-monto`, `extra-concepto`, `extra-detalle` (no existen en HTML)
-
-**Recomendación:** Eliminar estas funciones si ya no se usan, o agregar los elementos HTML correspondientes si son necesarios.
+**Recomendación:** Envolver las operaciones de BD en try/catch y mostrar mensajes de error al usuario.
 
 ---
 
-### I6. `listarGastos()` ya no muestra gastos individuales - MEDIA SEVERIDAD
+### I10. BAJA: Estilos inline excesivos en index.html
+**Archivo:** `index.html`  
+**Severidad:** BAJA  
+**Descripción:** Hay muchos estilos `style="..."` inline en el HTML, lo que dificulta el mantenimiento y es inconsistente con el uso de clases CSS en `styles.css`.
 
-**Descripción:** La función `listarGastos()` ahora muestra un listado de competencias con sus totales, en lugar de gastos individuales. Sin embargo:
-- El título de la página y los headers de la tabla aún sugieren que muestra gastos individuales
-- No hay forma de ver o editar gastos individuales desde esta vista
-- La función `editarGasto()` existe pero no hay botón que la invoque desde el listado
-
-**Recomendación:** Actualizar el título y headers de la vista de gastos, o agregar una vista detallada de gastos por competencia.
+**Recomendación:** Mover los estilos repetidos a clases en `styles.css`.
 
 ---
 
-### I7. `eliminarCategoriaGasto()` compara con `String(id)` pero los IDs son numéricos - BAJA SEVERIDAD
+## 📋 Resumen de Prioridades
 
-**Descripción:** En `eliminarCategoriaGasto()`:
-```javascript
-if (g.categoriaId === String(id)) {
-    g.categoriaId = 'general';
-}
-```
-Pero `g.categoriaId` puede ser un número o el string `'general'`. La comparación `String(id)` puede no funcionar correctamente si `g.categoriaId` es numérico.
-
-**Recomendación:** Usar `String(g.categoriaId) === String(id)` para una comparación robusta.
-
----
-
-### I8. `exportarDatos()` no incluye `conceptos` en la verificación de importación - BAJA SEVERIDAD
-
-**Descripción:** En `importarDatos()`, la verificación de validez del backup es:
-```javascript
-if (data.categorias || data.circuitos || data.staff || data.competencias || data.gastos) {
-```
-Pero `exportarDatos()` exporta muchos más stores. Un backup válido podría no pasar esta verificación si solo contiene, por ejemplo, `articulos`.
-
-**Recomendación:** Ampliar la verificación para incluir todos los stores exportados.
-
----
-
-## 📊 RESUMEN DE HALLAZGOS
-
-| # | Tipo | Severidad | Descripción |
-|---|------|-----------|-------------|
-| S1 | Seguridad | 🔴 ALTA | XSS en múltiples `innerHTML` sin escapar |
-| S2 | Seguridad | 🟡 MEDIA | CSV Injection en `exportarArticulosExcel()` |
-| S3 | Seguridad | 🟡 MEDIA | Hashes de contraseña sincronizados a Firebase |
-| S4 | Seguridad | 🟢 BAJA | SHA-256 no es ideal para contraseñas |
-| S5 | Seguridad | 🟢 BAJA | Autorización solo del lado del cliente |
-| S6 | Seguridad | 🟢 BAJA | Apertura insegura de archivos adjuntos |
-| I1 | Inconsistencia | 🔴 ALTA | Función `cargarDatosVista` duplicada |
-| I2 | Inconsistencia | 🔴 ALTA | Headers de tabla no coinciden con datos |
-| I3 | Inconsistencia | 🟡 MEDIA | Uso inconsistente de `confirm()` vs `mostrarConfirmacion()` |
-| I4 | Inconsistencia | 🟢 BAJA | Código muerto: `actualizarStaffGastoPorCompetencia()` |
-| I5 | Inconsistencia | 🟡 MEDIA | Elementos HTML inexistentes referenciados |
-| I6 | Inconsistencia | 🟡 MEDIA | `listarGastos()` no muestra gastos individuales |
-| I7 | Inconsistencia | 🟢 BAJA | Comparación de tipos en `eliminarCategoriaGasto()` |
-| I8 | Inconsistencia | 🟢 BAJA | Verificación de importación incompleta |
+| Prioridad | Issue | Tipo |
+|-----------|-------|------|
+| 🔴 CRÍTICA | S1 - Contraseña en consola | Seguridad |
+| 🔴 CRÍTICA | S2 - Sin rate limiting en login | Seguridad |
+| 🔴 CRÍTICA | I1 - Función duplicada | Inconsistencia |
+| 🟠 ALTA | S3 - Hash legacy sin migrar | Seguridad |
+| 🟠 ALTA | S4 - CSV Injection en artículos | Seguridad |
+| 🟠 ALTA | I2 - escapeHtml inconsistente | Inconsistencia |
+| 🟡 MEDIA | S5 - Sin timeout de sesión | Seguridad |
+| 🟡 MEDIA | S6 - Firebase sin reglas de seguridad | Seguridad |
+| 🟡 MEDIA | S7 - document.write en adjuntos | Seguridad |
+| 🟡 MEDIA | S8 - Falta validación de entrada | Seguridad |
+| 🟡 MEDIA | I3 - Mezcla de confirm/alert | Inconsistencia |
+| 🟡 MEDIA | I4 - Uso de var | Inconsistencia |
+| 🟡 MEDIA | I5 - invalidarCache inconsistente | Inconsistencia |
+| 🟡 MEDIA | I6 - N+1 en listarEntregas | Inconsistencia |
+| 🟢 BAJA | S9 - confirm/alert nativos | Seguridad |
+| 🟢 BAJA | S10 - Info sensible en errores | Seguridad |
+| 🟢 BAJA | I7 - Comparación de IDs | Inconsistencia |
+| 🟢 BAJA | I8 - mostrarToast warning | Inconsistencia |
+| 🟢 BAJA | I9 - Falta try/catch | Inconsistencia |
+| 🟢 BAJA | I10 - Estilos inline | Inconsistencia |
 
 ---
 
-## 🔧 RECOMENDACIONES PRIORITARIAS
+## ✅ Aspectos Positivos Identificados
 
-1. **Inmediato:** Corregir vulnerabilidades XSS (S1) aplicando `escapeHtml()` en todos los `innerHTML` que usan datos de usuario.
-2. **Inmediato:** Eliminar la función `cargarDatosVista` duplicada (I1) y asegurar que `dashboardDirty` se establezca correctamente.
-3. **Alto:** Actualizar los headers de la tabla de gastos (I2) para que coincidan con los datos renderizados.
-4. **Alto:** Agregar sanitización CSV en `exportarArticulosExcel()` (S2).
-5. **Medio:** Excluir tabla `usuarios` de la sincronización con Firebase (S3).
-6. **Medio:** Eliminar código muerto y referencias a elementos inexistentes (I4, I5).
-7. **Bajo:** Estandarizar el uso de `mostrarConfirmacion()` en todas las eliminaciones (I3).
+1. **Hashing de contraseñas moderno:** SHA-256 con salt aleatorio (Web Crypto API)
+2. **Función `escapeHtml` existente:** Se usa en la mayoría de los lugares críticos
+3. **Sanitización CSV en exportaciones principales:** `exportarExcelRendicion` y `exportarExcelPersonalCompetencia`
+4. **Control de acceso por roles:** Implementación de roles (admin, editor, viewer, supervisor)
+5. **Caché en memoria:** Optimización de lecturas con invalidación
+6. **Validación de stock:** Verificación de stock suficiente antes de egresos/entregas
+7. **Arquitectura offline-first:** IndexedDB como fuente primaria con sync opcional a Firebase
