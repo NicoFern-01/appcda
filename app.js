@@ -8,57 +8,6 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
-// ==================== CIFRADO REVERSIBLE (Web Crypto) - Opción C ====================
-// ADVERTENCIA: almacenar contraseñas reversiblemente tiene riesgos. Aquí usamos
-// una clave derivada de una frase secreta embebida en el cliente (no segura
-// para producción). El usuario pidió opción C, por eso lo implementamos.
-const ENCRYPTION_SECRET = 'cambiar_esto_por_una_clave_secreta_segura';
-
-async function _getCryptoKey(secret) {
-    const enc = new TextEncoder();
-    const salt = enc.encode('salt-login-app');
-    const baseKey = await crypto.subtle.importKey('raw', enc.encode(secret), {name: 'PBKDF2'}, false, ['deriveKey']);
-    return crypto.subtle.deriveKey({name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256'}, baseKey, {name: 'AES-GCM', length: 256}, false, ['encrypt','decrypt']);
-}
-
-function _arrayBufferToBase64(buffer) {
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-    return btoa(binary);
-}
-
-function _base64ToArrayBuffer(base64) {
-    const binary = atob(base64);
-    const len = binary.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes.buffer;
-}
-
-async function encryptText(plain) {
-    const key = await _getCryptoKey(ENCRYPTION_SECRET);
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const enc = new TextEncoder();
-    const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, enc.encode(plain));
-    return _arrayBufferToBase64(iv) + ':' + _arrayBufferToBase64(ct);
-}
-
-async function decryptText(packed) {
-    try {
-        const key = await _getCryptoKey(ENCRYPTION_SECRET);
-        const [ivB64, ctB64] = packed.split(':');
-        const iv = new Uint8Array(_base64ToArrayBuffer(ivB64));
-        const ct = _base64ToArrayBuffer(ctB64);
-        const plainBuf = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, ct);
-        const dec = new TextDecoder();
-        return dec.decode(plainBuf);
-    } catch (e) {
-        console.error('Error decrypting password:', e);
-        return '';
-    }
-}
-
 // ==================== ESTADO DE SESIÓN ====================
 let currentUser = null;
 
@@ -70,7 +19,7 @@ let chartConceptoInstance = null;
 // Flag para evitar re-renderizar el dashboard si no cambiaron los datos
 let dashboardDirty = true;
 
-const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'configuracion'];
+const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'configuracion'];
 
 // Calendario view mode: 'cards' | 'list' (compact)
 let calendarioViewMode = localStorage.getItem('calendarioViewMode') || 'cards';
@@ -108,141 +57,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error('Error al inicializar la base de datos:', error);
         alert('Error al iniciar la base de datos local. Por favor, recarga la página.');
     }
-    const rolSelect = document.getElementById('usuario-rol');
-    if (rolSelect) {
-        rolSelect.addEventListener('change', updatePasswordConfirmVisibilityBasedOnRole);
-    }
-    const passInput = document.getElementById('usuario-password');
-    if (passInput) {
-        passInput.addEventListener('input', (e) => {
-            // If the field was the masked placeholder and user types, clear masked flag
-            if (passInput.dataset.masked === 'true' && passInput.value !== '********') {
-                passInput.dataset.masked = 'false';
-            }
-            updatePasswordConfirmVisibilityBasedOnRole();
-        });
-    }
-    const passConfirmInput = document.getElementById('usuario-password-confirm');
-    if (passConfirmInput) {
-        passConfirmInput.addEventListener('input', (e) => {
-            if (passConfirmInput.dataset.masked === 'true' && passConfirmInput.value !== '********') {
-                passConfirmInput.dataset.masked = 'false';
-            }
-        });
-    }
-
-    // Responsive helpers: collapse sidebar on small screens and enhance tables for stacking
-    function checkViewportSidebar() {
-        if (window.innerWidth < 992) {
-            document.body.classList.add('sidebar-collapsed');
-        } else {
-            document.body.classList.remove('sidebar-collapsed');
-        }
-    }
-
-    function enhanceTablesForStacking() {
-        const tables = document.querySelectorAll('table');
-        tables.forEach(table => {
-            const ths = Array.from(table.querySelectorAll('thead th')).map(th => th.innerText.trim());
-            if (!ths.length) return;
-            table.querySelectorAll('tbody tr').forEach(row => {
-                Array.from(row.children).forEach((td, i) => {
-                    if (!td) return;
-                    td.setAttribute('data-label', ths[i] || '');
-                });
-            });
-        });
-    }
-
-    checkViewportSidebar();
-    enhanceTablesForStacking();
-    window.addEventListener('resize', () => {
-        checkViewportSidebar();
-    });
 });
 
 // ==================== AUTENTICACIÓN ====================
 
-function togglePasswordVisibility(inputId = 'login-password', iconId = 'toggle-pass-icon') {
-    const input = document.getElementById(inputId);
-    const icon = document.getElementById(iconId);
-    if (!input) return;
+function togglePasswordVisibility() {
+    const input = document.getElementById('login-password');
+    const icon = document.getElementById('toggle-pass-icon');
     if (input.type === 'password') {
         input.type = 'text';
-        if (icon) icon.classList.replace('fa-eye', 'fa-eye-slash');
+        icon.classList.replace('fa-eye', 'fa-eye-slash');
     } else {
         input.type = 'password';
-        if (icon) icon.classList.replace('fa-eye-slash', 'fa-eye');
-    }
-}
-
-// Comprobar disponibilidad de localStorage (puede fallar en file:// o modos privados)
-function storageAvailable(type = 'localStorage') {
-    try {
-        var storage = window[type];
-        var x = '__storage_test__';
-        storage.setItem(x, x);
-        storage.removeItem(x);
-        return true;
-    }
-    catch (e) {
-        return false;
-    }
-}
-
-function updatePasswordConfirmVisibilityBasedOnRole() {
-    const rolEl = document.getElementById('usuario-rol');
-    const group = document.getElementById('password-confirm-field-group');
-    const passwordInput = document.getElementById('usuario-password');
-    const confirmInput = document.getElementById('usuario-password-confirm');
-    const mismatchEl = document.getElementById('password-mismatch');
-    if (!rolEl || !group || !passwordInput || !confirmInput) return;
-    // Mostrar el campo de confirmación solo si el usuario conectado es administrador
-    if (esAdmin()) {
-        group.style.display = '';
-        confirmInput.required = passwordInput.required || passwordInput.value.length > 0;
-    } else {
-        group.style.display = 'none';
-        confirmInput.required = false;
-        mismatchEl.style.display = 'none';
-        confirmInput.value = '';
-    }
-}
-
-async function toggleBothPasswordVisibility(inputId1 = 'usuario-password', inputId2 = 'usuario-password-confirm', iconId = 'toggle-pass-icon-both') {
-    const i1 = document.getElementById(inputId1);
-    const i2 = document.getElementById(inputId2);
-    const icon = document.getElementById(iconId);
-    if (!i1 || !i2) return;
-    const shouldShow = (i1.type === 'password' || i2.type === 'password');
-    const MASKED = '********';
-    const usuarioId = document.getElementById('usuario-id').value;
-    if (shouldShow) {
-        // If fields are masked, try to decrypt stored passwordEnc for this user
-        if (i1.dataset.masked === 'true' && usuarioId) {
-            const u = await obtenerPorId('usuarios', Number(usuarioId));
-            if (u && u.passwordEnc) {
-                const plain = await decryptText(u.passwordEnc);
-                i1.value = plain || '';
-                i2.value = plain || '';
-                i1.dataset.masked = 'false';
-                i2.dataset.masked = 'false';
-            }
-        }
-        i1.type = 'text';
-        i2.type = 'text';
-        if (icon) icon.classList.replace('fa-eye', 'fa-eye-slash');
-    } else {
-        // Hide: if original was masked, revert to mask; otherwise keep user-typed value
-        if (i1.dataset.masked === 'true' || i2.dataset.masked === 'true') {
-            i1.value = MASKED;
-            i2.value = MASKED;
-            i1.dataset.masked = 'true';
-            i2.dataset.masked = 'true';
-        }
-        i1.type = 'password';
-        i2.type = 'password';
-        if (icon) icon.classList.replace('fa-eye-slash', 'fa-eye');
+        icon.classList.replace('fa-eye-slash', 'fa-eye');
     }
 }
 
@@ -335,10 +162,6 @@ function aplicarControlDeAcceso(rol) {
     document.body.classList.toggle('supervisor-mode', esSupervisor);
 }
 
-function toggleSidebar() {
-    document.body.classList.toggle('sidebar-collapsed');
-}
-
 function puedeEditar() {
     return currentUser && (currentUser.rol === 'admin' || currentUser.rol === 'editor');
 }
@@ -364,6 +187,17 @@ function switchView(viewId) {
     });
 
     cargarDatosVista(viewId);
+}
+
+async function cargarDatosVista(viewId) {
+    switch(viewId) {
+        case 'dashboard':    dashboardDirty = true; await renderDashboard(); break;
+        case 'calendario':   await listarCompetencias(); break;
+        case 'gastos':       await listarGastos(); break;
+        case 'carga-detallada': await listarRendiciones(); break;
+        case 'staff':        await listarStaff(); break;
+        case 'configuracion':await listarConfiguraciones(); break;
+    }
 }
 
 // ==================== DASHBOARD & GRÁFICOS ====================
@@ -677,8 +511,7 @@ async function listarCompetencias() {
         return;
     }
 
-    for (const comp of competenciasFiltradas) {
-        const totalPersonal = await obtenerTotalPersonalCompetencia(comp.id);
+    competenciasFiltradas.forEach(comp => {
         const circ = circuitos.find(c => c.id === Number(comp.circuitoId));
         const circNombre = circ ? `${circ.nombre} (${circ.ubicacion})` : 'Circuito Desconocido';
         const catNombres = comp.categoriasIds.map(id => {
@@ -694,11 +527,9 @@ async function listarCompetencias() {
             return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
         }, 0);
         const costoAutoCalc = costoSinples + costoDetallado;
-        // Sumar el total de personal por competencia
-        const costoTotalConPersonal = costoAutoCalc + totalPersonal;
         // Si tiene gastoTotal manual guardado, usamos ese; sino el auto-calculado
         const tieneManual = comp.gastoTotal !== undefined && comp.gastoTotal !== null;
-        const costoComp = tieneManual ? Number(comp.gastoTotal) : costoTotalConPersonal;
+        const costoComp = tieneManual ? Number(comp.gastoTotal) : costoAutoCalc;
         const costoClass = tieneManual ? 'costo-manual' : 'costo-auto';
         const tooltipText = tieneManual ? 'Total editado manualmente. Haga clic para modificar o restaurar cálculo automático.' : 'Total calculado automáticamente de todos los gastos. Haga clic para editar.';
 
@@ -764,7 +595,6 @@ async function listarCompetencias() {
             <div class="data-card-meta"><i class="fa-solid fa-hashtag"></i> <span style="font-family:monospace;font-weight:600;">${codigoVisible}</span></div>
             <div class="data-card-meta"><i class="fa-solid fa-map-location-dot"></i> <span>${circNombre}</span></div>
             <div class="data-card-meta"><i class="fa-solid fa-calendar-day"></i> <span>${formatearFechaVisual(comp.fechaInicio)} al ${formatearFechaVisual(comp.fechaFin)}</span></div>
-            <div class="data-card-meta"><i class="fa-solid fa-user-tie"></i> <span>Personal por Competencia: <strong style="color:var(--accent);">${formatearMoneda(totalPersonal)}</strong></span></div>
             <div class="data-card-meta" style="color:var(--accent);">${montoFacturarHtml}</div>
             <div class="data-card-tags">${catNombres.map(n => `<span class="tag">${n}</span>`).join('')}</div>
             <div class="data-card-actions">
@@ -773,7 +603,7 @@ async function listarCompetencias() {
             </div>
         `;
         listContainer.appendChild(card);
-    }
+    });
     updateCalendarioToggleButton();
 }
 
@@ -795,14 +625,13 @@ async function verCompetencia(id) {
         return s ? `${s.nombre} ${s.apellido} (${s.funcion})` : '';
     }).filter(Boolean);
 
-    const totalPersonal = await obtenerTotalPersonalCompetencia(comp.id);
     const costoSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + Number(g.monto), 0);
     const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(comp.id));
     const costoDetallado = rendicionesComp.reduce((s, r) => {
         const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
         return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
     }, 0);
-    const costoAutoCalc = costoSinples + costoDetallado + totalPersonal;
+    const costoAutoCalc = costoSinples + costoDetallado;
     const tieneManual = comp.gastoTotal !== undefined && comp.gastoTotal !== null;
     const costoComp = tieneManual ? Number(comp.gastoTotal) : costoAutoCalc;
 
@@ -889,7 +718,6 @@ async function verCompetencia(id) {
     document.getElementById('ver-comp-stats').innerHTML = `
         <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Código</h3><p style="font-size:1.1rem;font-family:monospace;">${comp.codigo || 'SIN CÓDIGO'}</p></div><div class="stat-icon"><i class="fa-solid fa-hashtag"></i></div></div>
         ${totalGastosStatCard}
-        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Gastos Personal</h3><p style="font-size:1.1rem;color:var(--accent);font-weight:700;"><i class="fa-solid fa-user-tie" style="font-size:0.9rem;margin-right:4px;"></i>${formatearMoneda(totalPersonal)}</p></div><div class="stat-icon"><i class="fa-solid fa-user-tie"></i></div></div>
         ${montoFacturarStatCard}
         <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Categorías</h3><p style="font-size:1rem;">${catNombres.slice(0, 3).join(', ')}${catNombres.length > 3 ? ` (+${catNombres.length - 3})` : ''}</p></div><div class="stat-icon"><i class="fa-solid fa-tag"></i></div></div>
         <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Personal</h3><p style="font-size:1rem;">${staffNombres.length} asignados</p></div><div class="stat-icon"><i class="fa-solid fa-users"></i></div></div>
@@ -911,7 +739,6 @@ async function verCompetencia(id) {
         <div><strong>Documentos:</strong> ${docLink}</div>
         <div><strong>Gastos simples:</strong> ${formatearMoneda(costoSinples)}</div>
         <div><strong>Gastos detallados:</strong> ${formatearMoneda(costoDetallado)}</div>
-        <div><strong>Gastos de personal:</strong> <span style="color:var(--accent);font-weight:600;">${formatearMoneda(totalPersonal)}</span></div>
     `;
 
     const staffContainer = document.getElementById('ver-comp-staff');
@@ -1291,15 +1118,14 @@ async function listarGastos() {
     }
 
     // Mostrar listado de competencias con sus totales
-    for (const comp of competenciasFiltradas) {
-        const totalPersonal = await obtenerTotalPersonalCompetencia(comp.id);
+    competenciasFiltradas.forEach(comp => {
         const costoSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + Number(g.monto), 0);
         const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(comp.id));
         const costoDetallado = rendicionesComp.reduce((s, r) => {
             const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
             return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
         }, 0);
-        const costoTotal = costoSinples + costoDetallado + totalPersonal;
+        const costoTotal = costoSinples + costoDetallado;
 
         const montoFacturarSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + (Number(g.montoFacturar) || 0), 0);
         const montoFacturarDetallado = rendicionesComp.reduce((s, r) => {
@@ -1330,13 +1156,12 @@ async function listarGastos() {
             <td><span style="font-size:0.85rem;color:var(--text-secondary);">${formatearFechaVisual(comp.fechaInicio)}<br>${formatearFechaVisual(comp.fechaFin)}</span></td>
             <td><span style="font-size:0.85rem;color:var(--text-secondary);">${staffCount} asignados</span></td>
             <td style="font-size:0.85rem;color:var(--text-secondary);">${gastosCount} gastos</td>
-            <td style="font-size:0.85rem;color:var(--text-secondary);">Personal: <strong style="color:var(--accent);">${formatearMoneda(totalPersonal)}</strong></td>
             <td style="color:var(--accent);font-weight:700;">${formatearMoneda(costoTotal)}</td>
             <td style="color:var(--accent);font-weight:700;">${formatearMoneda(montoFacturarTotal)}</td>
             ${acciones}
         `;
         tbody.appendChild(tr);
-    }
+    });
 }
 
 async function openModalGasto() {
@@ -1853,48 +1678,24 @@ function openModalUsuario() {
     document.getElementById('usuario-id').value = '';
     document.getElementById('usuario-modal-title').innerText = 'Nuevo Usuario';
     document.getElementById('usuario-password').required = true;
-    const pwdHintEl = document.getElementById('password-hint');
-    if (pwdHintEl) pwdHintEl.style.display = 'none';
-    document.getElementById('password-confirm-field-group').style.display = 'none';
-    document.getElementById('usuario-password-confirm').value = '';
-    document.getElementById('password-mismatch').style.display = 'none';
-    updatePasswordConfirmVisibilityBasedOnRole();
+    document.getElementById('password-hint').style.display = 'none';
     openModal('modal-usuario');
 }
 
 async function editarUsuario(id) {
-    try {
-        if (!esAdmin()) return;
-        const u = await obtenerPorId('usuarios', id);
-        if (!u) {
-            alert('Usuario no encontrado.');
-            return;
-        }
-        document.getElementById('usuario-id').value = u.id;
-        document.getElementById('usuario-nombre').value = u.nombre;
-        document.getElementById('usuario-username').value = u.username;
-        document.getElementById('usuario-rol').value = u.rol;
-        document.getElementById('usuario-activo').value = String(u.activo);
-        // No podemos recuperar la contraseña original (solo guardamos hash).
-        // Mostramos un marcador enmascarado para que quede visible como "guardada" y
-        // solo se cambiará si el operador escribe una nueva contraseña.
-        const masked = '********';
-        const passEl = document.getElementById('usuario-password');
-        const passConfirmEl = document.getElementById('usuario-password-confirm');
-        passEl.value = masked;
-        passConfirmEl.value = masked;
-        passEl.dataset.masked = 'true';
-        passConfirmEl.dataset.masked = 'true';
-        document.getElementById('usuario-password').required = false;
-        document.getElementById('password-confirm-field-group').style.display = 'none';
-        document.getElementById('password-mismatch').style.display = 'none';
-        document.getElementById('usuario-modal-title').innerText = 'Editar Usuario';
-        updatePasswordConfirmVisibilityBasedOnRole();
-        openModal('modal-usuario');
-    } catch (e) {
-        console.error('Error al editar usuario:', e);
-        alert('Error al editar el usuario. Por favor, intenta de nuevo.');
-    }
+    if (!esAdmin()) return;
+    const u = await obtenerPorId('usuarios', id);
+    if (!u) return;
+    document.getElementById('usuario-id').value = u.id;
+    document.getElementById('usuario-nombre').value = u.nombre;
+    document.getElementById('usuario-username').value = u.username;
+    document.getElementById('usuario-rol').value = u.rol;
+    document.getElementById('usuario-activo').value = String(u.activo);
+    document.getElementById('usuario-password').value = '';
+    document.getElementById('usuario-password').required = false;
+    document.getElementById('password-hint').style.display = 'block';
+    document.getElementById('usuario-modal-title').innerText = 'Editar Usuario';
+    openModal('modal-usuario');
 }
 
 async function guardarUsuarioForm(e) {
@@ -1906,10 +1707,6 @@ async function guardarUsuarioForm(e) {
     const rol = document.getElementById('usuario-rol').value;
     const activo = document.getElementById('usuario-activo').value === 'true';
     const password = document.getElementById('usuario-password').value;
-    const passwordConfirm = document.getElementById('usuario-password-confirm').value;
-    const mismatchEl = document.getElementById('password-mismatch');
-
-    mismatchEl.style.display = 'none';
 
     if (!id) {
         const todos = await getTodos('usuarios');
@@ -1919,53 +1716,18 @@ async function guardarUsuarioForm(e) {
         }
     }
 
-    // Validar coincidencia de contraseñas según rol y teniendo en cuenta el marcador enmascarado
-    const rolSelected = rol;
-    const MASKED = '********';
-    const passIsMasked = password === MASKED;
-    const passConfirmIsMasked = passwordConfirm === MASKED;
-    const passwordProvided = password && !passIsMasked;
-    const passwordConfirmProvided = passwordConfirm && !passConfirmIsMasked;
-
-    if (rolSelected === 'admin') {
-        // Para administradores: si es nuevo usuario, exigir contraseña real
-        if (!id && !passwordProvided) { alert('La contraseña es obligatoria para nuevos usuarios.'); return; }
-        // Si se proporcionó (no está el marcador), exigir que coincidan
-        if ((passwordProvided || passwordConfirmProvided) && password !== passwordConfirm) {
-            mismatchEl.style.display = 'flex';
-            return;
-        }
-    } else {
-        // Para otros roles, validar coincidencia solo si el operador editó/ingresó ambas
-        if (passwordProvided && passwordConfirmProvided && password !== passwordConfirm) {
-            mismatchEl.style.display = 'flex';
-            return;
-        }
-    }
-
     const usuario = { username, nombre, rol, activo };
     if (id) {
         usuario.id = Number(id);
-        if (password && password !== MASKED) {
+        if (password) {
             usuario.passwordHash = await hashPassword(password);
-            try {
-                usuario.passwordEnc = await encryptText(password);
-            } catch (e) {
-                console.error('Error encrypting password:', e);
-            }
         } else {
             const existente = await obtenerPorId('usuarios', Number(id));
             usuario.passwordHash = existente.passwordHash;
-            if (!usuario.passwordEnc) usuario.passwordEnc = existente.passwordEnc;
         }
     } else {
-        if (!password || password === MASKED) { alert('La contraseña es obligatoria para nuevos usuarios.'); return; }
+        if (!password) { alert('La contraseña es obligatoria para nuevos usuarios.'); return; }
         usuario.passwordHash = await hashPassword(password);
-        try {
-            usuario.passwordEnc = await encryptText(password);
-        } catch (e) {
-            console.error('Error encrypting password:', e);
-        }
     }
 
     await guardar('usuarios', usuario);
@@ -2014,8 +1776,7 @@ async function exportarDatos() {
         movimientosInventario: await getTodos('movimientosInventario'),
         entregasInventario: await getTodos('entregasInventario'),
         detalleEntregas: await getTodos('detalleEntregas'),
-        imagenesArticulo: await getTodos('imagenesArticulo'),
-        personalCompetencia: await getTodos('personalCompetencia')
+        imagenesArticulo: await getTodos('imagenesArticulo')
     };
     const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(backup, null, 2))}`;
     const a = document.createElement('a');
@@ -2436,18 +2197,12 @@ function guardarYConectarFirebase() {
             return;
         }
 
-        // Intentar guardar la configuración en localStorage; capturar fallos (file://, modo privado, bloqueos)
-        try {
-            if (!storageAvailable('localStorage')) throw new Error('localStorage no disponible');
-            localStorage.setItem('firebase_config', JSON.stringify(config));
-            statusEl.innerHTML = '<span style="color: #2ed573;">⌛ Conectando con Firebase...</span>';
-            setTimeout(() => { location.reload(); }, 500);
-        } catch (storageErr) {
-            console.error('No se pudo guardar la configuración en localStorage:', storageErr);
-            statusEl.innerHTML = `<span style="color:#ff6b6b;">⚠️ No se pudo guardar la configuración en localStorage: ${storageErr.message || storageErr}. Asegurate de ejecutar la app desde un servidor (ej: <code>npx http-server</code> o <code>python -m http.server 8000</code>) y de no usar modo incógnito.</span>`;
-            // Mostrar instrucciones adicionales en consola
-            console.warn('Si estás ejecutando desde file:// o en modo privado, guardá la configuración en el navegador alojado vía HTTP/HTTPS.');
-        }
+        localStorage.setItem('firebase_config', JSON.stringify(config));
+        statusEl.innerHTML = '<span style="color: #2ed573;">⌛ Conectando con Firebase...</span>';
+
+        setTimeout(() => {
+            location.reload();
+        }, 500);
     } catch (e) {
         statusEl.innerHTML = `<span style="color: #ff6b6b;">⚠️ Error: El texto no es un JSON válido. Revisá el formato.</span>`;
     }
@@ -2461,7 +2216,7 @@ async function migrarDatosLocalesAFirebase() {
         btnMigrar.disabled = true;
         btnMigrar.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Migrando...';
 
-        const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'personalCompetencia'];
+        const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios'];
         let total = 0;
 
         for (const storeName of stores) {
@@ -3943,11 +3698,10 @@ let chartInvStock = null;
 
 async function cargarDatosVista(viewId) {
     switch(viewId) {
-        case 'dashboard':    dashboardDirty = true; await renderDashboard(); break;
+        case 'dashboard':    await renderDashboard(); break;
         case 'calendario':   await listarCompetencias(); break;
         case 'gastos':       await listarGastos(); break;
         case 'carga-detallada': await listarRendiciones(); break;
-        case 'personal-competencia': await cargarPersonalCompetencia(); break;
         case 'inventario':   await renderDashboardInventario(); break;
         case 'articulos':    await listarArticulos(); break;
         case 'movimientos-inventario': await listarMovimientosInventario(); break;
@@ -4626,15 +4380,6 @@ async function exportarArticulosExcel() {
         getTodos('articuloTalles')
     ]);
 
-    // Función para sanitizar campos CSV contra inyección de fórmulas
-    function sanitizarCSV(valor) {
-        const str = String(valor || '').replace(/,/g, ' ');
-        if (/^[=+\-@\t\r]/.test(str)) {
-            return "'" + str;
-        }
-        return str;
-    }
-
     let csv = '\uFEFF';
     csv += 'Código,Nombre,Descripción,Categoría,Marca,Modelo,Color,Stock Total,Stock Mínimo,Estado\r\n';
 
@@ -4650,8 +4395,8 @@ async function exportarArticulosExcel() {
         }
         const estado = art.activo !== false ? 'Activo' : 'Inactivo';
         const linea = [
-            sanitizarCSV(art.codigo), sanitizarCSV(art.nombre), sanitizarCSV(art.descripcion || ''),
-            sanitizarCSV(catName), sanitizarCSV(art.marca || ''), sanitizarCSV(art.modelo || ''), sanitizarCSV(art.color || ''),
+            art.codigo, art.nombre, (art.descripcion || '').replace(/,/g, ' '),
+            catName, art.marca || '', art.modelo || '', art.color || '',
             stock, art.stockMinimo || 0, estado
         ].join(',');
         csv += linea + '\r\n';
@@ -5368,395 +5113,4 @@ async function eliminarEntrega(id) {
     invalidarCache('entregasInventario');
     mostrarToast('Entrega eliminada.');
     listarEntregas();
-}
-
-// ====================================================================
-// MÓDULO: PERSONAL POR COMPETENCIA
-// ====================================================================
-
-// Definición de roles/funciones con sus sueldos brutos por defecto
-const PERSONAL_COMPETENCIA_DEFAULT = [
-    { nombre: 'Comisario Deportivo - Contratado Cat. A', bruto: 169381.98 },
-    { nombre: 'Comisario Deportivo - Contratado Cat. B', bruto: 624716.18 },
-    { nombre: 'Comisario Deportivo - Mensualizado', bruto: 590600.00 },
-    { nombre: 'Comisario Técnico - Contratado Cat. A', bruto: 541000.00 },
-    { nombre: 'Comisario Técnico - Contratado Cat. B', bruto: 729714.96 },
-    { nombre: 'Comisario Técnico - Mensualizado', bruto: 541000.00 },
-    { nombre: 'Oficial Deportivo - Contratado', bruto: 573062.07 },
-    { nombre: 'Oficial Deportivo - Mensualizado', bruto: 443500.00 },
-    { nombre: 'Personal ACA - Horas Extras', bruto: 0.00 },
-    { nombre: 'Personal Contratado - En - Feb', bruto: 63564.37 }
-];
-
-// Porcentajes de cálculo
-const TASA_PARTICIPACION_ACA = 0.1375;   // 13.75%
-const TASA_SAC_MENSUALIZADO = 1/12;      // 1/12
-const TASA_CONT_PATRONALES = 0.273;      // 27.3%
-
-// Store para persistir personal por competencia
-const STORE_PERSONAL = 'personalCompetencia';
-
-// Formatear un número como moneda ARS para mostrar (visual)
-function formatearInputMoneda(valor) {
-    if (valor === null || valor === undefined || isNaN(valor)) return '';
-    return new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(valor);
-}
-
-// Parsear un string formateado como moneda a número limpio
-function parsearMoneda(str) {
-    if (!str) return 0;
-    const limpio = String(str).replace(/\./g, '').replace(/,/g, '.').replace(/[^0-9.-]/g, '');
-    return parseFloat(limpio) || 0;
-}
-
-// Calcular los valores de una fila de personal
-function calcularValoresPersonal(bruto, cantidad) {
-    const participacionACA = bruto * TASA_PARTICIPACION_ACA;
-    const sacMensualizado = bruto / 12;
-    const costoBase = bruto + participacionACA + sacMensualizado;
-    const totalBruto = costoBase * cantidad;
-    const contPatronales = totalBruto * TASA_CONT_PATRONALES;
-    const totalFila = totalBruto + contPatronales;
-    return { participacionACA, sacMensualizado, costoBase, totalBruto, contPatronales, totalFila };
-}
-
-// Obtener el total de gastos de personal para una competencia
-async function obtenerTotalPersonalCompetencia(compId) {
-    if (!compId) return 0;
-    const registros = await getTodos(STORE_PERSONAL);
-    const registro = registros.find(r => Number(r.competenciaId) === Number(compId));
-    if (!registro) return 0;
-    return registro.filas.reduce((sum, f) => {
-        const calc = calcularValoresPersonal(Number(f.bruto) || 0, Number(f.cantidad) || 0);
-        return sum + calc.totalFila;
-    }, 0);
-}
-
-// Cargar la vista de personal por competencia
-async function cargarPersonalCompetencia() {
-    const selectComp = document.getElementById('personal-comp-select');
-    if (!selectComp) return;
-
-    const competencias = await getTodos('competencias');
-    const savedComp = selectComp.value;
-    selectComp.innerHTML = '<option value="">Seleccione una competencia...</option>';
-
-    competencias.sort((a, b) => new Date(b.fechaInicio) - new Date(a.fechaInicio));
-    competencias.forEach(c => {
-        const label = c.codigo ? `${c.codigo} - ${c.nombre}` : c.nombre;
-        selectComp.innerHTML += `<option value="${c.id}">${escapeHtml(label)}</option>`;
-    });
-    selectComp.value = savedComp;
-
-    // Cargar los datos de la competencia seleccionada (o la primera si no hay selección)
-    if (!selectComp.value && competencias.length > 0) {
-        selectComp.value = competencias[0].id;
-    }
-
-    await renderizarTablaPersonalCompetencia();
-}
-
-// Renderizar la tabla de personal por competencia
-async function renderizarTablaPersonalCompetencia() {
-    const compId = document.getElementById('personal-comp-select').value;
-    const tbody = document.getElementById('personal-comp-table-body');
-    const totalFilaEl = document.getElementById('personal-comp-total-fila');
-    const totalEl = document.getElementById('personal-comp-total');
-    if (!tbody) return;
-
-    tbody.innerHTML = '';
-
-    if (!compId) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">Seleccione una competencia para ver el personal.</td></tr>';
-        if (totalFilaEl) totalFilaEl.textContent = formatearMoneda(0);
-        if (totalEl) totalEl.textContent = formatearMoneda(0);
-        const diasEl0 = document.getElementById('personal-comp-dias');
-        if (diasEl0) diasEl0.value = '0';
-        return;
-    }
-
-    // Mostrar cantidad de días de la competencia
-    const diasEl = document.getElementById('personal-comp-dias');
-    if (diasEl) {
-        const comp = await obtenerPorId('competencias', Number(compId));
-        if (comp && comp.fechaInicio && comp.fechaFin) {
-            const inicio = new Date(comp.fechaInicio);
-            const fin = new Date(comp.fechaFin);
-            const diffTime = Math.abs(fin - inicio);
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // +1 para incluir día inicial y final
-            diasEl.value = diffDays;
-        } else {
-            diasEl.value = '0';
-        }
-    }
-
-    // Obtener datos guardados o usar valores por defecto
-    let filas = null;
-    try {
-        const registros = await getTodos(STORE_PERSONAL);
-        const registro = registros.find(r => Number(r.competenciaId) === Number(compId));
-        if (registro && registro.filas) {
-            filas = registro.filas;
-        }
-    } catch(e) {}
-
-    if (!filas) {
-        filas = PERSONAL_COMPETENCIA_DEFAULT.map(f => ({ nombre: f.nombre, cantidad: 1, bruto: f.bruto }));
-    }
-
-    let totalGeneral = 0;
-
-    filas.forEach((fila, idx) => {
-        const bruto = Number(fila.bruto) || 0;
-        const cantidad = Number(fila.cantidad) || 0;
-        const calc = calcularValoresPersonal(bruto, cantidad);
-        totalGeneral += calc.totalFila;
-
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td style="font-weight:500;">${escapeHtml(fila.nombre)}</td>
-            <td style="text-align:center;">
-                <input type="number" class="personal-cantidad-input" data-index="${idx}" min="0" value="${cantidad}" style="width:70px;text-align:center;">
-            </td>
-            <td style="text-align:right;">
-                <input type="text" class="personal-bruto-input" data-index="${idx}" value="${formatearInputMoneda(bruto)}" style="width:130px;text-align:right;" placeholder="0,00">
-            </td>
-            <td style="text-align:right;color:var(--text-secondary);white-space:nowrap;" data-calc="aca" data-index="${idx}">${formatearMoneda(calc.participacionACA)}</td>
-            <td style="text-align:right;color:var(--text-secondary);white-space:nowrap;" data-calc="sac" data-index="${idx}">${formatearMoneda(calc.sacMensualizado)}</td>
-            <td style="text-align:right;color:var(--text-secondary);white-space:nowrap;" data-calc="base" data-index="${idx}">${formatearMoneda(calc.costoBase)}</td>
-            <td style="text-align:right;font-weight:500;white-space:nowrap;" data-calc="totalBruto" data-index="${idx}">${formatearMoneda(calc.totalBruto)}</td>
-            <td style="text-align:right;color:var(--accent);font-weight:600;white-space:nowrap;" data-calc="patronales" data-index="${idx}">${formatearMoneda(calc.contPatronales)}</td>
-            <td style="text-align:right;color:var(--accent);font-weight:700;white-space:nowrap;" data-calc="totalFila" data-index="${idx}">${formatearMoneda(calc.totalFila)}</td>
-        `;
-        tbody.appendChild(tr);
-    });
-
-    // Actualizar totales
-    if (totalFilaEl) totalFilaEl.textContent = formatearMoneda(totalGeneral);
-    if (totalEl) totalEl.textContent = formatearMoneda(totalGeneral);
-
-    // Agregar eventos a los inputs
-    document.querySelectorAll('.personal-bruto-input').forEach(input => {
-        input.addEventListener('input', onPersonalBrutoInput);
-        input.addEventListener('blur', onPersonalBrutoBlur);
-        input.addEventListener('keydown', onPersonalBrutoKeydown);
-    });
-    document.querySelectorAll('.personal-cantidad-input').forEach(input => {
-        input.addEventListener('input', recalcularPersonalFila);
-        input.addEventListener('change', recalcularPersonalFila);
-    });
-}
-
-// Evento: formatear mientras escribe en el input de bruto
-function onPersonalBrutoInput(e) {
-    // Limpiar todo excepto dígitos y coma
-    let value = e.target.value;
-    if (value) {
-        // Remover puntos de miles, mantener solo dígitos y coma decimal
-        const soloNumeros = value.replace(/[^\d,]/g, '');
-        e.target.dataset.raw = parsearMoneda(soloNumeros);
-        // Formatear visualmente con puntos de miles y comas
-        e.target.value = formatearInputMoneda(parsearMoneda(soloNumeros));
-    }
-    recalcularPersonalFila(e);
-}
-
-// Evento: al perder foco, mantener formato
-function onPersonalBrutoBlur(e) {
-    const raw = parsearMoneda(e.target.value);
-    e.target.value = raw > 0 ? formatearInputMoneda(raw) : '0,00';
-    recalcularPersonalFila(e);
-}
-
-// Evento: tecla Enter para pasar de campo
-function onPersonalBrutoKeydown(e) {
-    if (e.key === 'Enter') {
-        e.preventDefault();
-        e.target.blur();
-    }
-}
-
-// Recalcular los cálculos de una fila cuando cambian cantidad o bruto
-function recalcularPersonalFila(e) {
-    const input = e.target;
-    const index = Number(input.dataset.index);
-    const tr = input.closest('tr');
-    if (!tr || isNaN(index)) return;
-
-    const brutoInput = tr.querySelector('.personal-bruto-input');
-    const cantidadInput = tr.querySelector('.personal-cantidad-input');
-    if (!brutoInput || !cantidadInput) return;
-
-    const bruto = parsearMoneda(brutoInput.value);
-    const cantidad = Number(cantidadInput.value) || 0;
-    const calc = calcularValoresPersonal(bruto, cantidad);
-
-    tr.querySelectorAll('[data-calc]').forEach(cell => {
-        const tipo = cell.dataset.calc;
-        if (tipo === 'totalFila') cell.textContent = formatearMoneda(calc.totalFila);
-        else if (tipo === 'aca') cell.textContent = formatearMoneda(calc.participacionACA);
-        else if (tipo === 'sac') cell.textContent = formatearMoneda(calc.sacMensualizado);
-        else if (tipo === 'base') cell.textContent = formatearMoneda(calc.costoBase);
-        else if (tipo === 'totalBruto') cell.textContent = formatearMoneda(calc.totalBruto);
-        else if (tipo === 'patronales') cell.textContent = formatearMoneda(calc.contPatronales);
-    });
-
-    // Actualizar total general
-    let totalGeneral = 0;
-    document.querySelectorAll('#personal-comp-table-body tr').forEach(row => {
-        const brutoRow = parsearMoneda(row.querySelector('.personal-bruto-input') ? row.querySelector('.personal-bruto-input').value : '0');
-        const cantRow = Number(row.querySelector('.personal-cantidad-input') ? row.querySelector('.personal-cantidad-input').value : 0);
-        const calcRow = calcularValoresPersonal(brutoRow, cantRow);
-        totalGeneral += calcRow.totalFila;
-    });
-    const totalFilaEl = document.getElementById('personal-comp-total-fila');
-    const totalEl = document.getElementById('personal-comp-total');
-    if (totalFilaEl) totalFilaEl.textContent = formatearMoneda(totalGeneral);
-    if (totalEl) totalEl.textContent = formatearMoneda(totalGeneral);
-}
-
-// Guardar los datos de personal por competencia
-async function guardarPersonalCompetencia() {
-    if (!puedeEditar()) return;
-    const compId = document.getElementById('personal-comp-select').value;
-    if (!compId) { mostrarToast('Seleccione una competencia.', 'warning'); return; }
-
-    const filas = [];
-    document.querySelectorAll('#personal-comp-table-body tr').forEach(tr => {
-        const nombreEl = tr.querySelector('td:first-child');
-        const brutoInput = tr.querySelector('.personal-bruto-input');
-        const cantidadInput = tr.querySelector('.personal-cantidad-input');
-        if (!nombreEl || !brutoInput || !cantidadInput) return;
-        filas.push({
-            nombre: nombreEl.textContent,
-            bruto: parsearMoneda(brutoInput.value),
-            cantidad: Number(cantidadInput.value) || 0
-        });
-    });
-
-    const registros = await getTodos(STORE_PERSONAL);
-    let registro = registros.find(r => Number(r.competenciaId) === Number(compId));
-    if (registro) {
-        registro.filas = filas;
-        registro.fechaModificacion = new Date().toISOString();
-        registro.usuarioModificacion = currentUser ? currentUser.id : null;
-        await guardar(STORE_PERSONAL, registro);
-    } else {
-        await guardar(STORE_PERSONAL, {
-            competenciaId: Number(compId),
-            filas,
-            fechaCreacion: new Date().toISOString(),
-            fechaModificacion: new Date().toISOString(),
-            usuarioCreacion: currentUser ? currentUser.id : null,
-            usuarioModificacion: currentUser ? currentUser.id : null
-        });
-    }
-
-    await actualizarGastoTotalCompetencia(compId);
-    dashboardDirty = true;
-    mostrarToast('Personal por competencia guardado correctamente.');
-}
-
-// Actualizar el gasto total de la competencia sumando el personal
-async function actualizarGastoTotalCompetencia(compId) {
-    if (!compId) return;
-    const totalPersonal = await obtenerTotalPersonalCompetencia(compId);
-    const comp = await obtenerPorId('competencias', Number(compId));
-    if (!comp) return;
-
-    // Guardar el total de personal en la competencia para integrarlo al total
-    comp.totalPersonal = totalPersonal;
-
-    // Sumar al gasto total de la competencia
-    // Los gastos simples + detallados ya se calculan automáticamente
-    // Este campo se sumará en listarCompetencias, listarGastos y verCompetencia
-    await guardar('competencias', comp);
-}
-
-// Obtener el total de personal para una competencia + gastos normales
-async function obtenerTotalGastosConPersonal(compId) {
-    const [gastos, rendiciones, detalleGastos] = await Promise.all([
-        getTodos('gastos'),
-        getTodos('rendiciones'),
-        getTodos('detalleGastos')
-    ]);
-    const costoSinples = gastos.filter(g => Number(g.competenciaId) === Number(compId)).reduce((s, g) => s + Number(g.monto), 0);
-    const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(compId));
-    const costoDetallado = rendicionesComp.reduce((s, r) => {
-        const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
-        return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
-    }, 0);
-    const totalPersonal = await obtenerTotalPersonalCompetencia(compId);
-    return { normal: costoSinples + costoDetallado, personal: totalPersonal, total: costoSinples + costoDetallado + totalPersonal };
-}
-
-// Exportar datos de personal por competencia a Excel (CSV)
-async function exportarExcelPersonalCompetencia() {
-    const compId = document.getElementById('personal-comp-select').value;
-    if (!compId) { mostrarToast('Seleccione una competencia.', 'warning'); return; }
-
-    const comp = await obtenerPorId('competencias', Number(compId));
-    if (!comp) { mostrarToast('No se encontró la competencia.', 'warning'); return; }
-
-    const tbody = document.getElementById('personal-comp-table-body');
-    if (!tbody) return;
-
-    const filas = tbody.querySelectorAll('tr');
-    if (filas.length === 0) { mostrarToast('No hay datos para exportar.', 'warning'); return; }
-
-    // Obtener días del campo editable (o calcular si está vacío)
-    const diasInput = document.getElementById('personal-comp-dias');
-    let dias = Number(diasInput?.value) || 0;
-    if (dias === 0 && comp.fechaInicio && comp.fechaFin) {
-        const inicio = new Date(comp.fechaInicio);
-        const fin = new Date(comp.fechaFin);
-        const diffTime = Math.abs(fin - inicio);
-        dias = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-    }
-
-    // Función para sanitizar campos CSV contra inyección de fórmulas
-    function sanitizarCSV(valor) {
-        const str = String(valor || '').replace(/,/g, ' ');
-        if (/^[=+\-@\t\r]/.test(str)) {
-            return "'" + str;
-        }
-        return str;
-    }
-
-    let csv = '\uFEFF';
-    csv += `Competencia: ${sanitizarCSV(comp.codigo ? comp.codigo + ' - ' + comp.nombre : comp.nombre)}\r\n`;
-    csv += `Fecha Inicio: ${comp.fechaInicio || '-'}\r\n`;
-    csv += `Fecha Fin: ${comp.fechaFin || '-'}\r\n`;
-    csv += `Cantidad de dias: ${dias}\r\n`;
-    csv += '\r\n';
-    csv += 'Rol/Funcion,Cantidad de Personas,Sueldo Bruto x Persona,Participacion ACA (13.75%),SAC Mensualizado (/12),Costo Laboral Base p/pers,Total Salario Bruto,Cont. Patronales (27.3%),Salario + Cargas (Total Fila)\r\n';
-
-    let totalGeneral = 0;
-
-    filas.forEach(tr => {
-        const nombreEl = tr.querySelector('td:first-child');
-        const cantidadInput = tr.querySelector('.personal-cantidad-input');
-        const brutoInput = tr.querySelector('.personal-bruto-input');
-        if (!nombreEl || !brutoInput || !cantidadInput) return;
-
-        const bruto = parsearMoneda(brutoInput.value);
-        const cantidad = Number(cantidadInput.value) || 0;
-        const calc = calcularValoresPersonal(bruto, cantidad);
-        totalGeneral += calc.totalFila;
-
-        const linea = sanitizarCSV(nombreEl.textContent) + ',' + cantidad + ',' + bruto.toFixed(2) + ',' + calc.participacionACA.toFixed(2) + ',' + calc.sacMensualizado.toFixed(2) + ',' + calc.costoBase.toFixed(2) + ',' + calc.totalBruto.toFixed(2) + ',' + calc.contPatronales.toFixed(2) + ',' + calc.totalFila.toFixed(2);
-        csv += linea + '\r\n';
-    });
-
-    csv += '\r\n';
-    csv += `TOTAL GASTOS PERSONAL,,,,,,,,$${totalGeneral.toFixed(2)}\r\n`;
-
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `personal_competencia_${comp.codigo || comp.id}_${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    mostrarToast('Archivo Excel exportado correctamente.');
 }
