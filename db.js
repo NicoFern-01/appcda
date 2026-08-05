@@ -1,10 +1,9 @@
 ﻿// db.js - Gestión de Base de Datos Local con IndexedDB e integración con Firebase
 
 const DB_NAME = 'ControlAutomovilismoDB';
-const DB_VERSION = 7;
+const DB_VERSION = 6;
 
 let dbInstance = null;
-let useIndexedDB = true;
 
 // ==================== CACHÉ EN MEMORIA ====================
 // Evita leer IndexedDB/Firebase en cada cambio de vista.
@@ -73,7 +72,7 @@ function hashPasswordLegacy(password) {
 }
 
 async function inicializarFirebase() {
-    const configStr = await getConfig('firebase_config');
+    const configStr = localStorage.getItem('firebase_config');
     // Si estamos en file://, advertir que la carga desde la CDN puede fallar
     if (location.protocol === 'file:') {
         console.warn('Ejecutando desde file:// — recomendamos servir la app por HTTP (ej: `npx http-server` o `python -m http.server`) para que Firebase funcione correctamente.');
@@ -155,89 +154,6 @@ function invalidarCache(storeName) {
 
 function limpiarCacheCompleto() {
     Object.keys(_cache).forEach(k => delete _cache[k]);
-}
-
-// Fallback: si IndexedDB no está disponible (modo privado o restricciones), usamos localStorage
-function indexedDBAvailable() {
-    try {
-        return !!window.indexedDB;
-    } catch (e) {
-        return false;
-    }
-}
-
-function _lsKey(storeName) {
-    return `CADA__${storeName}`;
-}
-
-async function _lsGetTodos(storeName) {
-    try {
-        const raw = localStorage.getItem(_lsKey(storeName));
-        return raw ? JSON.parse(raw) : [];
-    } catch (e) { return []; }
-}
-
-async function _lsGuardar(storeName, item) {
-    const data = await _lsGetTodos(storeName);
-    const idx = data.findIndex(x => Number(x.id) === Number(item.id));
-    if (idx >= 0) data[idx] = item; else data.push(item);
-    localStorage.setItem(_lsKey(storeName), JSON.stringify(data));
-    return item.id;
-}
-
-async function _lsEliminar(storeName, id) {
-    const data = await _lsGetTodos(storeName);
-    const filtered = data.filter(x => Number(x.id) !== Number(id));
-    localStorage.setItem(_lsKey(storeName), JSON.stringify(filtered));
-}
-
-async function _lsObtenerPorId(storeName, id) {
-    const data = await _lsGetTodos(storeName);
-    return data.find(x => Number(x.id) === Number(id)) || null;
-}
-
-// Config helpers: intentan usar IndexedDB `appConfig`, si no disponible usan localStorage
-async function setConfig(key, value) {
-    const payload = { key: String(key), value };
-    if (indexedDBAvailable()) {
-        const db = await openDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(['appConfig'], 'readwrite');
-            const store = tx.objectStore('appConfig');
-            const req = store.put(payload);
-            req.onsuccess = () => resolve(true);
-            req.onerror = (e) => reject(e);
-        });
-    } else {
-        try {
-            localStorage.setItem(String(key), JSON.stringify(value));
-            return true;
-        } catch (e) { return false; }
-    }
-}
-
-async function getConfig(key) {
-    if (indexedDBAvailable()) {
-        try {
-            const db = await openDB();
-            return new Promise((resolve, reject) => {
-                const tx = db.transaction(['appConfig'], 'readonly');
-                const store = tx.objectStore('appConfig');
-                const req = store.get(String(key));
-                req.onsuccess = (ev) => {
-                    const res = ev.target.result;
-                    resolve(res ? res.value : null);
-                };
-                req.onerror = (e) => resolve(null);
-            });
-        } catch (e) {
-            // fallthrough to localStorage
-        }
-    }
-    try {
-        const raw = localStorage.getItem(String(key));
-        return raw ? raw : null;
-    } catch (e) { return null; }
 }
 
 function openDB() {
@@ -362,10 +278,6 @@ function openDB() {
             // Personal por competencia (costos laborales)
             if (!db.objectStoreNames.contains('personalCompetencia')) {
                 db.createObjectStore('personalCompetencia', { keyPath: 'id', autoIncrement: true });
-            }
-            // Store para configuraciones simples (ej. firebase_config)
-            if (!db.objectStoreNames.contains('appConfig')) {
-                db.createObjectStore('appConfig', { keyPath: 'key' });
             }
         };
 
@@ -536,25 +448,6 @@ async function guardar(storeName, item) {
     } else {
         item.id = Number(item.id);
     }
-    // Si IndexedDB no está disponible, usar localStorage como fallback
-    if (!indexedDBAvailable()) {
-        useIndexedDB = false;
-        const res = await _lsGuardar(storeName, item);
-        // Update cache
-        if (_cache[storeName]) {
-            const idx = _cache[storeName].findIndex(x => Number(x.id) === Number(item.id));
-            const clone = Object.assign({}, item);
-            if (idx >= 0) _cache[storeName][idx] = clone; else _cache[storeName].push(clone);
-        }
-        // Also attempt Firebase sync if available
-        if (useFirebase) {
-            try {
-                const docRef = doc(dbFirebase, storeName, String(item.id));
-                await setDoc(docRef, item);
-            } catch (e) { console.warn(`Firebase sync warning [${storeName}]:`, e); }
-        }
-        return res;
-    }
 
     // SIEMPRE guardar primero en IndexedDB (fuente primaria local)
     const result = await new Promise((resolve, reject) => {
@@ -604,13 +497,8 @@ async function guardar(storeName, item) {
 // Helper genérico para obtener todos los elementos (con caché)
 async function getTodos(storeName) {
     // Si hay datos en caché, los devuelve directamente sin tocar la BD
-    if (_cache[storeName]) return _cache[storeName];
-
-    if (!indexedDBAvailable()) {
-        useIndexedDB = false;
-        const data = await _lsGetTodos(storeName);
-        _cache[storeName] = data;
-        return data;
+    if (_cache[storeName]) {
+        return _cache[storeName];
     }
 
     // SIEMPRE leer desde IndexedDB como fuente primaria. Firebase es solo para escritura/sync.
@@ -634,32 +522,26 @@ async function getTodos(storeName) {
 
 // Helper genérico para eliminar por ID
 async function eliminar(storeName, id) {
-    // SIEMPRE eliminar primero de IndexedDB (fuente primaria local) o fallback a localStorage
-    if (!indexedDBAvailable()) {
-        useIndexedDB = false;
-        await _lsEliminar(storeName, id);
-        if (_cache[storeName]) _cache[storeName] = _cache[storeName].filter(x => Number(x.id) !== Number(id));
-    } else {
-        await new Promise((resolve, reject) => {
-            openDB().then(db => {
-                const transaction = db.transaction([storeName], 'readwrite');
-                const store = transaction.objectStore(storeName);
-                const request = store.delete(Number(id));
+    // SIEMPRE eliminar primero de IndexedDB (fuente primaria local)
+    await new Promise((resolve, reject) => {
+        openDB().then(db => {
+            const transaction = db.transaction([storeName], 'readwrite');
+            const store = transaction.objectStore(storeName);
+            const request = store.delete(Number(id));
 
-                request.onsuccess = () => {
-                    // Update in-memory cache if present so UI updates immediately
-                    if (_cache[storeName]) {
-                        _cache[storeName] = _cache[storeName].filter(x => Number(x.id) !== Number(id));
-                    }
-                    resolve();
-                };
+            request.onsuccess = () => {
+                // Update in-memory cache if present so UI updates immediately
+                if (_cache[storeName]) {
+                    _cache[storeName] = _cache[storeName].filter(x => Number(x.id) !== Number(id));
+                }
+                resolve();
+            };
 
-                request.onerror = (event) => {
-                    reject(`Error al eliminar en ${storeName}: ` + event.target.error);
-                };
-            }).catch(reject);
-        });
-    }
+            request.onerror = (event) => {
+                reject(`Error al eliminar en ${storeName}: ` + event.target.error);
+            };
+        }).catch(reject);
+    });
 
     // También sincronizar con Firebase si está conectado (no bloqueante)
     if (useFirebase) {
@@ -677,11 +559,6 @@ async function obtenerPorId(storeName, id) {
     if (_cache[storeName]) {
         const found = _cache[storeName].find(x => Number(x.id) === Number(id));
         if (found) return found;
-    }
-
-    if (!indexedDBAvailable()) {
-        useIndexedDB = false;
-        return await _lsObtenerPorId(storeName, id);
     }
 
     // SIEMPRE leer desde IndexedDB como fuente primaria. Firebase es solo para escritura/sync.
