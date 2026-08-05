@@ -1,7 +1,7 @@
 ﻿// db.js - Gestión de Base de Datos Local con IndexedDB e integración con Firebase
 
 const DB_NAME = 'ControlAutomovilismoDB';
-const DB_VERSION = 5;
+const DB_VERSION = 7;
 
 let dbInstance = null;
 
@@ -14,8 +14,18 @@ const _cache = {};
 let dbFirebase = null;
 let useFirebase = false;
 
+const DEFAULT_FIREBASE_CONFIG = {
+    apiKey: "AIzaSyAGT318kBRICwdjrU05RCUNSJRanAQnfPQ",
+    authDomain: "controlcda-e5f97.firebaseapp.com",
+    projectId: "controlcda-e5f97",
+    storageBucket: "controlcda-e5f97.firebasestorage.app",
+    messagingSenderId: "971822887261",
+    appId: "1:971822887261:web:abe3fd29049c176946f8b4",
+    measurementId: "G-L5C4YLVW1V"
+};
+
 // Variables de módulos de Firebase
-let initializeApp, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, writeBatch;
+let initializeApp, initializeFirestore, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, writeBatch;
 
 // ==================== HASH DE CONTRASEÑAS SEGURO (Web Crypto API) ====================
 // Usa SHA-256 con salt aleatorio. No almacena la contraseña en texto plano.
@@ -72,19 +82,29 @@ function hashPasswordLegacy(password) {
 }
 
 async function inicializarFirebase() {
+    let config;
     const configStr = localStorage.getItem('firebase_config');
-    if (!configStr) {
-        useFirebase = false;
-        return false;
-    }
-    try {
-        const config = JSON.parse(configStr);
 
+    if (configStr) {
+        try {
+            config = JSON.parse(configStr);
+        } catch (err) {
+            console.warn('Configuración Firebase guardada inválida, se cargará la configuración predeterminada.', err);
+            config = DEFAULT_FIREBASE_CONFIG;
+            localStorage.setItem('firebase_config', JSON.stringify(config));
+        }
+    } else {
+        config = DEFAULT_FIREBASE_CONFIG;
+        localStorage.setItem('firebase_config', JSON.stringify(config));
+    }
+
+    try {
         // Cargamos módulos oficiales de Firebase v10 desde gstatic CDN para ES Modules
         const appMod = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js');
         const fsMod = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');
 
         initializeApp = appMod.initializeApp;
+        initializeFirestore = fsMod.initializeFirestore;
         getFirestore = fsMod.getFirestore;
         collection = fsMod.collection;
         doc = fsMod.doc;
@@ -95,19 +115,13 @@ async function inicializarFirebase() {
         writeBatch = fsMod.writeBatch;
 
         const app = initializeApp(config);
-        dbFirebase = getFirestore(app);
-
-        // Habilitar persistencia de datos localmente (offline cache) en Firestore
-        try {
-            await fsMod.enableMultiTabIndexedDbPersistence(dbFirebase);
-            console.log('Persistencia offline de Firebase Firestore habilitada.');
-        } catch (err) {
-            if (err.code == 'failed-precondition') {
-                console.warn('Múltiples pestañas abiertas, persistencia habilitada solo en la principal.');
-            } else if (err.code == 'unimplemented') {
-                console.warn('El navegador no soporta persistencia offline para Firestore.');
+        dbFirebase = initializeFirestore(app, {
+            cache: {
+                synchronizeTabs: true
             }
-        }
+        });
+
+        console.log('Persistencia offline de Firebase Firestore habilitada con FirestoreSettings.cache.');
 
         useFirebase = true;
         console.log('Sincronización con Firebase Firestore activa.');
@@ -115,6 +129,7 @@ async function inicializarFirebase() {
         // Sincronizar automáticamente todos los datos locales a Firebase
         try {
             await sincronizarLocalAFirebase();
+            await sincronizarUsuariosDeFirebaseALocal();
         } catch (syncErr) {
             console.warn('Sincronización inicial con Firebase no completada:', syncErr);
         }
@@ -126,12 +141,6 @@ async function inicializarFirebase() {
         return false;
     }
 }
-
-// Intentar inicializar Firebase en segundo plano de inmediato (con captura de errores
-// para que no rompa el login si falla la conexión a la CDN de Firebase)
-inicializarFirebase().catch(err => {
-    console.warn('Firebase no disponible, la app funciona solo con datos locales:', err);
-});
 
 // Limpiar toda la caché al cargar la página para evitar datos obsoletos
 limpiarCacheCompleto();
@@ -269,8 +278,13 @@ function openDB() {
             resolve(dbInstance);
         };
 
+        request.onblocked = () => {
+            console.warn('La apertura de IndexedDB está bloqueada por otra pestaña del navegador. Cierra otras pestañas que estén usando la aplicación y recarga.');
+        };
+
         request.onerror = (event) => {
-            reject('Error al abrir la base de datos: ' + event.target.errorCode);
+            const errorDetail = event.target.error || event.target.errorCode || event;
+            reject(`Error al abrir la base de datos: ${errorDetail?.message || errorDetail}`);
         };
     });
 }
@@ -334,8 +348,13 @@ async function inicializarDatosPorDefecto() {
             await guardar('conceptos', conc);
         }
     }
-    // Comprobar si hay usuarios - crear admin por defecto si no existe ninguno
-    const usuarios = await getTodos('usuarios');
+    // Comprobar si hay usuarios - sincronizar desde Firebase antes de crear admin por defecto
+    let usuarios = await getTodos('usuarios');
+    if (usuarios.length === 0 && useFirebase) {
+        await sincronizarUsuariosDeFirebaseALocal();
+        usuarios = await getTodos('usuarios');
+    }
+
     if (usuarios.length === 0) {
         // Generar una contraseña aleatoria segura y mostrarla al usuario
         const tempPassword = generarPasswordTemporal();
@@ -556,10 +575,93 @@ async function obtenerPorId(storeName, id) {
             };
 
             request.onerror = (event) => {
-                reject(`Error al obtener de ${storeName} con id ${id}: ` + event.target.error);
+                reject(`Error al obtener de ${storeName} con id ${id}: ` + (event.target.error?.message || event.target.error));
             };
         }).catch(reject);
     });
+}
+
+async function obtenerUsuariosRemotos() {
+    if (!useFirebase || !dbFirebase) return [];
+
+    try {
+        const usuariosSnapshot = await getDocs(collection(dbFirebase, 'usuarios'));
+        const usuarios = [];
+        usuariosSnapshot.forEach(docSnap => {
+            const data = docSnap.data();
+            if (!data) return;
+
+            let id = data.id !== undefined ? Number(data.id) : Number(docSnap.id);
+            if (Number.isNaN(id)) id = docSnap.id;
+            usuarios.push({ ...data, id });
+        });
+
+        return usuarios;
+    } catch (err) {
+        console.warn('Error al leer usuarios desde Firebase:', err?.message || err, err);
+        return [];
+    }
+}
+
+async function sincronizarUsuariosDeFirebaseALocal() {
+    if (!useFirebase || !dbFirebase) return;
+
+    try {
+        const usuariosRemotos = await obtenerUsuariosRemotos();
+        if (!usuariosRemotos || usuariosRemotos.length === 0) {
+            console.log('No hay usuarios remotos para sincronizar.');
+            return;
+        }
+
+        const db = await openDB();
+        const localUsuarios = await getTodos('usuarios');
+        const localByUsername = new Map(localUsuarios.filter(u => u.username).map(u => [u.username, u]));
+        const seenUsernames = new Set();
+
+        const transaction = db.transaction(['usuarios'], 'readwrite');
+        const store = transaction.objectStore('usuarios');
+
+        for (const usuario of usuariosRemotos) {
+            if (!usuario || !usuario.username) {
+                console.warn('Omitiendo usuario remoto sin username válido:', usuario);
+                continue;
+            }
+
+            if (seenUsernames.has(usuario.username)) {
+                console.info('Ignorando usuario remoto duplicado por username:', usuario.username);
+                continue;
+            }
+            seenUsernames.add(usuario.username);
+
+            const existingLocal = localByUsername.get(usuario.username);
+            const itemToStore = existingLocal
+                ? { ...existingLocal, ...usuario, id: existingLocal.id }
+                : { ...usuario, id: Number(usuario.id) || undefined };
+
+            try {
+                store.put(itemToStore);
+            } catch (itemErr) {
+                console.warn('Error al insertar usuario remoto en IndexedDB:', itemToStore, itemErr);
+            }
+        }
+
+        await new Promise((resolve, reject) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = (event) => {
+                const error = event?.target?.error || transaction.error || new Error('Error desconocido en transacción IndexedDB');
+                reject(error);
+            };
+            transaction.onabort = (event) => {
+                const error = event?.target?.error || transaction.error || new Error('Transacción IndexedDB abortada');
+                reject(error);
+            };
+        });
+
+        invalidarCache('usuarios');
+        console.log(`Usuarios remotos cargados a IndexedDB: ${usuariosRemotos.length}`);
+    } catch (err) {
+        console.warn('No se pudo sincronizar usuarios de Firebase a local:', err?.message || err, err);
+    }
 }
 
 // Variable global para que la UI muestre el estado de la sincronización

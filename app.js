@@ -52,6 +52,7 @@ function toggleCalendarioFilters() {
 // ==================== INICIALIZACIÓN ====================
 document.addEventListener('DOMContentLoaded', async () => {
     try {
+        await inicializarFirebase();
         await inicializarDatosPorDefecto();
     } catch (error) {
         console.error('Error al inicializar la base de datos:', error);
@@ -85,8 +86,16 @@ async function handleLogin(event) {
     submitBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Verificando...';
 
     try {
-        const usuarios = await getTodos('usuarios');
-        const usuario = usuarios.find(u => u.username === username && u.activo === true);
+        let usuarios = await getTodos('usuarios');
+        let usuario = usuarios.find(u => u.username === username && u.activo === true);
+
+        if (!usuario && typeof useFirebase !== 'undefined' && useFirebase) {
+            const usuariosRemotos = await obtenerUsuariosRemotos();
+            usuario = usuariosRemotos.find(u => u.username === username && u.activo === true);
+            if (usuario) {
+                await guardar('usuarios', usuario);
+            }
+        }
 
         if (usuario) {
             const passwordValida = await verificarPassword(password, usuario.passwordHash);
