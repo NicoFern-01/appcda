@@ -19,7 +19,7 @@ let chartConceptoInstance = null;
 // Flag para evitar re-renderizar el dashboard si no cambiaron los datos
 let dashboardDirty = true;
 
-const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'configuracion'];
+const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'configuracion'];
 
 // Calendario view mode: 'cards' | 'list' (compact)
 let calendarioViewMode = localStorage.getItem('calendarioViewMode') || 'cards';
@@ -86,16 +86,8 @@ async function handleLogin(event) {
     submitBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Verificando...';
 
     try {
-        let usuarios = await getTodos('usuarios');
-        let usuario = usuarios.find(u => u.username === username && u.activo === true);
-
-        if (!usuario && typeof useFirebase !== 'undefined' && useFirebase) {
-            const usuariosRemotos = await obtenerUsuariosRemotos();
-            usuario = usuariosRemotos.find(u => u.username === username && u.activo === true);
-            if (usuario) {
-                await guardar('usuarios', usuario);
-            }
-        }
+        const usuarios = await getTodos('usuarios');
+        const usuario = usuarios.find(u => u.username === username && u.activo === true);
 
         if (usuario) {
             const passwordValida = await verificarPassword(password, usuario.passwordHash);
@@ -204,6 +196,7 @@ async function cargarDatosVista(viewId) {
         case 'calendario':   await listarCompetencias(); break;
         case 'gastos':       await listarGastos(); break;
         case 'carga-detallada': await listarRendiciones(); break;
+        case 'personal-competencia': await cargarPersonalCompetencia(); break;
         case 'staff':        await listarStaff(); break;
         case 'configuracion':await listarConfiguraciones(); break;
     }
@@ -520,7 +513,8 @@ async function listarCompetencias() {
         return;
     }
 
-    competenciasFiltradas.forEach(comp => {
+    for (const comp of competenciasFiltradas) {
+        const totalPersonal = await obtenerTotalPersonalCompetencia(comp.id);
         const circ = circuitos.find(c => c.id === Number(comp.circuitoId));
         const circNombre = circ ? `${circ.nombre} (${circ.ubicacion})` : 'Circuito Desconocido';
         const catNombres = comp.categoriasIds.map(id => {
@@ -536,9 +530,11 @@ async function listarCompetencias() {
             return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
         }, 0);
         const costoAutoCalc = costoSinples + costoDetallado;
+        // Sumar el total de personal por competencia
+        const costoTotalConPersonal = costoAutoCalc + totalPersonal;
         // Si tiene gastoTotal manual guardado, usamos ese; sino el auto-calculado
         const tieneManual = comp.gastoTotal !== undefined && comp.gastoTotal !== null;
-        const costoComp = tieneManual ? Number(comp.gastoTotal) : costoAutoCalc;
+        const costoComp = tieneManual ? Number(comp.gastoTotal) : costoTotalConPersonal;
         const costoClass = tieneManual ? 'costo-manual' : 'costo-auto';
         const tooltipText = tieneManual ? 'Total editado manualmente. Haga clic para modificar o restaurar cálculo automático.' : 'Total calculado automáticamente de todos los gastos. Haga clic para editar.';
 
@@ -604,6 +600,7 @@ async function listarCompetencias() {
             <div class="data-card-meta"><i class="fa-solid fa-hashtag"></i> <span style="font-family:monospace;font-weight:600;">${codigoVisible}</span></div>
             <div class="data-card-meta"><i class="fa-solid fa-map-location-dot"></i> <span>${circNombre}</span></div>
             <div class="data-card-meta"><i class="fa-solid fa-calendar-day"></i> <span>${formatearFechaVisual(comp.fechaInicio)} al ${formatearFechaVisual(comp.fechaFin)}</span></div>
+            <div class="data-card-meta"><i class="fa-solid fa-user-tie"></i> <span>Personal por Competencia: <strong style="color:var(--accent);">${formatearMoneda(totalPersonal)}</strong></span></div>
             <div class="data-card-meta" style="color:var(--accent);">${montoFacturarHtml}</div>
             <div class="data-card-tags">${catNombres.map(n => `<span class="tag">${n}</span>`).join('')}</div>
             <div class="data-card-actions">
@@ -612,7 +609,7 @@ async function listarCompetencias() {
             </div>
         `;
         listContainer.appendChild(card);
-    });
+    }
     updateCalendarioToggleButton();
 }
 
@@ -634,13 +631,14 @@ async function verCompetencia(id) {
         return s ? `${s.nombre} ${s.apellido} (${s.funcion})` : '';
     }).filter(Boolean);
 
+    const totalPersonal = await obtenerTotalPersonalCompetencia(comp.id);
     const costoSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + Number(g.monto), 0);
     const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(comp.id));
     const costoDetallado = rendicionesComp.reduce((s, r) => {
         const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
         return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
     }, 0);
-    const costoAutoCalc = costoSinples + costoDetallado;
+    const costoAutoCalc = costoSinples + costoDetallado + totalPersonal;
     const tieneManual = comp.gastoTotal !== undefined && comp.gastoTotal !== null;
     const costoComp = tieneManual ? Number(comp.gastoTotal) : costoAutoCalc;
 
@@ -727,6 +725,7 @@ async function verCompetencia(id) {
     document.getElementById('ver-comp-stats').innerHTML = `
         <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Código</h3><p style="font-size:1.1rem;font-family:monospace;">${comp.codigo || 'SIN CÓDIGO'}</p></div><div class="stat-icon"><i class="fa-solid fa-hashtag"></i></div></div>
         ${totalGastosStatCard}
+        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Gastos Personal</h3><p style="font-size:1.1rem;color:var(--accent);font-weight:700;"><i class="fa-solid fa-user-tie" style="font-size:0.9rem;margin-right:4px;"></i>${formatearMoneda(totalPersonal)}</p></div><div class="stat-icon"><i class="fa-solid fa-user-tie"></i></div></div>
         ${montoFacturarStatCard}
         <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Categorías</h3><p style="font-size:1rem;">${catNombres.slice(0, 3).join(', ')}${catNombres.length > 3 ? ` (+${catNombres.length - 3})` : ''}</p></div><div class="stat-icon"><i class="fa-solid fa-tag"></i></div></div>
         <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Personal</h3><p style="font-size:1rem;">${staffNombres.length} asignados</p></div><div class="stat-icon"><i class="fa-solid fa-users"></i></div></div>
@@ -748,6 +747,7 @@ async function verCompetencia(id) {
         <div><strong>Documentos:</strong> ${docLink}</div>
         <div><strong>Gastos simples:</strong> ${formatearMoneda(costoSinples)}</div>
         <div><strong>Gastos detallados:</strong> ${formatearMoneda(costoDetallado)}</div>
+        <div><strong>Gastos de personal:</strong> <span style="color:var(--accent);font-weight:600;">${formatearMoneda(totalPersonal)}</span></div>
     `;
 
     const staffContainer = document.getElementById('ver-comp-staff');
@@ -1127,14 +1127,15 @@ async function listarGastos() {
     }
 
     // Mostrar listado de competencias con sus totales
-    competenciasFiltradas.forEach(comp => {
+    for (const comp of competenciasFiltradas) {
+        const totalPersonal = await obtenerTotalPersonalCompetencia(comp.id);
         const costoSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + Number(g.monto), 0);
         const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(comp.id));
         const costoDetallado = rendicionesComp.reduce((s, r) => {
             const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
             return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
         }, 0);
-        const costoTotal = costoSinples + costoDetallado;
+        const costoTotal = costoSinples + costoDetallado + totalPersonal;
 
         const montoFacturarSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + (Number(g.montoFacturar) || 0), 0);
         const montoFacturarDetallado = rendicionesComp.reduce((s, r) => {
@@ -1165,12 +1166,13 @@ async function listarGastos() {
             <td><span style="font-size:0.85rem;color:var(--text-secondary);">${formatearFechaVisual(comp.fechaInicio)}<br>${formatearFechaVisual(comp.fechaFin)}</span></td>
             <td><span style="font-size:0.85rem;color:var(--text-secondary);">${staffCount} asignados</span></td>
             <td style="font-size:0.85rem;color:var(--text-secondary);">${gastosCount} gastos</td>
+            <td style="font-size:0.85rem;color:var(--text-secondary);">Personal: <strong style="color:var(--accent);">${formatearMoneda(totalPersonal)}</strong></td>
             <td style="color:var(--accent);font-weight:700;">${formatearMoneda(costoTotal)}</td>
             <td style="color:var(--accent);font-weight:700;">${formatearMoneda(montoFacturarTotal)}</td>
             ${acciones}
         `;
         tbody.appendChild(tr);
-    });
+    }
 }
 
 async function openModalGasto() {
@@ -1688,6 +1690,10 @@ function openModalUsuario() {
     document.getElementById('usuario-modal-title').innerText = 'Nuevo Usuario';
     document.getElementById('usuario-password').required = true;
     document.getElementById('password-hint').style.display = 'none';
+    // limpiar campo de hash mostrado para nuevo usuario
+    const passwordToggle = document.getElementById('usuario-password-show');
+    if (passwordToggle) passwordToggle.checked = false;
+    actualizarResumenUsuarioModal();
     openModal('modal-usuario');
 }
 
@@ -1704,6 +1710,9 @@ async function editarUsuario(id) {
     document.getElementById('usuario-password').required = false;
     document.getElementById('password-hint').style.display = 'block';
     document.getElementById('usuario-modal-title').innerText = 'Editar Usuario';
+    const passwordToggle = document.getElementById('usuario-password-show');
+    if (passwordToggle) passwordToggle.checked = false;
+    actualizarResumenUsuarioModal();
     openModal('modal-usuario');
 }
 
@@ -1747,8 +1756,16 @@ async function guardarUsuarioForm(e) {
         document.getElementById('sidebar-avatar').textContent = usuario.nombre.charAt(0).toUpperCase();
     }
 
+    mostrarToast(`Usuario guardado correctamente. Usuario: ${escapeHtml(usuario.username)}${password ? ' | Contraseña actualizada' : ' | Contraseña sin cambios'}`, 'success');
     closeModal('modal-usuario');
     await listarUsuarios();
+}
+
+function togglePasswordVisibilityModal() {
+    const passwordInput = document.getElementById('usuario-password');
+    const checkbox = document.getElementById('usuario-password-show');
+    if (!passwordInput || !checkbox) return;
+    passwordInput.type = checkbox.checked ? 'text' : 'password';
 }
 
 async function eliminarUsuario(id) {
@@ -1756,8 +1773,16 @@ async function eliminarUsuario(id) {
     if (currentUser && currentUser.id === id) { alert('No podés eliminar tu propio usuario.'); return; }
     const usuarios = await getTodos('usuarios');
     if (usuarios.length <= 1) { alert('Debe existir al menos un usuario en el sistema.'); return; }
-    if (!confirm('¿Eliminar este usuario permanentemente?')) return;
+
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar usuario',
+        '¿Eliminar este usuario permanentemente?',
+        'warning'
+    );
+
+    if (!confirmado) return;
     await eliminar('usuarios', id);
+    mostrarToast('Usuario eliminado correctamente.', 'success');
     await listarUsuarios();
 }
 
@@ -1785,7 +1810,8 @@ async function exportarDatos() {
         movimientosInventario: await getTodos('movimientosInventario'),
         entregasInventario: await getTodos('entregasInventario'),
         detalleEntregas: await getTodos('detalleEntregas'),
-        imagenesArticulo: await getTodos('imagenesArticulo')
+        imagenesArticulo: await getTodos('imagenesArticulo'),
+        personalCompetencia: await getTodos('personalCompetencia')
     };
     const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(backup, null, 2))}`;
     const a = document.createElement('a');
@@ -2225,7 +2251,7 @@ async function migrarDatosLocalesAFirebase() {
         btnMigrar.disabled = true;
         btnMigrar.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Migrando...';
 
-        const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios'];
+        const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'personalCompetencia'];
         let total = 0;
 
         for (const storeName of stores) {
@@ -2373,6 +2399,26 @@ function mostrarToast(mensaje, tipo = 'success') {
     toast.innerHTML = `<i class="fa-solid ${tipo === 'success' ? 'fa-check-circle' : tipo === 'error' ? 'fa-times-circle' : 'fa-triangle-exclamation'}"></i> ${mensaje}`;
     container.appendChild(toast);
     setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 3000);
+}
+
+function actualizarResumenUsuarioModal() {
+    const username = document.getElementById('usuario-username')?.value.trim() || '(sin usuario)';
+    const nombre = document.getElementById('usuario-nombre')?.value.trim() || '(sin nombre)';
+    const rol = document.getElementById('usuario-rol')?.value || '(sin rol)';
+    const activo = document.getElementById('usuario-activo')?.value === 'true' ? 'Activo' : 'Inactivo';
+    const password = document.getElementById('usuario-password')?.value;
+    const resumen = [];
+
+    resumen.push(`<strong>Usuario:</strong> ${escapeHtml(username)}`);
+    resumen.push(`<strong>Nombre:</strong> ${escapeHtml(nombre)}`);
+    resumen.push(`<strong>Rol:</strong> ${escapeHtml(rol)}`);
+    resumen.push(`<strong>Estado:</strong> ${escapeHtml(activo)}`);
+    resumen.push(`<strong>Contraseña:</strong> ${password ? escapeHtml(password) : (document.getElementById('usuario-id').value ? 'Sin cambios' : 'No ingresada')}`);
+
+    const cont = document.getElementById('usuario-modal-resumen');
+    if (cont) {
+        cont.innerHTML = resumen.join('<br>');
+    }
 }
 
 async function listarRendiciones() {
@@ -3707,10 +3753,11 @@ let chartInvStock = null;
 
 async function cargarDatosVista(viewId) {
     switch(viewId) {
-        case 'dashboard':    await renderDashboard(); break;
+        case 'dashboard':    dashboardDirty = true; await renderDashboard(); break;
         case 'calendario':   await listarCompetencias(); break;
         case 'gastos':       await listarGastos(); break;
         case 'carga-detallada': await listarRendiciones(); break;
+        case 'personal-competencia': await cargarPersonalCompetencia(); break;
         case 'inventario':   await renderDashboardInventario(); break;
         case 'articulos':    await listarArticulos(); break;
         case 'movimientos-inventario': await listarMovimientosInventario(); break;
@@ -5122,4 +5169,451 @@ async function eliminarEntrega(id) {
     invalidarCache('entregasInventario');
     mostrarToast('Entrega eliminada.');
     listarEntregas();
+}
+
+// ====================================================================
+// MÓDULO: PERSONAL POR COMPETENCIA
+// ====================================================================
+
+// Definición de roles/funciones con sus sueldos brutos por defecto
+const PERSONAL_COMPETENCIA_DEFAULT = [
+    { nombre: 'Comisario Deportivo - Contratado Cat. A', bruto: 169381.98 },
+    { nombre: 'Comisario Deportivo - Contratado Cat. B', bruto: 624716.18 },
+    { nombre: 'Comisario Deportivo - Mensualizado', bruto: 590600.00 },
+    { nombre: 'Comisario Técnico - Contratado Cat. A', bruto: 541000.00 },
+    { nombre: 'Comisario Técnico - Contratado Cat. B', bruto: 729714.96 },
+    { nombre: 'Comisario Técnico - Mensualizado', bruto: 541000.00 },
+    { nombre: 'Oficial Deportivo - Contratado', bruto: 573062.07 },
+    { nombre: 'Oficial Deportivo - Mensualizado', bruto: 443500.00 },
+    { nombre: 'Personal ACA - Horas Extras', bruto: 0.00 },
+    { nombre: 'Personal Contratado - En - Feb', bruto: 63564.37 }
+];
+
+// Porcentajes de cálculo
+const TASA_PARTICIPACION_ACA = 0.1375;   // 13.75%
+const TASA_SAC_MENSUALIZADO = 1/12;      // 1/12
+const TASA_CONT_PATRONALES = 0.273;      // 27.3%
+
+// Store para persistir personal por competencia
+const STORE_PERSONAL = 'personalCompetencia';
+
+// Formatear un número como moneda ARS para mostrar (visual)
+function formatearInputMoneda(valor) {
+    if (valor === null || valor === undefined || isNaN(valor)) return '';
+    return new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(valor);
+}
+
+// Parsear un string formateado como moneda a número limpio
+function parsearMoneda(str) {
+    if (!str) return 0;
+    const limpio = String(str).replace(/\./g, '').replace(/,/g, '.').replace(/[^0-9.-]/g, '');
+    return parseFloat(limpio) || 0;
+}
+
+// Calcular los valores de una fila de personal
+function calcularValoresPersonal(bruto, cantidad) {
+    const participacionACA = bruto * TASA_PARTICIPACION_ACA;
+    const sacMensualizado = bruto / 12;
+    const costoBase = bruto + participacionACA + sacMensualizado;
+    const totalBruto = costoBase * cantidad;
+    const contPatronales = totalBruto * TASA_CONT_PATRONALES;
+    const totalFila = totalBruto + contPatronales;
+    return { participacionACA, sacMensualizado, costoBase, totalBruto, contPatronales, totalFila };
+}
+
+// Obtener el total de gastos de personal para una competencia
+async function obtenerTotalPersonalCompetencia(compId) {
+    if (!compId) return 0;
+    const registros = await getTodos(STORE_PERSONAL);
+    const registro = registros.find(r => Number(r.competenciaId) === Number(compId));
+    if (!registro) return 0;
+    return registro.filas.reduce((sum, f) => {
+        const calc = calcularValoresPersonal(Number(f.bruto) || 0, Number(f.cantidad) || 0);
+        return sum + calc.totalFila;
+    }, 0);
+}
+
+// Cargar la vista de personal por competencia
+async function cargarPersonalCompetencia() {
+    const selectComp = document.getElementById('personal-comp-select');
+    if (!selectComp) return;
+
+    const competencias = await getTodos('competencias');
+    const savedComp = selectComp.value;
+    selectComp.innerHTML = '<option value="">Seleccione una competencia...</option>';
+
+    competencias.sort((a, b) => new Date(b.fechaInicio) - new Date(a.fechaInicio));
+    competencias.forEach(c => {
+        const label = c.codigo ? `${c.codigo} - ${c.nombre}` : c.nombre;
+        selectComp.innerHTML += `<option value="${c.id}">${escapeHtml(label)}</option>`;
+    });
+    selectComp.value = savedComp;
+
+    // Cargar los datos de la competencia seleccionada (o la primera si no hay selección)
+    if (!selectComp.value && competencias.length > 0) {
+        selectComp.value = competencias[0].id;
+    }
+
+    // Calcular días de la competencia automáticamente desde las fechas
+    const compId = selectComp.value;
+    if (compId) {
+        const comp = competencias.find(c => Number(c.id) === Number(compId));
+        const diasInput = document.getElementById('personal-comp-dias');
+        if (comp && comp.fechaInicio && comp.fechaFin && diasInput) {
+            const inicio = new Date(comp.fechaInicio);
+            const fin = new Date(comp.fechaFin);
+            const diff = Math.round((fin - inicio) / (1000 * 60 * 60 * 24)) + 1;
+            diasInput.value = diff > 0 ? diff : 1;
+        }
+    }
+
+    await renderizarTablaPersonalCompetencia();
+}
+
+// Renderizar la tabla de personal por competencia
+async function renderizarTablaPersonalCompetencia() {
+    const compId = document.getElementById('personal-comp-select').value;
+    const tbody = document.getElementById('personal-comp-table-body');
+    const totalFilaEl = document.getElementById('personal-comp-total-fila');
+    const totalEl = document.getElementById('personal-comp-total');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+
+    if (!compId) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">Seleccione una competencia para ver el personal.</td></tr>';
+        if (totalFilaEl) totalFilaEl.textContent = formatearMoneda(0);
+        if (totalEl) totalEl.textContent = formatearMoneda(0);
+        return;
+    }
+
+    // Obtener datos guardados o usar valores por defecto
+    let filas = null;
+    try {
+        const registros = await getTodos(STORE_PERSONAL);
+        const registro = registros.find(r => Number(r.competenciaId) === Number(compId));
+        if (registro && registro.filas) {
+            filas = registro.filas;
+        }
+    } catch(e) {}
+
+    if (!filas) {
+        filas = PERSONAL_COMPETENCIA_DEFAULT.map(f => ({ nombre: f.nombre, cantidad: 1, bruto: f.bruto }));
+    }
+
+    let totalGeneral = 0;
+
+    filas.forEach((fila, idx) => {
+        const bruto = Number(fila.bruto) || 0;
+        const cantidad = Number(fila.cantidad) || 0;
+        const calc = calcularValoresPersonal(bruto, cantidad);
+        totalGeneral += calc.totalFila;
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td style="font-weight:500;">${escapeHtml(fila.nombre)}</td>
+            <td style="text-align:center;">
+                <input type="number" class="personal-cantidad-input" data-index="${idx}" min="0" value="${cantidad}" style="width:70px;text-align:center;">
+            </td>
+            <td style="text-align:right;">
+                <input type="text" class="personal-bruto-input" data-index="${idx}" value="${formatearInputMoneda(bruto)}" style="width:130px;text-align:right;" placeholder="0,00">
+            </td>
+            <td style="text-align:right;color:var(--text-secondary);white-space:nowrap;" data-calc="aca" data-index="${idx}">${formatearMoneda(calc.participacionACA)}</td>
+            <td style="text-align:right;color:var(--text-secondary);white-space:nowrap;" data-calc="sac" data-index="${idx}">${formatearMoneda(calc.sacMensualizado)}</td>
+            <td style="text-align:right;color:var(--text-secondary);white-space:nowrap;" data-calc="base" data-index="${idx}">${formatearMoneda(calc.costoBase)}</td>
+            <td style="text-align:right;font-weight:500;white-space:nowrap;" data-calc="totalBruto" data-index="${idx}">${formatearMoneda(calc.totalBruto)}</td>
+            <td style="text-align:right;color:var(--accent);font-weight:600;white-space:nowrap;" data-calc="patronales" data-index="${idx}">${formatearMoneda(calc.contPatronales)}</td>
+            <td style="text-align:right;color:var(--accent);font-weight:700;white-space:nowrap;" data-calc="totalFila" data-index="${idx}">${formatearMoneda(calc.totalFila)}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    // Actualizar totales
+    if (totalFilaEl) totalFilaEl.textContent = formatearMoneda(totalGeneral);
+    if (totalEl) totalEl.textContent = formatearMoneda(totalGeneral);
+
+    // Agregar eventos a los inputs
+    document.querySelectorAll('.personal-bruto-input').forEach(input => {
+        input.addEventListener('input', onPersonalBrutoInput);
+        input.addEventListener('blur', onPersonalBrutoBlur);
+        input.addEventListener('keydown', onPersonalBrutoKeydown);
+    });
+    document.querySelectorAll('.personal-cantidad-input').forEach(input => {
+        input.addEventListener('input', recalcularPersonalFila);
+        input.addEventListener('change', recalcularPersonalFila);
+    });
+}
+
+// Evento: formatear mientras escribe en el input de bruto
+function onPersonalBrutoInput(e) {
+    // Limpiar todo excepto dígitos y coma
+    let value = e.target.value;
+    if (value) {
+        // Remover puntos de miles, mantener solo dígitos y coma decimal
+        const soloNumeros = value.replace(/[^\d,]/g, '');
+        e.target.dataset.raw = parsearMoneda(soloNumeros);
+        // Formatear visualmente con puntos de miles y comas
+        e.target.value = formatearInputMoneda(parsearMoneda(soloNumeros));
+    }
+    recalcularPersonalFila(e);
+}
+
+// Evento: al perder foco, mantener formato
+function onPersonalBrutoBlur(e) {
+    const raw = parsearMoneda(e.target.value);
+    e.target.value = raw > 0 ? formatearInputMoneda(raw) : '0,00';
+    recalcularPersonalFila(e);
+}
+
+// Evento: tecla Enter para pasar de campo
+function onPersonalBrutoKeydown(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        e.target.blur();
+    }
+}
+
+// Recalcular los cálculos de una fila cuando cambian cantidad o bruto
+function recalcularPersonalFila(e) {
+    const input = e.target;
+    const index = Number(input.dataset.index);
+    const tr = input.closest('tr');
+    if (!tr || isNaN(index)) return;
+
+    const brutoInput = tr.querySelector('.personal-bruto-input');
+    const cantidadInput = tr.querySelector('.personal-cantidad-input');
+    if (!brutoInput || !cantidadInput) return;
+
+    const bruto = parsearMoneda(brutoInput.value);
+    const cantidad = Number(cantidadInput.value) || 0;
+    const calc = calcularValoresPersonal(bruto, cantidad);
+
+    tr.querySelectorAll('[data-calc]').forEach(cell => {
+        const tipo = cell.dataset.calc;
+        if (tipo === 'totalFila') cell.textContent = formatearMoneda(calc.totalFila);
+        else if (tipo === 'aca') cell.textContent = formatearMoneda(calc.participacionACA);
+        else if (tipo === 'sac') cell.textContent = formatearMoneda(calc.sacMensualizado);
+        else if (tipo === 'base') cell.textContent = formatearMoneda(calc.costoBase);
+        else if (tipo === 'totalBruto') cell.textContent = formatearMoneda(calc.totalBruto);
+        else if (tipo === 'patronales') cell.textContent = formatearMoneda(calc.contPatronales);
+    });
+
+    // Actualizar total general
+    let totalGeneral = 0;
+    document.querySelectorAll('#personal-comp-table-body tr').forEach(row => {
+        const brutoRow = parsearMoneda(row.querySelector('.personal-bruto-input') ? row.querySelector('.personal-bruto-input').value : '0');
+        const cantRow = Number(row.querySelector('.personal-cantidad-input') ? row.querySelector('.personal-cantidad-input').value : 0);
+        const calcRow = calcularValoresPersonal(brutoRow, cantRow);
+        totalGeneral += calcRow.totalFila;
+    });
+    const totalFilaEl = document.getElementById('personal-comp-total-fila');
+    const totalEl = document.getElementById('personal-comp-total');
+    if (totalFilaEl) totalFilaEl.textContent = formatearMoneda(totalGeneral);
+    if (totalEl) totalEl.textContent = formatearMoneda(totalGeneral);
+}
+
+// Guardar los datos de personal por competencia
+async function guardarPersonalCompetencia() {
+    if (!puedeEditar()) return;
+    const compId = document.getElementById('personal-comp-select').value;
+    if (!compId) { mostrarToast('Seleccione una competencia.', 'warning'); return; }
+
+    const dias = Number(document.getElementById('personal-comp-dias').value) || 1;
+
+    const filas = [];
+    document.querySelectorAll('#personal-comp-table-body tr').forEach(tr => {
+        const nombreEl = tr.querySelector('td:first-child');
+        const brutoInput = tr.querySelector('.personal-bruto-input');
+        const cantidadInput = tr.querySelector('.personal-cantidad-input');
+        if (!nombreEl || !brutoInput || !cantidadInput) return;
+        filas.push({
+            nombre: nombreEl.textContent,
+            bruto: parsearMoneda(brutoInput.value),
+            cantidad: Number(cantidadInput.value) || 0
+        });
+    });
+
+    const registros = await getTodos(STORE_PERSONAL);
+    let registro = registros.find(r => Number(r.competenciaId) === Number(compId));
+    if (registro) {
+        registro.filas = filas;
+        registro.dias = dias;
+        registro.fechaModificacion = new Date().toISOString();
+        registro.usuarioModificacion = currentUser ? currentUser.id : null;
+        await guardar(STORE_PERSONAL, registro);
+    } else {
+        await guardar(STORE_PERSONAL, {
+            competenciaId: Number(compId),
+            filas,
+            dias,
+            fechaCreacion: new Date().toISOString(),
+            fechaModificacion: new Date().toISOString(),
+            usuarioCreacion: currentUser ? currentUser.id : null,
+            usuarioModificacion: currentUser ? currentUser.id : null
+        });
+    }
+
+    await actualizarGastoTotalCompetencia(compId);
+    dashboardDirty = true;
+    mostrarToast('Personal por competencia guardado correctamente.');
+}
+
+// Exportar los datos de personal por competencia a Excel con formato (.xls)
+async function exportarPersonalCompetenciaExcel() {
+    const compId = document.getElementById('personal-comp-select').value;
+    if (!compId) { mostrarToast('Seleccione una competencia.', 'warning'); return; }
+
+    const competencias = await getTodos('competencias');
+    const comp = competencias.find(c => Number(c.id) === Number(compId));
+    if (!comp) { mostrarToast('Competencia no encontrada.', 'error'); return; }
+
+    const dias = Number(document.getElementById('personal-comp-dias').value) || 1;
+
+    // Obtener filas actuales de la tabla
+    const filas = [];
+    document.querySelectorAll('#personal-comp-table-body tr').forEach(tr => {
+        const nombreEl = tr.querySelector('td:first-child');
+        const brutoInput = tr.querySelector('.personal-bruto-input');
+        const cantidadInput = tr.querySelector('.personal-cantidad-input');
+        if (!nombreEl || !brutoInput || !cantidadInput) return;
+        filas.push({
+            nombre: nombreEl.textContent,
+            bruto: parsearMoneda(brutoInput.value),
+            cantidad: Number(cantidadInput.value) || 0
+        });
+    });
+
+    if (filas.length === 0) { mostrarToast('No hay datos para exportar.', 'warning'); return; }
+
+    // Función para escapar HTML y prevenir inyección
+    function escaparHTML(valor) {
+        return String(valor || '').replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/"/g, '"');
+    }
+
+    function formatearNumero(valor) {
+        return new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(valor);
+    }
+
+    let totalGeneral = 0;
+    let filasHtml = '';
+    filas.forEach((fila, idx) => {
+        const bruto = Number(fila.bruto) || 0;
+        const cantidad = Number(fila.cantidad) || 0;
+        const calc = calcularValoresPersonal(bruto, cantidad);
+        totalGeneral += calc.totalFila;
+
+        const bg = idx % 2 === 0 ? '#ffffff' : '#f2f2f2';
+        filasHtml += `<tr style="background:${bg};">
+            <td style="padding:6px;border:1px solid #ccc;">${escaparHTML(fila.nombre)}</td>
+            <td style="padding:6px;border:1px solid #ccc;text-align:center;">${cantidad}</td>
+            <td style="padding:6px;border:1px solid #ccc;text-align:right;">${formatearNumero(bruto)}</td>
+            <td style="padding:6px;border:1px solid #ccc;text-align:right;">${formatearNumero(calc.participacionACA)}</td>
+            <td style="padding:6px;border:1px solid #ccc;text-align:right;">${formatearNumero(calc.sacMensualizado)}</td>
+            <td style="padding:6px;border:1px solid #ccc;text-align:right;">${formatearNumero(calc.costoBase)}</td>
+            <td style="padding:6px;border:1px solid #ccc;text-align:right;">${formatearNumero(calc.totalBruto)}</td>
+            <td style="padding:6px;border:1px solid #ccc;text-align:right;">${formatearNumero(calc.contPatronales)}</td>
+            <td style="padding:6px;border:1px solid #ccc;text-align:right;font-weight:bold;color:#c0392b;">${formatearNumero(calc.totalFila)}</td>
+        </tr>`;
+    });
+
+    const html = `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+<head>
+    <meta charset="UTF-8">
+    <!--[if gte mso 9]>
+    <xml>
+        <x:ExcelWorkbook>
+            <x:ExcelWorksheets>
+                <x:ExcelWorksheet>
+                    <x:Name>Personal por Competencia</x:Name>
+                    <x:WorksheetOptions>
+                        <x:DisplayGridlines/>
+                    </x:WorksheetOptions>
+                </x:ExcelWorksheet>
+            </x:ExcelWorksheets>
+        </x:ExcelWorkbook>
+    </xml>
+    <![endif]-->
+    <style>
+        table { border-collapse: collapse; font-family: Calibri, Arial, sans-serif; font-size: 11px; }
+        th { background: #1f2a40; color: #ffffff; font-weight: bold; padding: 8px; border: 1px solid #0d1526; text-align: center; }
+        .titulo { font-size: 16px; font-weight: bold; color: #1f2a40; }
+        .subtitulo { font-size: 12px; color: #555; }
+    </style>
+</head>
+<body>
+    <table>
+        <tr><td colspan="9" class="titulo">PERSONAL POR COMPETENCIA</td></tr>
+        <tr><td colspan="9" class="subtitulo">${escaparHTML(comp.codigo || '')} - ${escaparHTML(comp.nombre)}</td></tr>
+        <tr><td colspan="9"></td></tr>
+        <tr>
+            <td style="background:#e8e8e8;padding:4px;border:1px solid #ccc;font-weight:bold;">Días de Competencia</td>
+            <td colspan="2" style="padding:4px;border:1px solid #ccc;">${dias}</td>
+            <td style="background:#e8e8e8;padding:4px;border:1px solid #ccc;font-weight:bold;">Fecha Inicio</td>
+            <td colspan="2" style="padding:4px;border:1px solid #ccc;">${escaparHTML(comp.fechaInicio || '')}</td>
+            <td style="background:#e8e8e8;padding:4px;border:1px solid #ccc;font-weight:bold;">Fecha Fin</td>
+            <td colspan="2" style="padding:4px;border:1px solid #ccc;">${escaparHTML(comp.fechaFin || '')}</td>
+        </tr>
+        <tr><td colspan="9"></td></tr>
+        <tr>
+            <th>Rol / Función</th>
+            <th>Cantidad</th>
+            <th>Sueldo Bruto</th>
+            <th>Part. ACA (13.75%)</th>
+            <th>SAC Mensualizado</th>
+            <th>Costo Base p/pers</th>
+            <th>Total Salario Bruto</th>
+            <th>Cont. Patronales (27.3%)</th>
+            <th>Salario + Cargas</th>
+        </tr>
+        ${filasHtml}
+        <tr>
+            <td colspan="8" style="padding:8px;border:1px solid #1f2a40;background:#1f2a40;color:#fff;font-weight:bold;text-align:right;">TOTAL GASTOS PERSONAL</td>
+            <td style="padding:8px;border:1px solid #1f2a40;background:#1f2a40;color:#2ed573;font-weight:bold;text-align:right;font-size:13px;">${formatearNumero(totalGeneral)}</td>
+        </tr>
+    </table>
+</body>
+</html>`;
+
+    const blob = new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `personal_competencia_${comp.codigo || comp.id}_${new Date().toISOString().split('T')[0]}.xls`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    mostrarToast('Archivo Excel con formato exportado correctamente.');
+}
+
+// Actualizar el gasto total de la competencia sumando el personal
+async function actualizarGastoTotalCompetencia(compId) {
+    if (!compId) return;
+    const totalPersonal = await obtenerTotalPersonalCompetencia(compId);
+    const comp = await obtenerPorId('competencias', Number(compId));
+    if (!comp) return;
+
+    // Guardar el total de personal en la competencia para integrarlo al total
+    comp.totalPersonal = totalPersonal;
+
+    // Sumar al gasto total de la competencia
+    // Los gastos simples + detallados ya se calculan automáticamente
+    // Este campo se sumará en listarCompetencias, listarGastos y verCompetencia
+    await guardar('competencias', comp);
+}
+
+// Obtener el total de personal para una competencia + gastos normales
+async function obtenerTotalGastosConPersonal(compId) {
+    const [gastos, rendiciones, detalleGastos] = await Promise.all([
+        getTodos('gastos'),
+        getTodos('rendiciones'),
+        getTodos('detalleGastos')
+    ]);
+    const costoSinples = gastos.filter(g => Number(g.competenciaId) === Number(compId)).reduce((s, g) => s + Number(g.monto), 0);
+    const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(compId));
+    const costoDetallado = rendicionesComp.reduce((s, r) => {
+        const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
+        return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
+    }, 0);
+    const totalPersonal = await obtenerTotalPersonalCompetencia(compId);
+    return { normal: costoSinples + costoDetallado, personal: totalPersonal, total: costoSinples + costoDetallado + totalPersonal };
 }

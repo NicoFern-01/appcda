@@ -1507,3 +1507,84 @@ input[type="file"]:hover {
         align-items: stretch;
     }
 }
+
+/* ==================== PERSONAL POR COMPETENCIA ==================== */
+.personal-comp-table {
+    width: 100%;
+}
+
+.personal-comp-table th {
+    background: rgba(255, 255, 255, 0.03);
+    padding: 0.75rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-color);
+    white-space: nowrap;
+}
+
+.personal-comp-table td {
+    padding: 0.6rem 0.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 0.9rem;
+    vertical-align: middle;
+}
+
+.personal-comp-table tfoot td {
+    border-top: 2px solid var(--border-color);
+    border-bottom: none;
+    background: rgba(255, 71, 87, 0.03);
+}
+
+.personal-comp-table input[type="text"],
+.personal-comp-table input[type="number"] {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: 'Outfit', sans-serif;
+    font-size: 0.9rem;
+    padding: 0.35rem 0.5rem;
+    transition: border-color 0.2s;
+}
+
+.personal-comp-table input:focus {
+    border-color: var(--accent);
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(255, 71, 87, 0.15);
+}
+
+.personal-comp-table input::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+.personal-comp-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+@media (max-width: 1200px) {
+    .personal-comp-table th,
+    .personal-comp-table td {
+        padding: 0.5rem 0.4rem;
+        font-size: 0.8rem;
+    }
+    .personal-comp-table .personal-bruto-input {
+        width: 110px !important;
+    }
+    .personal-comp-table .personal-cantidad-input {
+        width: 60px !important;
+    }
+}
+
+@media (max-width: 768px) {
+    .personal-comp-table th,
+    .personal-comp-table td {
+        padding: 0.4rem 0.3rem;
+        font-size: 0.75rem;
+        white-space: nowrap;
+    }
+    .personal-comp-table .personal-bruto-input {
+        width: 90px !important;
+    }
+}

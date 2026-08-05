@@ -84,12 +84,11 @@ function hashPasswordLegacy(password) {
 async function inicializarFirebase() {
     let config;
     const configStr = localStorage.getItem('firebase_config');
-
     if (configStr) {
         try {
             config = JSON.parse(configStr);
         } catch (err) {
-            console.warn('Configuración Firebase guardada inválida, se cargará la configuración predeterminada.', err);
+            console.warn('Configuración Firebase inválida en localStorage, cargando configuración por defecto.', err);
             config = DEFAULT_FIREBASE_CONFIG;
             localStorage.setItem('firebase_config', JSON.stringify(config));
         }
@@ -115,21 +114,22 @@ async function inicializarFirebase() {
         writeBatch = fsMod.writeBatch;
 
         const app = initializeApp(config);
-        dbFirebase = initializeFirestore(app, {
-            cache: {
-                synchronizeTabs: true
-            }
-        });
+        if (initializeFirestore) {
+            dbFirebase = initializeFirestore(app, { cache: { synchronizeTabs: true } });
+            console.log('Firestore inicializado con FirestoreSettings.cache.');
+        } else {
+            dbFirebase = getFirestore(app);
+        }
 
-        console.log('Persistencia offline de Firebase Firestore habilitada con FirestoreSettings.cache.');
+        if (!dbFirebase) {
+            throw new Error('No se pudo inicializar Firestore.');
+        }
 
         useFirebase = true;
         console.log('Sincronización con Firebase Firestore activa.');
 
-        // Sincronizar automáticamente todos los datos locales a Firebase
         try {
             await sincronizarLocalAFirebase();
-            await sincronizarUsuariosDeFirebaseALocal();
         } catch (syncErr) {
             console.warn('Sincronización inicial con Firebase no completada:', syncErr);
         }
@@ -271,6 +271,11 @@ function openDB() {
             if (!db.objectStoreNames.contains('imagenesArticulo')) {
                 db.createObjectStore('imagenesArticulo', { keyPath: 'id', autoIncrement: true });
             }
+
+            // Personal por competencia (costos laborales)
+            if (!db.objectStoreNames.contains('personalCompetencia')) {
+                db.createObjectStore('personalCompetencia', { keyPath: 'id', autoIncrement: true });
+            }
         };
 
         request.onsuccess = (event) => {
@@ -278,13 +283,10 @@ function openDB() {
             resolve(dbInstance);
         };
 
-        request.onblocked = () => {
-            console.warn('La apertura de IndexedDB está bloqueada por otra pestaña del navegador. Cierra otras pestañas que estén usando la aplicación y recarga.');
-        };
-
         request.onerror = (event) => {
-            const errorDetail = event.target.error || event.target.errorCode || event;
-            reject(`Error al abrir la base de datos: ${errorDetail?.message || errorDetail}`);
+            const error = event?.target?.error;
+            const message = error?.message || event?.target?.errorCode || 'Error desconocido';
+            reject(`Error al abrir la base de datos: ${message}`);
         };
     });
 }
@@ -348,13 +350,8 @@ async function inicializarDatosPorDefecto() {
             await guardar('conceptos', conc);
         }
     }
-    // Comprobar si hay usuarios - sincronizar desde Firebase antes de crear admin por defecto
-    let usuarios = await getTodos('usuarios');
-    if (usuarios.length === 0 && useFirebase) {
-        await sincronizarUsuariosDeFirebaseALocal();
-        usuarios = await getTodos('usuarios');
-    }
-
+    // Comprobar si hay usuarios - crear admin por defecto si no existe ninguno
+    const usuarios = await getTodos('usuarios');
     if (usuarios.length === 0) {
         // Generar una contraseña aleatoria segura y mostrarla al usuario
         const tempPassword = generarPasswordTemporal();
@@ -575,93 +572,10 @@ async function obtenerPorId(storeName, id) {
             };
 
             request.onerror = (event) => {
-                reject(`Error al obtener de ${storeName} con id ${id}: ` + (event.target.error?.message || event.target.error));
+                reject(`Error al obtener de ${storeName} con id ${id}: ` + event.target.error);
             };
         }).catch(reject);
     });
-}
-
-async function obtenerUsuariosRemotos() {
-    if (!useFirebase || !dbFirebase) return [];
-
-    try {
-        const usuariosSnapshot = await getDocs(collection(dbFirebase, 'usuarios'));
-        const usuarios = [];
-        usuariosSnapshot.forEach(docSnap => {
-            const data = docSnap.data();
-            if (!data) return;
-
-            let id = data.id !== undefined ? Number(data.id) : Number(docSnap.id);
-            if (Number.isNaN(id)) id = docSnap.id;
-            usuarios.push({ ...data, id });
-        });
-
-        return usuarios;
-    } catch (err) {
-        console.warn('Error al leer usuarios desde Firebase:', err?.message || err, err);
-        return [];
-    }
-}
-
-async function sincronizarUsuariosDeFirebaseALocal() {
-    if (!useFirebase || !dbFirebase) return;
-
-    try {
-        const usuariosRemotos = await obtenerUsuariosRemotos();
-        if (!usuariosRemotos || usuariosRemotos.length === 0) {
-            console.log('No hay usuarios remotos para sincronizar.');
-            return;
-        }
-
-        const db = await openDB();
-        const localUsuarios = await getTodos('usuarios');
-        const localByUsername = new Map(localUsuarios.filter(u => u.username).map(u => [u.username, u]));
-        const seenUsernames = new Set();
-
-        const transaction = db.transaction(['usuarios'], 'readwrite');
-        const store = transaction.objectStore('usuarios');
-
-        for (const usuario of usuariosRemotos) {
-            if (!usuario || !usuario.username) {
-                console.warn('Omitiendo usuario remoto sin username válido:', usuario);
-                continue;
-            }
-
-            if (seenUsernames.has(usuario.username)) {
-                console.info('Ignorando usuario remoto duplicado por username:', usuario.username);
-                continue;
-            }
-            seenUsernames.add(usuario.username);
-
-            const existingLocal = localByUsername.get(usuario.username);
-            const itemToStore = existingLocal
-                ? { ...existingLocal, ...usuario, id: existingLocal.id }
-                : { ...usuario, id: Number(usuario.id) || undefined };
-
-            try {
-                store.put(itemToStore);
-            } catch (itemErr) {
-                console.warn('Error al insertar usuario remoto en IndexedDB:', itemToStore, itemErr);
-            }
-        }
-
-        await new Promise((resolve, reject) => {
-            transaction.oncomplete = () => resolve();
-            transaction.onerror = (event) => {
-                const error = event?.target?.error || transaction.error || new Error('Error desconocido en transacción IndexedDB');
-                reject(error);
-            };
-            transaction.onabort = (event) => {
-                const error = event?.target?.error || transaction.error || new Error('Transacción IndexedDB abortada');
-                reject(error);
-            };
-        });
-
-        invalidarCache('usuarios');
-        console.log(`Usuarios remotos cargados a IndexedDB: ${usuariosRemotos.length}`);
-    } catch (err) {
-        console.warn('No se pudo sincronizar usuarios de Firebase a local:', err?.message || err, err);
-    }
 }
 
 // Variable global para que la UI muestre el estado de la sincronización
@@ -679,7 +593,7 @@ async function sincronizarLocalAFirebase() {
         return;
     }
 
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia'];
     let total = 0;
 
     for (const storeName of stores) {
@@ -707,7 +621,7 @@ async function sincronizarLocalAFirebase() {
 async function importarTodo(datos) {
     limpiarCacheCompleto(); // limpiar todo el caché antes de importar
     const db = await openDB();
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia'];
     
     for (const storeName of stores) {
         if (datos[storeName]) {
