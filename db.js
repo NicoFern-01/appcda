@@ -439,6 +439,27 @@ function generarPasswordTemporal() {
     return password;
 }
 
+// Helper genérico para limpiar valores no soportados por Firebase como undefined
+function limpiarObjetoParaFirebase(value) {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    if (Array.isArray(value)) {
+        return value.map(limpiarObjetoParaFirebase);
+    }
+    if (typeof value === 'object') {
+        const result = {};
+        for (const [key, item] of Object.entries(value)) {
+            if (item === undefined) continue;
+            const cleaned = limpiarObjetoParaFirebase(item);
+            if (cleaned !== undefined) {
+                result[key] = cleaned;
+            }
+        }
+        return result;
+    }
+    return value;
+}
+
 // Helper genérico para guardar o actualizar un elemento
 async function guardar(storeName, item) {
     // Si la ID no existe, generamos un identificador numérico único basado en timestamp
@@ -483,7 +504,8 @@ async function guardar(storeName, item) {
     if (useFirebase) {
         try {
             const docRef = doc(dbFirebase, storeName, String(item.id));
-            await setDoc(docRef, item);
+            const itemToSync = limpiarObjetoParaFirebase(item);
+            await setDoc(docRef, itemToSync);
         } catch (e) {
             console.warn(`Firebase sync warning [${storeName}]:`, e);
             // No lanzar error - la app sigue funcionando con datos locales
@@ -603,7 +625,8 @@ async function sincronizarLocalAFirebase() {
         for (const item of data) {
             try {
                 const docRef = doc(dbFirebase, storeName, String(item.id));
-                await setDoc(docRef, item);
+                const itemToSync = limpiarObjetoParaFirebase(item);
+                await setDoc(docRef, itemToSync);
                 total++;
             } catch (e) {
                 console.warn(`Error sync ${storeName}/${item.id}:`, e);

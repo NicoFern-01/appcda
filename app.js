@@ -418,10 +418,24 @@ function chartLineOptions() {
 }
 
 // ==================== GENERAR CÓDIGO DE COMPETENCIA ====================
-async function generarCodigoCompetencia() {
+function obtenerSiglaCategoria(nombre) {
+    if (!nombre || typeof nombre !== 'string') return 'TC2000';
+    const partes = nombre.trim().split(/\s+/).filter(Boolean);
+    if (partes.length >= 2) {
+        return (partes[0][0] + partes[1][0]).toUpperCase();
+    }
+    const palabra = partes[0] || '';
+    if (palabra.length >= 3) {
+        return palabra.slice(0, 3).toUpperCase();
+    }
+    return palabra.toUpperCase() || 'TC2000';
+}
+
+async function generarCodigoCompetencia(prefix = 'TC2000') {
     const competencias = await getTodos('competencias');
     const year = new Date().getFullYear();
-    const esteAño = competencias.filter(c => c.codigo && c.codigo.startsWith('TC2000-' + year));
+    const pref = String(prefix).toUpperCase();
+    const esteAño = competencias.filter(c => c.codigo && c.codigo.startsWith(pref + '-' + year));
     let maxNum = 0;
     esteAño.forEach(c => {
         const parts = c.codigo.split('-');
@@ -430,7 +444,31 @@ async function generarCodigoCompetencia() {
             if (num > maxNum) maxNum = num;
         }
     });
-    return `TC2000-${year}-${String(maxNum + 1).padStart(3, '0')}`;
+    return `${pref}-${year}-${String(maxNum + 1).padStart(3, '0')}`;
+}
+
+function actualizarCodigoCompetenciaPorCategoria() {
+    const competenciaId = document.getElementById('competencia-id').value;
+    if (competenciaId) return; // no auto-generar cuando editamos una competencia existente
+
+    const categoriasCheckboxes = Array.from(document.querySelectorAll('#competencia-categorias-checkboxes input'));
+    const primeraSeleccionada = categoriasCheckboxes.find(cb => cb.checked);
+    const categoriaNombre = primeraSeleccionada ? primeraSeleccionada.nextElementSibling?.textContent : '';
+    const sigla = obtenerSiglaCategoria(categoriaNombre);
+    const codigoInput = document.getElementById('competencia-codigo');
+    const adminCodigoInput = document.getElementById('competencia-codigo-admin');
+    const esAuto = codigoInput.dataset.auto === 'true' || codigoInput.value.trim() === '';
+
+    if (!esAuto) return;
+
+    generarCodigoCompetencia(sigla).then(nuevoCodigo => {
+        codigoInput.value = nuevoCodigo;
+        adminCodigoInput.value = nuevoCodigo;
+        codigoInput.dataset.auto = 'true';
+        adminCodigoInput.dataset.auto = 'true';
+    }).catch(() => {
+        // Si falla la generación, no hacemos nada
+    });
 }
 
 // ==================== COMPETENCIAS (CALENDARIO) ====================
@@ -768,19 +806,18 @@ async function openModalCompetencia() {
     await actualizarSelectoresFormularios();
     document.getElementById('form-competencia').reset();
     document.getElementById('competencia-id').value = '';
-    document.getElementById('competencia-codigo').value = '';
-    document.getElementById('competencia-codigo-admin').value = '';
+    const codigoInput = document.getElementById('competencia-codigo');
+    const adminCodigoInput = document.getElementById('competencia-codigo-admin');
+    codigoInput.value = '';
+    adminCodigoInput.value = '';
+    codigoInput.dataset.auto = 'true';
+    adminCodigoInput.dataset.auto = 'true';
     document.getElementById('competencia-documentos').value = '';
     document.getElementById('competencia-modal-title').innerText = 'Agregar Competencia';
     document.querySelectorAll('#competencia-categorias-checkboxes input').forEach(cb => cb.checked = false);
     document.querySelectorAll('#competencia-staff-checkboxes input').forEach(cb => cb.checked = false);
 
-    document.getElementById('admin-edit-codigo-group').style.display = esAdmin() ? 'block' : 'none';
-
-    const tentativo = await generarCodigoCompetencia();
-    document.getElementById('competencia-codigo').value = tentativo;
-    document.getElementById('competencia-codigo-admin').value = tentativo;
-
+    actualizarCodigoCompetenciaPorCategoria();
     openModal('modal-competencia');
 }
 
@@ -796,8 +833,12 @@ async function editarCompetencia(id) {
     document.getElementById('competencia-fin').value = comp.fechaFin;
     document.getElementById('competencia-documentos').value = comp.documentosUrl || '';
 
-    document.getElementById('competencia-codigo').value = comp.codigo || '';
-    document.getElementById('competencia-codigo-admin').value = comp.codigo || '';
+    const codigoInput = document.getElementById('competencia-codigo');
+    const adminCodigoInput = document.getElementById('competencia-codigo-admin');
+    codigoInput.value = comp.codigo || '';
+    adminCodigoInput.value = comp.codigo || '';
+    codigoInput.dataset.auto = 'false';
+    adminCodigoInput.dataset.auto = 'false';
     document.getElementById('admin-edit-codigo-group').style.display = esAdmin() ? 'block' : 'none';
 
     document.querySelectorAll('#competencia-categorias-checkboxes input').forEach(cb => {
@@ -1868,7 +1909,7 @@ async function actualizarSelectoresFormularios() {
     categorias.forEach(cat => {
         checkContainer.innerHTML += `
             <label class="checkbox-label">
-                <input type="checkbox" value="${cat.id}" ${checkedIds.includes(String(cat.id)) ? 'checked' : ''}>
+                <input type="checkbox" value="${cat.id}" ${checkedIds.includes(String(cat.id)) ? 'checked' : ''} onchange="actualizarCodigoCompetenciaPorCategoria()">
                 <span>${cat.nombre}</span>
             </label>`;
     });
