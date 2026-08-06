@@ -295,14 +295,14 @@
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Fecha Carga</th>
+                                    <th>ID Competencia</th>
                                     <th>Competencia</th>
-                                    <th>Categoría</th>
+                                    <th>Fecha</th>
                                     <th>Personal</th>
                                     <th>Concepto</th>
-                                    <th>Monto</th>
-                                    <th>Observaciones</th>
-                                    <th class="editor-only" style="text-align: right;">Acciones</th>
+                                    <th>Costo Personal</th>
+                                    <th>Gastos Totales</th>
+                                    <th class="editor-only" style="text-align: right;">Gasto Extra</th>
                                 </tr>
                             </thead>
                             <tbody id="gastos-table-body"></tbody>
@@ -329,7 +329,7 @@
                         <div class="table-header-tools">
                             <h3>Rendiciones</h3>
                             <div style="display:flex;gap:0.5rem;align-items:center;">
-                                <input type="text" id="buscar-rendiciones" class="search-input" placeholder="Buscar rendición..." oninput="listarRendiciones()" style="min-width:200px;">
+                                <input type="text" id="buscar-rendiciones" class="search-input" placeholder="Buscar rendición o ID..." oninput="listarRendiciones()" style="min-width:200px;">
                                 <select id="filtro-estado-rendiciones" onchange="listarRendiciones()" style="padding:0.5rem;">
                                     <option value="todos">Todos los estados</option>
                                     <option value="borrador">Borrador</option>

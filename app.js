@@ -1157,7 +1157,9 @@ async function listarGastos() {
         if (compFiltro && compFiltro !== 'todos' && Number(comp.id) !== Number(compFiltro)) return false;
         if (buscador) {
             const texto = `${comp.nombre} ${comp.codigo || ''}`.toLowerCase();
-            if (!texto.includes(buscador)) return false;
+            const buscadorNum = Number(buscador);
+            const idMatch = !Number.isNaN(buscadorNum) && Number(comp.id) === buscadorNum;
+            if (!texto.includes(buscador) && !idMatch) return false;
         }
         return true;
     }).sort((a, b) => new Date(b.fechaInicio) - new Date(a.fechaInicio));
@@ -2486,8 +2488,12 @@ async function listarRendiciones() {
             const comp = competencias.find(c => c.id === Number(r.competenciaId));
             const resp = staff.find(s => s.id === Number(r.responsableId));
             const compMatch = comp ? comp.nombre.toLowerCase().includes(buscador) : false;
+            const compCodigoMatch = comp ? (comp.codigo || '').toLowerCase().includes(buscador) : false;
             const respMatch = resp ? `${resp.nombre} ${resp.apellido}`.toLowerCase().includes(buscador) : false;
-            if (!compMatch && !respMatch && !(r.observaciones || '').toLowerCase().includes(buscador)) return false;
+            const obsMatch = (r.observaciones || '').toLowerCase().includes(buscador);
+            const queryNumber = Number(buscador);
+            const idMatch = !Number.isNaN(queryNumber) && (queryNumber === Number(r.id) || queryNumber === Number(r.competenciaId));
+            if (!compMatch && !compCodigoMatch && !respMatch && !obsMatch && !idMatch) return false;
         }
         return true;
     }).sort((a, b) => new Date(b.fecha || b.fechaCreacion) - new Date(a.fecha || a.fechaCreacion));
