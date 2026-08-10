@@ -125,6 +125,12 @@
                     </div>
                 </li>
                 <li>
+                    <div class="menu-item" onclick="switchView('alojamiento')">
+                        <i class="fa-solid fa-hotel"></i>
+                        <span>Alojamiento</span>
+                    </div>
+                </li>
+                <li>
                     <div class="menu-item" onclick="switchView('configuracion')">
                         <i class="fa-solid fa-sliders"></i>
                         <span>Configuración</span>
@@ -848,6 +854,47 @@
                 </div>
             </section>
 
+            <!-- VIEW: ALOJAMIENTO -->
+            <section id="view-alojamiento" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Alojamiento</h1>
+                        <p class="page-subtitle">Gestión de hoteles, hosterías y alojamientos para competencias</p>
+                    </div>
+                    <div class="editor-only">
+                        <button class="btn" onclick="openModalAlojamiento()"><i class="fa-solid fa-plus"></i> Agregar Alojamiento</button>
+                    </div>
+                </header>
+
+                <!-- Zona de filtros y búsqueda -->
+                <div class="table-card" style="margin-bottom:1.5rem;">
+                    <div class="inv-filters">
+                        <div class="form-group">
+                            <label for="alojamiento-filtro-provincia">Provincia</label>
+                            <select id="alojamiento-filtro-provincia" onchange="filtrarAlojamientos()">
+                                <option value="todas">Todas</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="alojamiento-filtro-ciudad">Ciudad</label>
+                            <select id="alojamiento-filtro-ciudad" onchange="filtrarAlojamientos()">
+                                <option value="todas">Todas</option>
+                            </select>
+                        </div>
+                        <div style="display:flex;gap:0.5rem;align-items:center;flex:1;min-width:220px;">
+                            <input type="text" id="buscar-alojamiento" class="search-input" placeholder="Buscar por ciudad..." style="flex:1;min-width:180px;" onkeydown="if(event.key==='Enter')buscarAlojamientoPorCiudad()">
+                            <button class="btn btn-secondary" onclick="buscarAlojamientoPorCiudad()" title="Buscar por ciudad"><i class="fa-solid fa-magnifying-glass"></i> Buscar</button>
+                        </div>
+                        <button class="btn btn-secondary" onclick="limpiarFiltrosAlojamiento()" title="Limpiar filtros"><i class="fa-solid fa-rotate-left"></i> Limpiar</button>
+                    </div>
+                </div>
+
+                <!-- Contenedor de resultados (grid de tarjetas) -->
+                <div id="alojamientos-list" class="alojamientos-grid">
+                    <p style="color:var(--text-secondary);text-align:center;grid-column:1/-1;padding:2rem;">Cargando alojamientos...</p>
+                </div>
+            </section>
+
             <!-- VIEW: CONFIGURACION -->
             <section id="view-configuracion" class="view">
                 <header>
@@ -1261,6 +1308,97 @@
             </form>
         </div>
     </div>
+
+    <!-- MODAL: ALOJAMIENTO -->
+    <div id="modal-alojamiento" class="modal-overlay">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <h2 class="modal-title" id="alojamiento-modal-title">Agregar Alojamiento</h2>
+                <button class="modal-close" onclick="closeModal('modal-alojamiento')">&times;</button>
+            </div>
+            <form id="form-alojamiento" onsubmit="guardarAlojamientoForm(event)">
+                <input type="hidden" id="alojamiento-id">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label for="alojamiento-nombre">Nombre *</label>
+                        <input type="text" id="alojamiento-nombre" placeholder="Ej: Hotel Central" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="alojamiento-direccion">Dirección *</label>
+                        <input type="text" id="alojamiento-direccion" placeholder="Calle, número, piso..." required>
+                    </div>
+                    <div class="form-group">
+                        <label for="alojamiento-provincia">Provincia *</label>
+                        <input type="text" id="alojamiento-provincia" placeholder="Ej: Córdoba" required list="provincias-argentinas">
+                    </div>
+                    <div class="form-group">
+                        <label for="alojamiento-ciudad">Ciudad *</label>
+                        <input type="text" id="alojamiento-ciudad" placeholder="Ej: Alta Gracia" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="alojamiento-telefono">Teléfono</label>
+                        <input type="tel" id="alojamiento-telefono" placeholder="Ej: 03547 42-1234">
+                    </div>
+                    <div class="form-group">
+                        <label for="alojamiento-cp">Código Postal</label>
+                        <input type="text" id="alojamiento-cp" placeholder="Ej: 5186">
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="alojamiento-foto">Foto del Alojamiento</label>
+                        <input type="file" id="alojamiento-foto" accept="image/*">
+                        <small style="color:var(--text-secondary);">Formatos: JPG, PNG. Tamaño máx: 5MB.</small>
+                        <div id="alojamiento-foto-preview" style="margin-top:0.5rem;display:none;">
+                            <img id="alojamiento-foto-preview-img" alt="Vista previa" style="max-width:180px;max-height:120px;border-radius:8px;border:1px solid var(--border-color);">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="alojamiento-email">Email</label>
+                        <input type="email" id="alojamiento-email" placeholder="Ej: contacto@hotel.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="alojamiento-web">Sitio Web</label>
+                        <input type="url" id="alojamiento-web" placeholder="Ej: https://www.hotel.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="alojamiento-capacidad">Capacidad (personas)</label>
+                        <input type="number" id="alojamiento-capacidad" min="1" placeholder="Ej: 40">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-alojamiento')">Cancelar</button>
+                    <button type="submit" class="btn" id="alojamiento-btn-guardar"><i class="fa-solid fa-floppy-disk"></i> Guardar Alojamiento</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Datalist de Provincias Argentinas -->
+    <datalist id="provincias-argentinas">
+        <option value="Buenos Aires">
+        <option value="Catamarca">
+        <option value="Chaco">
+        <option value="Chubut">
+        <option value="Córdoba">
+        <option value="Corrientes">
+        <option value="Entre Ríos">
+        <option value="Formosa">
+        <option value="Jujuy">
+        <option value="La Pampa">
+        <option value="La Rioja">
+        <option value="Mendoza">
+        <option value="Misiones">
+        <option value="Neuquén">
+        <option value="Río Negro">
+        <option value="Salta">
+        <option value="San Juan">
+        <option value="San Luis">
+        <option value="Santa Cruz">
+        <option value="Santa Fe">
+        <option value="Santiago del Estero">
+        <option value="Tierra del Fuego">
+        <option value="Tucumán">
+        <option value="Ciudad Autónoma de Buenos Aires">
+    </datalist>
 
     <!-- MODAL: CATEGORIA -->
     <div id="modal-categoria" class="modal-overlay">

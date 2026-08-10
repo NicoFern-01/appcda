@@ -1588,3 +1588,171 @@ input[type="file"]:hover {
         width: 90px !important;
     }
 }
+
+/* ==================== MÓDULO ALOJAMIENTO ==================== */
+
+/* Grid de tarjetas de alojamientos */
+.alojamientos-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+/* Tarjeta de alojamiento */
+.alojamiento-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: var(--transition);
+    display: flex;
+    flex-direction: column;
+}
+
+.alojamiento-card:hover {
+    border-color: var(--border-hover);
+    transform: translateY(-3px);
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+}
+
+/* Imagen del alojamiento */
+.alojamiento-card-img {
+    width: 100%;
+    height: 180px;
+    object-fit: cover;
+    background: var(--bg-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    font-size: 3rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.alojamiento-card-img img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* Cuerpo de la tarjeta */
+.alojamiento-card-body {
+    padding: 1.25rem;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.alojamiento-card-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.alojamiento-card-title .capacidad-badge {
+    background: rgba(0, 210, 211, 0.15);
+    color: var(--accent-blue);
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.alojamiento-card-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.alojamiento-card-meta i {
+    width: 18px;
+    text-align: center;
+    color: var(--accent-blue);
+    margin-right: 0.25rem;
+}
+
+.alojamiento-card-meta .meta-item {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+/* Acciones de la tarjeta */
+.alojamiento-card-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    margin-top: 0.75rem;
+    border-top: 1px solid var(--border-color);
+    padding-top: 0.75rem;
+}
+
+/* Estado vacío */
+.alojamientos-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--text-secondary);
+    background: var(--bg-card);
+    border: 1px dashed var(--border-color);
+    border-radius: 12px;
+}
+
+.alojamientos-empty i {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    color: var(--text-secondary);
+    opacity: 0.5;
+}
+
+.alojamientos-empty p {
+    font-size: 1rem;
+}
+
+/* Estado de carga */
+.alojamientos-loading {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-secondary);
+}
+
+.alojamientos-loading i {
+    font-size: 2rem;
+    color: var(--accent-blue);
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Vista previa de foto en el modal */
+#alojamiento-foto-preview {
+    display: none;
+}
+
+#alojamiento-foto-preview img {
+    max-width: 180px;
+    max-height: 120px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    object-fit: cover;
+}
+
+/* Responsive del grid de alojamientos */
+@media (max-width: 768px) {
+    .alojamientos-grid {
+        grid-template-columns: 1fr;
+    }
+}

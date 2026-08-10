@@ -1,7 +1,7 @@
 ﻿// db.js - Gestión de Base de Datos Local con IndexedDB e integración con Firebase
 
 const DB_NAME = 'ControlAutomovilismoDB';
-const DB_VERSION = 7;
+const DB_VERSION = 8;
 
 let dbInstance = null;
 
@@ -25,7 +25,9 @@ const DEFAULT_FIREBASE_CONFIG = {
 };
 
 // Variables de módulos de Firebase
-let initializeApp, initializeFirestore, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, writeBatch;
+let initializeApp, initializeFirestore, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, writeBatch, query, where;
+let getStorage, refStorage, uploadBytes, getDownloadURL, deleteObject;
+let storageFirebase = null;
 
 // ==================== HASH DE CONTRASEÑAS SEGURO (Web Crypto API) ====================
 // Usa SHA-256 con salt aleatorio. No almacena la contraseña en texto plano.
@@ -101,6 +103,7 @@ async function inicializarFirebase() {
         // Cargamos módulos oficiales de Firebase v10 desde gstatic CDN para ES Modules
         const appMod = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js');
         const fsMod = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');
+        const storageMod = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js');
 
         initializeApp = appMod.initializeApp;
         initializeFirestore = fsMod.initializeFirestore;
@@ -112,8 +115,16 @@ async function inicializarFirebase() {
         getDoc = fsMod.getDoc;
         deleteDoc = fsMod.deleteDoc;
         writeBatch = fsMod.writeBatch;
+        query = fsMod.query;
+        where = fsMod.where;
+        getStorage = storageMod.getStorage;
+        refStorage = storageMod.ref;
+        uploadBytes = storageMod.uploadBytes;
+        getDownloadURL = storageMod.getDownloadURL;
+        deleteObject = storageMod.deleteObject;
 
         const app = initializeApp(config);
+        storageFirebase = getStorage(app);
         if (initializeFirestore) {
             dbFirebase = initializeFirestore(app, { cache: { synchronizeTabs: true } });
             console.log('Firestore inicializado con FirestoreSettings.cache.');
@@ -275,6 +286,11 @@ function openDB() {
             // Personal por competencia (costos laborales)
             if (!db.objectStoreNames.contains('personalCompetencia')) {
                 db.createObjectStore('personalCompetencia', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Tabla de Alojamientos
+            if (!db.objectStoreNames.contains('alojamientos')) {
+                db.createObjectStore('alojamientos', { keyPath: 'id', autoIncrement: true });
             }
         };
 
@@ -615,7 +631,7 @@ async function sincronizarLocalAFirebase() {
         return;
     }
 
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos'];
     let total = 0;
 
     for (const storeName of stores) {
@@ -644,7 +660,7 @@ async function sincronizarLocalAFirebase() {
 async function importarTodo(datos) {
     limpiarCacheCompleto(); // limpiar todo el caché antes de importar
     const db = await openDB();
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos'];
     
     for (const storeName of stores) {
         if (datos[storeName]) {

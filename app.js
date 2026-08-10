@@ -19,7 +19,7 @@ let chartConceptoInstance = null;
 // Flag para evitar re-renderizar el dashboard si no cambiaron los datos
 let dashboardDirty = true;
 
-const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'configuracion'];
+const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'alojamiento', 'configuracion'];
 
 // Calendario view mode: 'cards' | 'list' (compact)
 let calendarioViewMode = localStorage.getItem('calendarioViewMode') || 'cards';
@@ -198,6 +198,7 @@ async function cargarDatosVista(viewId) {
         case 'carga-detallada': await listarRendiciones(); break;
         case 'personal-competencia': await cargarPersonalCompetencia(); break;
         case 'staff':        await listarStaff(); break;
+        case 'alojamiento':  await listarAlojamientos(); break;
         case 'configuracion':await listarConfiguraciones(); break;
     }
 }
@@ -3811,6 +3812,7 @@ async function cargarDatosVista(viewId) {
         case 'categorias-inventario': await listarCategoriasInventario(); break;
         case 'entregas-inventario': await listarEntregas(); break;
         case 'staff':        await listarStaff(); break;
+        case 'alojamiento':  await listarAlojamientos(); break;
         case 'configuracion':await listarConfiguraciones(); break;
     }
 }
@@ -5663,4 +5665,526 @@ async function obtenerTotalGastosConPersonal(compId) {
     }, 0);
     const totalPersonal = await obtenerTotalPersonalCompetencia(compId);
     return { normal: costoSinples + costoDetallado, personal: totalPersonal, total: costoSinples + costoDetallado + totalPersonal };
+}
+
+// ====================================================================
+// MÓDULO: ALOJAMIENTO (OPTIMIZADO)
+// ====================================================================
+
+// Estado del módulo
+let alojamientosCache = [];
+let alojamientosCargados = false;
+let alojamientosFiltrosInicializados = false;
+
+// Subir una foto a Firebase Storage y obtener su URL pública
+async function subirFotoAlojamiento(file, alojamientoId) {
+    // Si no hay Firebase Storage disponible, almacenar como base64 local
+    if (typeof getStorage !== 'function' || typeof refStorage !== 'function' || typeof uploadBytes !== 'function' || typeof getDownloadURL !== 'function' || !storageFirebase) {
+        // Convertir a base64 local como fallback
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('Error al leer la imagen.'));
+            reader.readAsDataURL(file);
+        });
+    }
+
+    try {
+        const safeId = String(alojamientoId || Date.now()).replace(/[^a-zA-Z0-9]/g, '_');
+        const fileExt = (file.name.split('.').pop() || 'jpg').toLowerCase();
+        const storageRef = refStorage(storageFirebase, `alojamientos/${safeId}_${Date.now()}.${fileExt}`);
+        await uploadBytes(storageRef, file);
+        const url = await getDownloadURL(storageRef);
+        return url;
+    } catch (e) {
+        console.warn('Error al subir foto a Firebase Storage:', e);
+        // Fallback: guardar como base64 local
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('Error al leer la imagen.'));
+            reader.readAsDataURL(file);
+        });
+    }
+}
+
+// Eliminar la foto de un alojamiento de Firebase Storage si existe
+async function eliminarFotoAlojamiento(url) {
+    if (!url || typeof getStorage !== 'function' || typeof refStorage !== 'function' || typeof deleteObject !== 'function' || !storageFirebase) return;
+    try {
+        if (url.startsWith('https://firebasestorage.googleapis.com')) {
+            const storageRef = refStorage(storageFirebase, url);
+            await deleteObject(storageRef);
+        }
+    } catch (e) {
+        console.warn('Error al eliminar foto de Firebase Storage:', e);
+    }
+}
+
+// Mostrar vista previa de la foto seleccionada en el modal (usando URL.createObjectURL - mucho más rápido)
+function setupFotoPreview() {
+    const input = document.getElementById('alojamiento-foto');
+    if (!input) return;
+    input.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        const previewCont = document.getElementById('alojamiento-foto-preview');
+        const previewImg = document.getElementById('alojamiento-foto-preview-img');
+        if (file && previewCont && previewImg) {
+            // Liberar URL anterior si existe
+            if (previewImg.dataset.objectUrl) {
+                URL.revokeObjectURL(previewImg.dataset.objectUrl);
+            }
+            const objectUrl = URL.createObjectURL(file);
+            previewImg.dataset.objectUrl = objectUrl;
+            previewImg.src = objectUrl;
+            previewCont.style.display = 'block';
+        } else if (previewCont) {
+            previewCont.style.display = 'none';
+        }
+    });
+}
+
+// Ejecutar setup al cargar DOM (se ejecuta una sola vez en el DOMContentLoaded existente)
+if (typeof document !== 'undefined') {
+    document.addEventListener('DOMContentLoaded', () => {
+        setupFotoPreview();
+    });
+}
+
+// Cargar todos los alojamientos (usa caché si ya está cargada)
+async function cargarAlojamientos(forzar = false) {
+    if (alojamientosCargados && !forzar) {
+        return alojamientosCache;
+    }
+    const alojamientos = await getTodos('alojamientos');
+    alojamientosCache = alojamientos.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    alojamientosCargados = true;
+    return alojamientosCache;
+}
+
+// Actualizar los selectores de Provincia y Ciudad con valores únicos (solo si cambió)
+function actualizarFiltrosAlojamientos() {
+    const selProv = document.getElementById('alojamiento-filtro-provincia');
+    const selCiudad = document.getElementById('alojamiento-filtro-ciudad');
+    if (!selProv || !selCiudad) return;
+
+    const provincias = [...new Set(alojamientosCache.map(a => a.provincia).filter(Boolean))].sort();
+    const selProvValue = selProv.value;
+    selProv.innerHTML = '<option value="todas">Todas</option>';
+    provincias.forEach(p => selProv.innerHTML += `<option value="${p}">${p}</option>`);
+    selProv.value = selProvValue;
+
+    // Ciudades según la provincia seleccionada (o todas si 'todas')
+    const provSel = selProv.value;
+    let ciudades = [...new Set(alojamientosCache.map(a => a.ciudad).filter(Boolean))];
+    if (provSel !== 'todas') {
+        ciudades = ciudades.filter(c => alojamientosCache.some(a => a.provincia === provSel && a.ciudad === c));
+    }
+    ciudades.sort();
+    const selCiudadValue = selCiudad.value;
+    selCiudad.innerHTML = '<option value="todas">Todas</option>';
+    ciudades.forEach(c => selCiudad.innerHTML += `<option value="${c}">${c}</option>`);
+    selCiudad.value = selCiudadValue;
+}
+
+// Buscar alojamientos por la ciudad ingresada (botón Buscar) - usa caché
+async function buscarAlojamientoPorCiudad() {
+    const buscarInput = document.getElementById('buscar-alojamiento');
+    if (!buscarInput) return;
+    const ciudad = buscarInput.value.trim().toLowerCase();
+    const contenedor = document.getElementById('alojamientos-list');
+    if (!contenedor) return;
+
+    // Usar caché sin recargar desde IndexedDB
+    await cargarAlojamientos();
+    let resultados = alojamientosCache;
+    if (ciudad) {
+        resultados = alojamientosCache.filter(a => (a.ciudad || '').toLowerCase().includes(ciudad));
+    }
+
+    if (resultados.length === 0) {
+        contenedor.innerHTML = `
+            <div class="alojamientos-empty">
+                <i class="fa-solid fa-hotel"></i>
+                <p>No se encontraron alojamientos para la ciudad "${ciudad}".</p>
+            </div>`;
+        return;
+    }
+    renderizarAlojamientos(resultados);
+}
+
+// Filtrar alojamientos por los selectores de Provincia y Ciudad
+async function filtrarAlojamientos() {
+    const selProv = document.getElementById('alojamiento-filtro-provincia');
+    const selCiudad = document.getElementById('alojamiento-filtro-ciudad');
+    if (!selProv || !selCiudad) return;
+
+    // Actualizar opciones de ciudad según la provincia
+    actualizarFiltrosAlojamientos();
+
+    const prov = selProv.value;
+    const ciudad = selCiudad.value;
+    let resultados = alojamientosCache;
+
+    if (prov !== 'todas') resultados = resultados.filter(a => a.provincia === prov);
+    if (ciudad !== 'todas') resultados = resultados.filter(a => a.ciudad === ciudad);
+
+    renderizarAlojamientos(resultados);
+}
+
+// Limpiar todos los filtros y recargar
+function limpiarFiltrosAlojamiento() {
+    document.getElementById('alojamiento-filtro-provincia').value = 'todas';
+    document.getElementById('alojamiento-filtro-ciudad').value = 'todas';
+    document.getElementById('buscar-alojamiento').value = '';
+    actualizarFiltrosAlojamientos();
+    renderizarAlojamientos(alojamientosCache);
+}
+
+// Listar alojamientos (vista principal) - usa caché
+async function listarAlojamientos() {
+    const contenedor = document.getElementById('alojamientos-list');
+    if (!contenedor) return;
+
+    // Si ya están cargados, renderizar directamente sin mostrar loading
+    if (alojamientosCargados) {
+        renderizarAlojamientos(alojamientosCache);
+        return;
+    }
+
+    contenedor.innerHTML = '<div class="alojamientos-loading"><i class="fa-solid fa-circle-notch fa-spin"></i> Cargando alojamientos...</div>';
+
+    await cargarAlojamientos();
+    actualizarFiltrosAlojamientos();
+
+    if (alojamientosCache.length === 0) {
+        contenedor.innerHTML = `
+            <div class="alojamientos-empty">
+                <i class="fa-solid fa-hotel"></i>
+                <p>No hay alojamientos registrados. ${puedeEditar() ? 'Hacé clic en "Agregar Alojamiento".' : ''}</p>
+            </div>`;
+        return;
+    }
+
+    renderizarAlojamientos(alojamientosCache);
+}
+
+// Renderizar las tarjetas de alojamientos (usando DocumentFragment para mayor velocidad)
+function renderizarAlojamientos(lista) {
+    const contenedor = document.getElementById('alojamientos-list');
+    if (!contenedor) return;
+
+    contenedor.innerHTML = '';
+
+    if (lista.length === 0) {
+        contenedor.innerHTML = `
+            <div class="alojamientos-empty">
+                <i class="fa-solid fa-hotel"></i>
+                <p>No hay alojamientos que coincidan con los filtros.</p>
+            </div>`;
+        return;
+    }
+
+    // Usar DocumentFragment para evitar múltiples reflows del DOM
+    const fragment = document.createDocumentFragment();
+
+    for (const a of lista) {
+        const card = document.createElement('div');
+        card.className = 'alojamiento-card';
+
+        const fotoHtml = a.fotoUrl
+            ? `<div class="alojamiento-card-img"><img src="${escapeHtml(a.fotoUrl)}" alt="${escapeHtml(a.nombre)}" onerror="this.parentElement.innerHTML='<i class=\\'fa-solid fa-hotel\\'></i>'"></div>`
+            : `<div class="alojamiento-card-img"><i class="fa-solid fa-hotel"></i></div>`;
+
+        // Construir URL de Google Maps con la dirección completa
+        const direccionCompleta = [a.direccion, a.ciudad, a.provincia].filter(Boolean).join(', ');
+        const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(direccionCompleta)}`;
+
+        const accionVer = `
+            <button class="action-btn" onclick="verAlojamiento(${a.id})" title="Ver detalle" style="color:var(--accent-blue);"><i class="fa-solid fa-eye"></i></button>
+        `;
+        const accionMaps = `
+            <a href="${mapsUrl}" target="_blank" class="action-btn" title="Ver en Google Maps" style="color:var(--accent-green);"><i class="fa-solid fa-map-location-dot"></i></a>
+        `;
+        const accionEditar = puedeEditar() ? `
+            <button class="action-btn" onclick="editarAlojamiento(${a.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
+        ` : '';
+        const accionEliminar = esAdmin() ? `
+            <button class="action-btn delete" onclick="eliminarAlojamiento(${a.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+        ` : '';
+
+        card.innerHTML = `
+            ${fotoHtml}
+            <div class="alojamiento-card-body">
+                <div class="alojamiento-card-title">
+                    <span>${escapeHtml(a.nombre)}</span>
+                    ${a.capacidad ? `<span class="capacidad-badge"><i class="fa-solid fa-users"></i> ${a.capacidad}</span>` : ''}
+                </div>
+                <div class="alojamiento-card-meta">
+                    <div class="meta-item"><i class="fa-solid fa-location-dot"></i> ${escapeHtml(a.direccion)}</div>
+                    <div class="meta-item"><i class="fa-solid fa-map-pin"></i> ${escapeHtml(a.ciudad)}${a.provincia ? ', ' + escapeHtml(a.provincia) : ''}</div>
+                    ${a.telefono ? `<div class="meta-item"><i class="fa-solid fa-phone"></i> ${escapeHtml(a.telefono)}</div>` : ''}
+                    ${a.email ? `<div class="meta-item"><i class="fa-solid fa-envelope"></i> ${escapeHtml(a.email)}</div>` : ''}
+                    ${a.web ? `<div class="meta-item"><i class="fa-solid fa-globe"></i> <a href="${escapeHtml(a.web)}" target="_blank" style="color:var(--accent-blue);">${escapeHtml(a.web)}</a></div>` : ''}
+                    ${a.cp ? `<div class="meta-item"><i class="fa-solid fa-hashtag"></i> CP: ${escapeHtml(a.cp)}</div>` : ''}
+                </div>
+                <div class="alojamiento-card-actions">
+                    ${accionVer}
+                    ${accionMaps}
+                    ${accionEditar}
+                    ${accionEliminar}
+                </div>
+            </div>
+        `;
+        fragment.appendChild(card);
+    }
+
+    contenedor.appendChild(fragment);
+}
+
+// Abrir modal para agregar un nuevo alojamiento
+function openModalAlojamiento() {
+    if (!puedeEditar()) return;
+    document.getElementById('form-alojamiento').reset();
+    document.getElementById('alojamiento-id').value = '';
+    document.getElementById('alojamiento-modal-title').innerText = 'Agregar Alojamiento';
+    document.getElementById('alojamiento-foto').value = '';
+    document.getElementById('alojamiento-foto-preview').style.display = 'none';
+    document.getElementById('alojamiento-foto-preview-img').src = '';
+    document.getElementById('alojamiento-btn-guardar').innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Guardar Alojamiento';
+    openModal('modal-alojamiento');
+}
+
+// Abrir modal para editar un alojamiento existente (usa caché en lugar de IndexedDB)
+async function editarAlojamiento(id) {
+    if (!puedeEditar()) return;
+    // Buscar en caché primero (mucho más rápido que IndexedDB)
+    let a = alojamientosCache.find(x => Number(x.id) === Number(id));
+    if (!a) {
+        a = await obtenerPorId('alojamientos', id);
+    }
+    if (!a) return;
+
+    document.getElementById('alojamiento-id').value = a.id;
+    document.getElementById('alojamiento-nombre').value = a.nombre || '';
+    document.getElementById('alojamiento-direccion').value = a.direccion || '';
+    document.getElementById('alojamiento-provincia').value = a.provincia || '';
+    document.getElementById('alojamiento-ciudad').value = a.ciudad || '';
+    document.getElementById('alojamiento-telefono').value = a.telefono || '';
+    document.getElementById('alojamiento-cp').value = a.cp || '';
+    document.getElementById('alojamiento-email').value = a.email || '';
+    document.getElementById('alojamiento-web').value = a.web || '';
+    document.getElementById('alojamiento-capacidad').value = a.capacidad || '';
+    document.getElementById('alojamiento-foto').value = '';
+    document.getElementById('alojamiento-foto-preview').style.display = 'none';
+    document.getElementById('alojamiento-foto-preview-img').src = '';
+    document.getElementById('alojamiento-modal-title').innerText = 'Editar Alojamiento';
+    document.getElementById('alojamiento-btn-guardar').innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Actualizar Alojamiento';
+    openModal('modal-alojamiento');
+}
+
+// Ver detalle completo de un alojamiento en un modal
+async function verAlojamiento(id) {
+    // Buscar en caché primero
+    let a = alojamientosCache.find(x => Number(x.id) === Number(id));
+    if (!a) {
+        a = await obtenerPorId('alojamientos', id);
+    }
+    if (!a) return;
+
+    // Crear el modal si no existe
+    if (!document.getElementById('modal-ver-alojamiento')) {
+        const modalHtml = `
+        <div id="modal-ver-alojamiento" class="modal-overlay">
+            <div class="modal modal-lg">
+                <div class="modal-header">
+                    <h2 class="modal-title"><i class="fa-solid fa-hotel"></i> <span id="ver-alojamiento-nombre"></span></h2>
+                    <button class="modal-close" onclick="closeModal('modal-ver-alojamiento')">&times;</button>
+                </div>
+                <div class="modal-content" style="padding:1.5rem;">
+                    <div id="ver-alojamiento-foto" style="margin-bottom:1.5rem;text-align:center;"></div>
+                    <div class="form-card" style="margin-bottom:1rem;">
+                        <div class="form-title"><i class="fa-solid fa-circle-info"></i> Información General</div>
+                        <div id="ver-alojamiento-info" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;padding:0.5rem 0;"></div>
+                    </div>
+                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                        <button type="button" class="btn btn-secondary" onclick="cerrarVerAlojamiento()">Cerrar</button>
+                        <button type="button" class="btn" onclick="abrirEditarDesdeVerAlojamiento()"><i class="fa-solid fa-pen-to-square"></i> Editar</button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+    }
+
+    // Rellenar datos
+    document.getElementById('ver-alojamiento-nombre').textContent = a.nombre;
+
+    const fotoCont = document.getElementById('ver-alojamiento-foto');
+    fotoCont.innerHTML = a.fotoUrl
+        ? `<img src="${escapeHtml(a.fotoUrl)}" alt="${escapeHtml(a.nombre)}" style="max-width:100%;max-height:300px;border-radius:12px;border:1px solid var(--border-color);object-fit:cover;" onerror="this.style.display='none'">`
+        : '<div style="font-size:4rem;color:var(--text-secondary);"><i class="fa-solid fa-hotel"></i></div>';
+
+    const direccionCompleta = [a.direccion, a.ciudad, a.provincia].filter(Boolean).join(', ');
+    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(direccionCompleta)}`;
+
+    document.getElementById('ver-alojamiento-info').innerHTML = `
+        <div><strong>Dirección:</strong> ${escapeHtml(a.direccion || '-')}</div>
+        <div><strong>Ciudad:</strong> ${escapeHtml(a.ciudad || '-')}</div>
+        <div><strong>Provincia:</strong> ${escapeHtml(a.provincia || '-')}</div>
+        <div><strong>Código Postal:</strong> ${escapeHtml(a.cp || '-')}</div>
+        <div><strong>Teléfono:</strong> ${escapeHtml(a.telefono || '-')}</div>
+        <div><strong>Email:</strong> ${a.email ? `<a href="mailto:${escapeHtml(a.email)}" style="color:var(--accent-blue);">${escapeHtml(a.email)}</a>` : '-'}</div>
+        <div><strong>Sitio Web:</strong> ${a.web ? `<a href="${escapeHtml(a.web)}" target="_blank" style="color:var(--accent-blue);">${escapeHtml(a.web)}</a>` : '-'}</div>
+        <div><strong>Capacidad:</strong> ${a.capacidad ? `${a.capacidad} personas` : '-'}</div>
+        <div><strong>Ubicación:</strong> <a href="${mapsUrl}" target="_blank" style="color:var(--accent-green);"><i class="fa-solid fa-map-location-dot"></i> Ver en Google Maps</a></div>
+    `;
+
+    // Guardar ID para editar desde el modal
+    document.getElementById('modal-ver-alojamiento').dataset.alojamientoId = a.id;
+
+    openModal('modal-ver-alojamiento');
+}
+
+// Cerrar modal de ver alojamiento
+function cerrarVerAlojamiento() {
+    closeModal('modal-ver-alojamiento');
+}
+
+// Abrir edición desde el modal de ver
+function abrirEditarDesdeVerAlojamiento() {
+    const modal = document.getElementById('modal-ver-alojamiento');
+    if (!modal) return;
+    const id = modal.dataset.alojamientoId;
+    closeModal('modal-ver-alojamiento');
+    if (id) {
+        editarAlojamiento(Number(id));
+    }
+}
+
+// Guardar el alojamiento (nuevo o edición) - actualiza caché sin recargar todo
+async function guardarAlojamientoForm(e) {
+    e.preventDefault();
+    if (!puedeEditar()) return;
+
+    const id = document.getElementById('alojamiento-id').value;
+    const btnGuardar = document.getElementById('alojamiento-btn-guardar');
+    const nombre = document.getElementById('alojamiento-nombre').value.trim();
+    const direccion = document.getElementById('alojamiento-direccion').value.trim();
+    const provincia = document.getElementById('alojamiento-provincia').value.trim();
+    const ciudad = document.getElementById('alojamiento-ciudad').value.trim();
+
+    if (!nombre || !direccion || !provincia || !ciudad) {
+        mostrarToast('Completá todos los campos obligatorios (*).', 'error');
+        return;
+    }
+
+    const alojamiento = {
+        nombre,
+        direccion,
+        provincia,
+        ciudad,
+        telefono: document.getElementById('alojamiento-telefono').value.trim(),
+        cp: document.getElementById('alojamiento-cp').value.trim(),
+        email: document.getElementById('alojamiento-email').value.trim(),
+        web: document.getElementById('alojamiento-web').value.trim(),
+        capacidad: document.getElementById('alojamiento-capacidad').value ? Number(document.getElementById('alojamiento-capacidad').value) : null,
+        usuarioCreacion: currentUser ? currentUser.id : null,
+        usuarioModificacion: currentUser ? currentUser.id : null,
+        fechaCreacion: new Date().toISOString(),
+        fechaModificacion: new Date().toISOString()
+    };
+
+    if (id) {
+        alojamiento.id = Number(id);
+        // Buscar en caché primero
+        const orig = alojamientosCache.find(x => Number(x.id) === Number(id)) || await obtenerPorId('alojamientos', Number(id));
+        if (orig) {
+            alojamiento.usuarioCreacion = orig.usuarioCreacion;
+            alojamiento.fechaCreacion = orig.fechaCreacion;
+            alojamiento.fotoUrl = orig.fotoUrl || '';
+        }
+    }
+
+    // Procesar foto si se seleccionó una nueva
+    const fotoInput = document.getElementById('alojamiento-foto');
+    let fotoUrl = alojamiento.fotoUrl || '';
+    if (fotoInput && fotoInput.files && fotoInput.files[0]) {
+        const file = fotoInput.files[0];
+        if (file.size > 5 * 1024 * 1024) {
+            mostrarToast('La imagen no puede superar los 5MB.', 'error');
+            return;
+        }
+        try {
+            btnGuardar.disabled = true;
+            btnGuardar.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Subiendo foto...';
+            fotoUrl = await subirFotoAlojamiento(file, alojamiento.id);
+        } catch (err) {
+            console.error('Error al subir foto:', err);
+            mostrarToast('Error al subir la foto.', 'error');
+            btnGuardar.disabled = false;
+            btnGuardar.innerHTML = id ? '<i class="fa-solid fa-floppy-disk"></i> Actualizar Alojamiento' : '<i class="fa-solid fa-floppy-disk"></i> Guardar Alojamiento';
+            return;
+        }
+    }
+    alojamiento.fotoUrl = fotoUrl;
+
+    const savedId = await guardar('alojamientos', alojamiento);
+    alojamiento.id = Number(savedId);
+
+    // Actualizar caché en memoria directamente (sin recargar desde IndexedDB)
+    const idx = alojamientosCache.findIndex(x => Number(x.id) === Number(alojamiento.id));
+    if (idx >= 0) {
+        alojamientosCache[idx] = alojamiento;
+    } else {
+        alojamientosCache.push(alojamiento);
+        alojamientosCache.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    }
+    alojamientosCargados = true;
+
+    invalidarCache('alojamientos');
+    closeModal('modal-alojamiento');
+    mostrarToast(`Alojamiento "${nombre}" guardado correctamente.`);
+
+    // Re-renderizar solo si la vista está activa
+    const viewActiva = document.getElementById('view-alojamiento');
+    if (viewActiva && viewActiva.classList.contains('active')) {
+        renderizarAlojamientos(alojamientosCache);
+        actualizarFiltrosAlojamientos();
+    }
+}
+
+// Eliminar un alojamiento (solo admin) - actualiza caché sin recargar todo
+async function eliminarAlojamiento(id) {
+    if (!esAdmin()) return;
+
+    // Buscar en caché primero
+    const a = alojamientosCache.find(x => Number(x.id) === Number(id)) || await obtenerPorId('alojamientos', id);
+    if (!a) return;
+
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar Alojamiento',
+        `¿Eliminar "${a.nombre}" permanentemente?`,
+        'warning'
+    );
+    if (!confirmado) return;
+
+    // Eliminar foto de Firebase Storage si existe
+    if (a.fotoUrl) {
+        await eliminarFotoAlojamiento(a.fotoUrl);
+    }
+
+    await eliminar('alojamientos', id);
+
+    // Actualizar caché en memoria directamente
+    alojamientosCache = alojamientosCache.filter(x => Number(x.id) !== Number(id));
+    invalidarCache('alojamientos');
+    mostrarToast('Alojamiento eliminado correctamente.');
+
+    // Re-renderizar solo si la vista está activa
+    const viewActiva = document.getElementById('view-alojamiento');
+    if (viewActiva && viewActiva.classList.contains('active')) {
+        renderizarAlojamientos(alojamientosCache);
+        actualizarFiltrosAlojamientos();
+    }
 }
