@@ -5676,8 +5676,84 @@ let alojamientosCache = [];
 let alojamientosCargados = false;
 let alojamientosFiltrosInicializados = false;
 
+// ====================================================================
+// OPTIMIZACIÓN CLAVE: COMPRESIÓN DE IMAGEN EN EL CLIENTE (Canvas API)
+// Redimensiona a un ancho máximo de 1024px y comprime a JPEG calidad 0.7,
+// reduciendo drásticamente el peso del archivo ANTES de subirlo a Storage.
+// ====================================================================
+async function comprimirImagenAlojamiento(file, maxAncho = 1024, calidad = 0.7) {
+    return new Promise((resolve, reject) => {
+        // Si no es una imagen o no hay Canvas disponible, devolver el archivo original
+        if (!file || !file.type || !file.type.startsWith('image/')) {
+            return resolve(file);
+        }
+        if (typeof document === 'undefined' || !document.createElement('canvas').getContext) {
+            return resolve(file);
+        }
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    // Calcular las nuevas dimensiones manteniendo la proporción
+                    let { width, height } = img;
+                    if (width > maxAncho) {
+                        const ratio = maxAncho / width;
+                        width = maxAncho;
+                        height = Math.round(height * ratio);
+                    }
+
+                    // Crear el canvas y dibujar la imagen redimensionada
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+
+                    // Fondo blanco para JPEG (evita transparencias negras en PNG)
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.fillRect(0, 0, width, height);
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    // Convertir a JPEG comprimido
+                    canvas.toBlob((blob) => {
+                        if (blob) {
+                            // Crear un nuevo File con el mismo nombre pero extensión .jpg
+                            const nombreBase = file.name.replace(/\.[^.]+$/, '') || 'alojamiento';
+                            const nuevoFile = new File([blob], `${nombreBase}.jpg`, {
+                                type: 'image/jpeg',
+                                lastModified: Date.now()
+                            });
+                            resolve(nuevoFile);
+                        } else {
+                            // Si toBlob falla, devolver el archivo original
+                            resolve(file);
+                        }
+                    }, 'image/jpeg', calidad);
+                } catch (err) {
+                    console.warn('Error al comprimir imagen, usando original:', err);
+                    resolve(file);
+                }
+            };
+            img.onerror = () => reject(new Error('Error al cargar la imagen para comprimir.'));
+            img.src = e.target.result;
+        };
+        reader.onerror = () => reject(new Error('Error al leer el archivo de imagen.'));
+        reader.readAsDataURL(file);
+    });
+}
+
 // Subir una foto a Firebase Storage y obtener su URL pública
+// AHORA con compresión previa en el cliente para minimizar la latencia de red
 async function subirFotoAlojamiento(file, alojamientoId) {
+    // Comprimir la imagen ANTES de enviarla (reducción drástica de peso)
+    let archivoFinal = file;
+    try {
+        archivoFinal = await comprimirImagenAlojamiento(file);
+    } catch (e) {
+        console.warn('No se pudo comprimir la imagen, se usará el original:', e);
+    }
+
     // Si no hay Firebase Storage disponible, almacenar como base64 local
     if (typeof getStorage !== 'function' || typeof refStorage !== 'function' || typeof uploadBytes !== 'function' || typeof getDownloadURL !== 'function' || !storageFirebase) {
         // Convertir a base64 local como fallback
@@ -5685,15 +5761,15 @@ async function subirFotoAlojamiento(file, alojamientoId) {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result);
             reader.onerror = () => reject(new Error('Error al leer la imagen.'));
-            reader.readAsDataURL(file);
+            reader.readAsDataURL(archivoFinal);
         });
     }
 
     try {
         const safeId = String(alojamientoId || Date.now()).replace(/[^a-zA-Z0-9]/g, '_');
-        const fileExt = (file.name.split('.').pop() || 'jpg').toLowerCase();
+        const fileExt = (archivoFinal.name.split('.').pop() || 'jpg').toLowerCase();
         const storageRef = refStorage(storageFirebase, `alojamientos/${safeId}_${Date.now()}.${fileExt}`);
-        await uploadBytes(storageRef, file);
+        await uploadBytes(storageRef, archivoFinal);
         const url = await getDownloadURL(storageRef);
         return url;
     } catch (e) {
@@ -5703,7 +5779,7 @@ async function subirFotoAlojamiento(file, alojamientoId) {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result);
             reader.onerror = () => reject(new Error('Error al leer la imagen.'));
-            reader.readAsDataURL(file);
+            reader.readAsDataURL(archivoFinal);
         });
     }
 }
@@ -6062,7 +6138,25 @@ function abrirEditarDesdeVerAlojamiento() {
     }
 }
 
+// Estados visuales del botón de guardado del módulo de alojamiento
+function setAlojamientoBtnEstado(cargando, mensaje = '', icono = 'floppy-disk') {
+    const btnGuardar = document.getElementById('alojamiento-btn-guardar');
+    if (!btnGuardar) return;
+    btnGuardar.disabled = cargando;
+    if (cargando) {
+        btnGuardar.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> ' + mensaje;
+    } else {
+        btnGuardar.innerHTML = '<i class="fa-solid fa-' + icono + '"></i> ' + mensaje;
+    }
+}
+function restaurarBtnGuardarAlojamiento(id) {
+    const texto = id ? 'Actualizar Alojamiento' : 'Guardar Alojamiento';
+    setAlojamientoBtnEstado(false, texto, 'floppy-disk');
+}
+
 // Guardar el alojamiento (nuevo o edición) - actualiza caché sin recargar todo
+// Utiliza try/catch/finally para garantizar que siempre se libere el estado de carga
+// y se notifique al usuario (éxito o error) de forma asíncrona y no bloqueante.
 async function guardarAlojamientoForm(e) {
     e.preventDefault();
     if (!puedeEditar()) return;
@@ -6079,78 +6173,91 @@ async function guardarAlojamientoForm(e) {
         return;
     }
 
-    const alojamiento = {
-        nombre,
-        direccion,
-        provincia,
-        ciudad,
-        telefono: document.getElementById('alojamiento-telefono').value.trim(),
-        cp: document.getElementById('alojamiento-cp').value.trim(),
-        email: document.getElementById('alojamiento-email').value.trim(),
-        web: document.getElementById('alojamiento-web').value.trim(),
-        capacidad: document.getElementById('alojamiento-capacidad').value ? Number(document.getElementById('alojamiento-capacidad').value) : null,
-        usuarioCreacion: currentUser ? currentUser.id : null,
-        usuarioModificacion: currentUser ? currentUser.id : null,
-        fechaCreacion: new Date().toISOString(),
-        fechaModificacion: new Date().toISOString()
-    };
+    // --- Estado visual inmediato: bloquear el botón + spinner ---
+    setAlojamientoBtnEstado(true, 'Guardando...', 'floppy-disk');
 
-    if (id) {
-        alojamiento.id = Number(id);
-        // Buscar en caché primero
-        const orig = alojamientosCache.find(x => Number(x.id) === Number(id)) || await obtenerPorId('alojamientos', Number(id));
-        if (orig) {
-            alojamiento.usuarioCreacion = orig.usuarioCreacion;
-            alojamiento.fechaCreacion = orig.fechaCreacion;
-            alojamiento.fotoUrl = orig.fotoUrl || '';
-        }
-    }
+    try {
+        const alojamiento = {
+            nombre,
+            direccion,
+            provincia,
+            ciudad,
+            telefono: document.getElementById('alojamiento-telefono').value.trim(),
+            cp: document.getElementById('alojamiento-cp').value.trim(),
+            email: document.getElementById('alojamiento-email').value.trim(),
+            web: document.getElementById('alojamiento-web').value.trim(),
+            capacidad: document.getElementById('alojamiento-capacidad').value ? Number(document.getElementById('alojamiento-capacidad').value) : null,
+            usuarioCreacion: currentUser ? currentUser.id : null,
+            usuarioModificacion: currentUser ? currentUser.id : null,
+            fechaCreacion: new Date().toISOString(),
+            fechaModificacion: new Date().toISOString()
+        };
 
-    // Procesar foto si se seleccionó una nueva
-    const fotoInput = document.getElementById('alojamiento-foto');
-    let fotoUrl = alojamiento.fotoUrl || '';
-    if (fotoInput && fotoInput.files && fotoInput.files[0]) {
-        const file = fotoInput.files[0];
-        if (file.size > 5 * 1024 * 1024) {
-            mostrarToast('La imagen no puede superar los 5MB.', 'error');
-            return;
+        if (id) {
+            alojamiento.id = Number(id);
+            // Buscar en caché primero (mucho más rápido que IndexedDB)
+            const orig = alojamientosCache.find(x => Number(x.id) === Number(id)) || await obtenerPorId('alojamientos', Number(id));
+            if (orig) {
+                alojamiento.usuarioCreacion = orig.usuarioCreacion;
+                alojamiento.fechaCreacion = orig.fechaCreacion;
+                alojamiento.fotoUrl = orig.fotoUrl || '';
+            }
         }
-        try {
-            btnGuardar.disabled = true;
-            btnGuardar.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Subiendo foto...';
+
+        // --- Procesar foto si se seleccionó una nueva (CON compresión en cliente) ---
+        const fotoInput = document.getElementById('alojamiento-foto');
+        let fotoUrl = alojamiento.fotoUrl || '';
+        if (fotoInput && fotoInput.files && fotoInput.files[0]) {
+            const file = fotoInput.files[0];
+            if (file.size > 5 * 1024 * 1024) {
+                mostrarToast('La imagen no puede superar los 5MB.', 'error');
+                return;
+            }
+            // Estado visual: subir foto
+            setAlojamientoBtnEstado(true, 'Subiendo foto...', 'floppy-disk');
+            // subirFotoAlojamiento ahora comprime internamente antes de enviar a Storage
+            const fotoAnterior = alojamiento.fotoUrl || '';
+            if (fotoAnterior) {
+                try {
+                    await eliminarFotoAlojamiento(fotoAnterior);
+                } catch (errFoto) {
+                    console.warn('No se pudo eliminar la foto anterior:', errFoto);
+                }
+            }
             fotoUrl = await subirFotoAlojamiento(file, alojamiento.id);
-        } catch (err) {
-            console.error('Error al subir foto:', err);
-            mostrarToast('Error al subir la foto.', 'error');
-            btnGuardar.disabled = false;
-            btnGuardar.innerHTML = id ? '<i class="fa-solid fa-floppy-disk"></i> Actualizar Alojamiento' : '<i class="fa-solid fa-floppy-disk"></i> Guardar Alojamiento';
-            return;
         }
-    }
-    alojamiento.fotoUrl = fotoUrl;
+        alojamiento.fotoUrl = fotoUrl;
 
-    const savedId = await guardar('alojamientos', alojamiento);
-    alojamiento.id = Number(savedId);
+        // --- Guardar en IndexedDB + sync Firebase (try/catch interno en guardar) ---
+        const savedId = await guardar('alojamientos', alojamiento);
+        alojamiento.id = Number(savedId);
 
-    // Actualizar caché en memoria directamente (sin recargar desde IndexedDB)
-    const idx = alojamientosCache.findIndex(x => Number(x.id) === Number(alojamiento.id));
-    if (idx >= 0) {
-        alojamientosCache[idx] = alojamiento;
-    } else {
-        alojamientosCache.push(alojamiento);
-        alojamientosCache.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-    }
-    alojamientosCargados = true;
+        // Actualizar caché en memoria directamente (sin recargar desde IndexedDB)
+        const idx = alojamientosCache.findIndex(x => Number(x.id) === Number(alojamiento.id));
+        if (idx >= 0) {
+            alojamientosCache[idx] = alojamiento;
+        } else {
+            alojamientosCache.push(alojamiento);
+            alojamientosCache.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+        }
+        alojamientosCargados = true;
 
-    invalidarCache('alojamientos');
-    closeModal('modal-alojamiento');
-    mostrarToast(`Alojamiento "${nombre}" guardado correctamente.`);
+        invalidarCache('alojamientos');
+        closeModal('modal-alojamiento');
+        mostrarToast('Alojamiento "' + nombre + '" guardado correctamente.');
 
-    // Re-renderizar solo si la vista está activa
-    const viewActiva = document.getElementById('view-alojamiento');
-    if (viewActiva && viewActiva.classList.contains('active')) {
-        renderizarAlojamientos(alojamientosCache);
-        actualizarFiltrosAlojamientos();
+        // Re-renderizar solo si la vista está activa
+        const viewActiva = document.getElementById('view-alojamiento');
+        if (viewActiva && viewActiva.classList.contains('active')) {
+            renderizarAlojamientos(alojamientosCache);
+            actualizarFiltrosAlojamientos();
+        }
+    } catch (err) {
+        console.error('Error al guardar alojamiento:', err);
+        mostrarToast('Error al guardar el alojamiento: ' + (err.message || err), 'error');
+    } finally {
+        // --- SIEMPRE liberar el estado del botón, incluso si falló la conexión ---
+        restaurarBtnGuardarAlojamiento(id);
     }
 }
 

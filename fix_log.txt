@@ -1,0 +1,3 @@
+OK param compresion: 0.8 -> 0.7
+OK comentario compresion: 0.8 -> 0.7
+OK eliminacion foto insertada
