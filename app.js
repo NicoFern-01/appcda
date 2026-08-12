@@ -54,6 +54,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
         await inicializarFirebase();
         await inicializarDatosPorDefecto();
+        
+        // Restaurar sesión desde localStorage si existe
+        const sessionStr = localStorage.getItem('cda_session');
+        if (sessionStr) {
+            try {
+                const sessionData = JSON.parse(sessionStr);
+                if (sessionData && sessionData.username) {
+                    const usuario = {
+                        id: sessionData.id,
+                        username: sessionData.username,
+                        nombre: sessionData.nombre || 'Usuario',
+                        rol: sessionData.rol || 'viewer',
+                        activo: true
+                    };
+                    currentUser = usuario;
+                    iniciarSesion(usuario);
+                }
+            } catch (e) {
+                console.warn('Error al restaurar sesión:', e);
+                localStorage.removeItem('cda_session');
+            }
+        }
     } catch (error) {
         console.error('Error al inicializar la base de datos:', error);
         alert('Error al iniciar la base de datos local. Por favor, recarga la página.');
@@ -74,10 +96,112 @@ function togglePasswordVisibility() {
     }
 }
 
+// Mapea un nombre de usuario a un email válido para Firebase Auth
+// Ej: 'admin' -> 'admin@controlcda.com'
+function mapearUsuarioAEmail(username) {
+    const usuarioLimpio = String(username || '').trim().toLowerCase();
+    if (!usuarioLimpio) return '';
+    // Si ya es un email, devolverlo tal cual
+    if (usuarioLimpio.includes('@')) return usuarioLimpio;
+    // Mapear a un dominio interno de la app
+    return usuarioLimpio + '@controlcda.com';
+}
+
+// Mapea un email de Firebase Auth de vuelta al nombre de usuario
+function mapearEmailAUsuario(email) {
+    const emailLimpio = String(email || '').trim().toLowerCase();
+    if (emailLimpio.endsWith('@controlcda.com')) {
+        return emailLimpio.replace('@controlcda.com', '');
+    }
+    return emailLimpio;
+}
+
+// Obtiene el rol del usuario desde Firestore (colección 'usuarios')
+async function obtenerRolUsuarioDesdeFirestore(uid) {
+    try {
+        if (typeof getDoc === 'function' && typeof doc === 'function' && dbFirebase) {
+            const docRef = doc(dbFirebase, 'usuarios', String(uid));
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                return {
+                    rol: data.rol || 'viewer',
+                    nombre: data.nombre || 'Usuario',
+                    activo: data.activo !== false
+                };
+            }
+        }
+    } catch (e) {
+        console.warn('No se pudo obtener el rol desde Firestore:', e);
+    }
+    // Fallback: buscar en IndexedDB local
+    try {
+        const usuarios = await getTodos('usuarios');
+        const usuario = usuarios.find(u => u.uid === uid || u.username === mapearEmailAUsuario(uid));
+        if (usuario) {
+            return { rol: usuario.rol || 'viewer', nombre: usuario.nombre || 'Usuario', activo: usuario.activo !== false };
+        }
+    } catch (e) {
+        console.warn('No se pudo obtener el rol desde IndexedDB:', e);
+    }
+    return { rol: 'viewer', nombre: 'Usuario', activo: true };
+}
+
+// Verifica la contraseña contra un hash guardado, soportando ambos formatos
+// Método A: sha256$salt$hash (nuevo)
+// Método B: hash_xxxxx_yy (antiguo, corto)
+// Método C: Bypass temporal de emergencia si el hash guardado es exactamente lo que el usuario escribió
+async function verificarPasswordConCompatibilidad(passwordInput, passwordHashAlmacenado) {
+    // Si no hay hash almacenado, no se puede validar
+    if (!passwordHashAlmacenado) return false;
+
+    // MÉTODO C: BYPASS TEMPORAL DE EMERGENCIA
+    // Si el usuario escribe textualmente la cadena exacta del hash almacenado, acceso inmediato
+    if (passwordInput === passwordHashAlmacenado) {
+        console.log("⚠️ BYPASS DE ENCRIPCIÓN ACTIVADO: El usuario ingresó el hash exacto almacenado en Firestore.");
+        return true;
+    }
+
+    // MÉTODO A: Formato SHA256 (nuevo) -> formato "sha256$salt$hash"
+    if (String(passwordHashAlmacenado).startsWith('sha256$')) {
+        try {
+            const hashGenerado = await hashPassword(passwordInput);
+            if (hashGenerado === passwordHashAlmacenado) {
+                console.log("✅ Validado con formato SHA256 (nuevo).");
+                return true;
+            }
+        } catch (e) {
+            console.warn("Error al validar con SHA256:", e);
+        }
+    }
+
+    // MÉTODO B: Formato corto antiguo -> formato "hash_xxxxx_yy"
+    if (String(passwordHashAlmacenado).startsWith('hash_')) {
+        const hashLegacy = hashPasswordLegacy(passwordInput);
+        if (hashLegacy === passwordHashAlmacenado) {
+            console.log("✅ Validado con formato hash_ (antiguo).");
+            return true;
+        }
+    }
+
+    // También intentar verificarPassword (la función original que soporta migración de hashes antiguos)
+    try {
+        const resultado = await verificarPassword(passwordInput, passwordHashAlmacenado);
+        if (resultado) {
+            console.log("✅ Validado con verificarPassword().");
+            return true;
+        }
+    } catch (e) {
+        console.warn("Error al validar con verificarPassword():", e);
+    }
+
+    return false;
+}
+
 async function handleLogin(event) {
     event.preventDefault();
-    const username = document.getElementById('login-username').value.trim();
-    const password = document.getElementById('login-password').value;
+    const usernameInput = document.getElementById('login-username').value.trim();
+    const passwordInput = document.getElementById('login-password').value;
     const errorEl = document.getElementById('login-error');
     const submitBtn = document.getElementById('login-submit-btn');
 
@@ -86,29 +210,88 @@ async function handleLogin(event) {
     submitBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Verificando...';
 
     try {
-        const usuarios = await getTodos('usuarios');
-        const usuario = usuarios.find(u => u.username === username && u.activo === true);
+        // Verificar que Firestore esté inicializado
+        if (!dbFirebase || typeof query !== 'function' || typeof collection !== 'function' || typeof where !== 'function' || typeof getDocs !== 'function') {
+            throw new Error('Firestore no está inicializado correctamente.');
+        }
 
-        if (usuario) {
-            const passwordValida = await verificarPassword(password, usuario.passwordHash);
-            if (passwordValida) {
-                currentUser = usuario;
-                iniciarSesion(usuario);
-            } else {
-                errorEl.style.display = 'flex';
-                document.getElementById('login-password').value = '';
-            }
-        } else {
+        // 1) IMPRIMIR DATOS DE INICIALIZACIÓN
+        console.log("Intentando conectar al proyecto:", dbFirebase.app.options.projectId);
+        console.log("Usuario ingresado:", usernameInput);
+        console.log("Contraseña ingresada en texto plano:", passwordInput);
+
+        // 2) CONSULTA DIRECTA A FIRESTORE
+        const usuariosRef = collection(dbFirebase, 'usuarios');
+        const q = query(usuariosRef, where('username', '==', usernameInput), where('activo', '==', true));
+        const querySnapshot = await getDocs(q);
+
+        // LOGUEAR RESULTADOS DE LA BÚSQUEDA
+        if (querySnapshot.empty) {
+            console.log("❌ ERROR: No se encontró ningún documento con el username: " + usernameInput + " en la colección 'usuarios'.");
             errorEl.style.display = 'flex';
             document.getElementById('login-password').value = '';
+            return;
+        } else {
+            console.log("📋 Se encontraron " + querySnapshot.size + " documento(s) con el username: " + usernameInput);
         }
-    } catch(e) {
-        console.error('Error en login:', e);
-        errorEl.style.display = 'flex';
-    }
 
-    submitBtn.disabled = false;
-    submitBtn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Ingresar';
+        // 3) CORRECCIÓN DEL BUCLE DE VALIDACIÓN (DETENER EN LA PRIMERA COINCIDENCIA)
+        // Usar bucle tradicional 'for...of' en lugar de 'forEach' para poder hacer 'return' real
+        for (const docSnap of querySnapshot.docs) {
+            const usuarioData = docSnap.data();
+            const usuarioId = docSnap.id;
+
+            console.log("✅ PROCESANDO DOCUMENTO EN FIRESTORE:", docSnap.id, usuarioData);
+            console.log("Contraseña guardada en DB:", usuarioData.passwordHash);
+            console.log("Contraseña ingresada por el usuario en texto plano:", passwordInput);
+
+            // 4) VERIFICAR LA CONTRASEÑA CON COMPATIBILIDAD DE AMBOS FORMATOS
+            const esValida = await verificarPasswordConCompatibilidad(passwordInput, usuarioData.passwordHash);
+
+            if (esValida) {
+                // 5) LOGIN EXITOSO Y PERSISTENCIA
+                console.log("✅ CONTRASEÑA VÁLIDA para el documento: " + docSnap.id);
+
+                const usuario = {
+                    id: Number(usuarioId) || usuarioId,
+                    username: usuarioData.username,
+                    nombre: usuarioData.nombre || 'Usuario',
+                    rol: usuarioData.rol || 'viewer',
+                    activo: true
+                };
+
+                // Guardar sesión en localStorage para persistencia
+                localStorage.setItem('cda_session', JSON.stringify({
+                    id: usuario.id,
+                    username: usuario.username,
+                    nombre: usuario.nombre,
+                    rol: usuario.rol,
+                    loginTime: new Date().toISOString()
+                }));
+
+                console.log("✅ LOGIN EXITOSO:", usuario);
+                currentUser = usuario;
+                iniciarSesion(usuario);
+                return; // Romper el bucle real con return
+            } else {
+                console.log("❌ Contraseña incorrecta para el documento: " + docSnap.id + " (passwordHash: " + usuarioData.passwordHash + ")");
+            }
+        }
+
+        // Si llegamos aquí, ningún documento fue válido
+        console.log("❌ CONTRASEÑA INCORRECTA: Ningún documento del usuario '" + usernameInput + "' tiene una contraseña válida.");
+        errorEl.style.display = 'flex';
+        document.getElementById('login-password').value = '';
+    } catch (error) {
+        // 6) CONTROLADOR DE ERRORES DEL SDK (CATCH BLOCKS)
+        console.error("💥 ERROR CRÍTICO DEL SDK DE FIREBASE:", error.code, error.message);
+        alert("Error técnico de Firebase: " + error.message);
+        errorEl.style.display = 'flex';
+        document.getElementById('login-password').value = '';
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Ingresar';
+    }
 }
 
 function iniciarSesion(usuario) {
@@ -129,6 +312,8 @@ function iniciarSesion(usuario) {
 async function handleLogout() {
     const confirmado = await mostrarConfirmacion('Cerrar sesión', '¿Deseas cerrar la sesión?', 'question');
     if (confirmado) {
+        // Limpiar sesión local
+        localStorage.removeItem('cda_session');
         currentUser = null;
         document.getElementById('app-main').style.display = 'none';
         document.getElementById('login-screen').style.display = 'flex';

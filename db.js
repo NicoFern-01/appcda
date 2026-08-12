@@ -68,6 +68,10 @@ let initializeApp, initializeFirestore, getFirestore, collection, doc, setDoc, g
 let getStorage, refStorage, uploadBytes, getDownloadURL, deleteObject;
 let storageFirebase = null;
 
+// Variables de módulo de Firebase Auth
+let getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword;
+let authFirebase = null;
+
 // ==================== HASH DE CONTRASEÑAS SEGURO (Web Crypto API) ====================
 // Usa SHA-256 con salt aleatorio. No almacena la contraseña en texto plano.
 async function hashPassword(password) {
@@ -131,6 +135,7 @@ async function inicializarFirebase() {
         const appMod = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js');
         const fsMod = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');
         const storageMod = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js');
+        const authMod = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js');
 
         initializeApp = appMod.initializeApp;
         initializeFirestore = fsMod.initializeFirestore;
@@ -150,8 +155,16 @@ async function inicializarFirebase() {
         getDownloadURL = storageMod.getDownloadURL;
         deleteObject = storageMod.deleteObject;
 
+        // Asignar funciones de Firebase Auth
+        getAuth = authMod.getAuth;
+        signInWithEmailAndPassword = authMod.signInWithEmailAndPassword;
+        onAuthStateChanged = authMod.onAuthStateChanged;
+        signOut = authMod.signOut;
+        createUserWithEmailAndPassword = authMod.createUserWithEmailAndPassword;
+
         const app = initializeApp(config);
         storageFirebase = getStorage(app);
+        authFirebase = getAuth(app);
         if (initializeFirestore) {
             dbFirebase = initializeFirestore(app, { cache: { synchronizeTabs: true } });
             console.log('Firestore inicializado con FirestoreSettings.cache.');
@@ -165,6 +178,14 @@ async function inicializarFirebase() {
 
         useFirebase = true;
         console.log('Sincronización con Firebase Firestore activa.');
+
+        // Exponer authFirebase globalmente para que app.js pueda usarlo
+        if (typeof window !== 'undefined') {
+            window.authFirebase = authFirebase;
+            window.signInWithEmailAndPassword = signInWithEmailAndPassword;
+            window.onAuthStateChanged = onAuthStateChanged;
+            window.signOut = signOut;
+        }
 
         try {
             await sincronizarLocalAFirebase();
