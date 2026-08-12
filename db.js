@@ -16,13 +16,52 @@ let useFirebase = false;
 
 const DEFAULT_FIREBASE_CONFIG = {
     apiKey: "AIzaSyAGT318kBRICwdjrU05RCUNSJRanAQnfPQ",
-    authDomain: "controlcda-e5f97.firebaseapp.com",
     projectId: "controlcda-e5f97",
     storageBucket: "controlcda-e5f97.firebasestorage.app",
     messagingSenderId: "971822887261",
     appId: "1:971822887261:web:abe3fd29049c176946f8b4",
     measurementId: "G-L5C4YLVW1V"
 };
+
+// Detecta el entorno actual y devuelve el authDomain correcto
+function obtenerAuthDomainDinamico() {
+    const hostname = window.location.hostname;
+    // Si estamos en GitHub Pages (producción), usar el dominio de GitHub Pages
+    if (hostname.includes('github.io')) {
+        return hostname; // Ej: nicofern-01.github.io
+    }
+    // Si estamos en localhost o cualquier otro entorno, usar el authDomain de Firebase
+    return 'controlcda-e5f97.firebaseapp.com';
+}
+
+// Obtiene la configuración completa de Firebase, ajustando authDomain dinámicamente
+function obtenerConfigFirebase() {
+    const configStr = localStorage.getItem('firebase_config');
+    let config;
+    
+    if (configStr) {
+        try {
+            config = JSON.parse(configStr);
+        } catch (err) {
+            console.warn('Configuración Firebase inválida en localStorage, usando configuración por defecto.', err);
+            config = { ...DEFAULT_FIREBASE_CONFIG };
+        }
+    } else {
+        config = { ...DEFAULT_FIREBASE_CONFIG };
+    }
+    
+    // Ajustar authDomain dinámicamente según el entorno
+    // Si el usuario no especificó un authDomain, o si estamos en GitHub Pages,
+    // usar el authDomain dinámico
+    if (!config.authDomain || window.location.hostname.includes('github.io')) {
+        config.authDomain = obtenerAuthDomainDinamico();
+    }
+    
+    // Guardar la configuración ajustada para futuras cargas
+    localStorage.setItem('firebase_config', JSON.stringify(config));
+    
+    return config;
+}
 
 // Variables de módulos de Firebase
 let initializeApp, initializeFirestore, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, writeBatch, query, where;
@@ -84,20 +123,8 @@ function hashPasswordLegacy(password) {
 }
 
 async function inicializarFirebase() {
-    let config;
-    const configStr = localStorage.getItem('firebase_config');
-    if (configStr) {
-        try {
-            config = JSON.parse(configStr);
-        } catch (err) {
-            console.warn('Configuración Firebase inválida en localStorage, cargando configuración por defecto.', err);
-            config = DEFAULT_FIREBASE_CONFIG;
-            localStorage.setItem('firebase_config', JSON.stringify(config));
-        }
-    } else {
-        config = DEFAULT_FIREBASE_CONFIG;
-        localStorage.setItem('firebase_config', JSON.stringify(config));
-    }
+    // Cargar configuración dinámicamente (ajusta authDomain según entorno)
+    const config = obtenerConfigFirebase();
 
     try {
         // Cargamos módulos oficiales de Firebase v10 desde gstatic CDN para ES Modules
@@ -152,6 +179,29 @@ async function inicializarFirebase() {
         return false;
     }
 }
+
+
+// ==================== VERIFICACIÓN DE CONFIGURACIÓN FIREBASE ====================
+// Al cargar la página, verificar que la configuración guardada tenga el authDomain correcto
+// para el entorno actual (especialmente GitHub Pages en producción)
+(function verificarConfigFirebaseAlCargar() {
+    try {
+        const configStr = localStorage.getItem('firebase_config');
+        if (configStr) {
+            const config = JSON.parse(configStr);
+            const hostname = window.location.hostname;
+            
+            // Si estamos en GitHub Pages y el authDomain no coincide, actualizarlo
+            if (hostname.includes('github.io') && config.authDomain !== hostname) {
+                console.log('Actualizando authDomain para GitHub Pages:', hostname);
+                config.authDomain = hostname;
+                localStorage.setItem('firebase_config', JSON.stringify(config));
+            }
+        }
+    } catch (e) {
+        console.warn('Error al verificar configuración Firebase:', e);
+    }
+})();
 
 // Limpiar toda la caché al cargar la página para evitar datos obsoletos
 limpiarCacheCompleto();

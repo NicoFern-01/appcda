@@ -2276,6 +2276,14 @@ function guardarYConectarFirebase() {
             return;
         }
 
+        // Ajustar authDomain dinámicamente según el entorno
+        const hostname = window.location.hostname;
+        if (hostname.includes('github.io')) {
+            config.authDomain = hostname;
+        } else if (!config.authDomain) {
+            config.authDomain = 'controlcda-e5f97.firebaseapp.com';
+        }
+
         localStorage.setItem('firebase_config', JSON.stringify(config));
         statusEl.innerHTML = '<span style="color: #2ed573;">⌛ Conectando con Firebase...</span>';
 
