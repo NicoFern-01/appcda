@@ -1,6 +1,7 @@
 /* styles.css - Hoja de Estilos de Premium Dark Theme para Control de Automovilismo */
 
 :root {
+    font-size: 13px !important; /* Fuente base fija y compacta - anti-zoom */
     --bg-primary: #0b0f19;
     --bg-secondary: #161f30;
     --bg-card: #1f2a40;
@@ -28,6 +29,7 @@ body {
     font-family: var(--font-sans);
     min-height: 100vh;
     display: flex;
+    max-width: 100%;
     overflow-x: hidden;
 }
 
@@ -132,6 +134,7 @@ main {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 
 header {
@@ -310,6 +313,20 @@ input:focus, select:focus, textarea:focus {
     outline: none;
     border-color: var(--accent-blue);
     box-shadow: 0 0 0 3px rgba(0, 210, 211, 0.15);
+}
+
+/* Input específico: Días de Competencia (Personal por Competencia) */
+#personal-comp-dias {
+    max-width: 90px;
+    width: 6rem;
+    text-align: center;
+}
+
+/* Evita que el contenedor del campo se expanda horizontalmente por toda la pantalla */
+#personal-comp-dias.form-group,
+.form-group:has(#personal-comp-dias) {
+    flex: 0 0 auto;
+    width: max-content;
 }
 
 .btn {
