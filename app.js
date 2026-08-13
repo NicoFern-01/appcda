@@ -21,6 +21,18 @@ let dashboardDirty = true;
 
 const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'alojamiento', 'configuracion'];
 
+// ==================== RENDERIZADO ASÍNCRONO DE LA INTERFAZ ====================
+// Escucha el evento disparado por db.js cuando la sincronización con Firestore
+// finaliza (datos descargados o subidos) y refresca la vista activa de inmediato,
+// sin necesidad de recargar la página manualmente.
+window.addEventListener('firebase-sync-complete', () => {
+    const activeViewEl = document.querySelector('.view.active');
+    if (activeViewEl) {
+        const viewId = activeViewEl.id.replace('view-', '');
+        cargarDatosVista(viewId);
+    }
+});
+
 // Calendario view mode: 'cards' | 'list' (compact)
 let calendarioViewMode = localStorage.getItem('calendarioViewMode') || 'cards';
 

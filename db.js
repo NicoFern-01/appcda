@@ -10,6 +10,10 @@ let dbInstance = null;
 // Se invalida solo cuando se escriben/eliminan datos.
 const _cache = {};
 
+// Rastrea qué colecciones ya se intentaron leer desde la nube (Firestore)
+// para evitar lecturas repetidas innecesarias cuando ambas fuentes están vacías.
+const _cloudChecked = {};
+
 // ==================== INTEGRACIÓN CON FIREBASE ====================
 let dbFirebase = null;
 let useFirebase = false;
@@ -64,7 +68,7 @@ function obtenerConfigFirebase() {
 }
 
 // Variables de módulos de Firebase
-let initializeApp, initializeFirestore, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, writeBatch, query, where;
+let initializeApp, initializeFirestore, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, writeBatch, query, where, enableIndexedDbPersistence;
 let getStorage, refStorage, uploadBytes, getDownloadURL, deleteObject;
 let storageFirebase = null;
 
@@ -149,6 +153,7 @@ async function inicializarFirebase() {
         writeBatch = fsMod.writeBatch;
         query = fsMod.query;
         where = fsMod.where;
+        enableIndexedDbPersistence = fsMod.enableIndexedDbPersistence;
         getStorage = storageMod.getStorage;
         refStorage = storageMod.ref;
         uploadBytes = storageMod.uploadBytes;
@@ -166,14 +171,34 @@ async function inicializarFirebase() {
         storageFirebase = getStorage(app);
         authFirebase = getAuth(app);
         if (initializeFirestore) {
-            dbFirebase = initializeFirestore(app, { cache: { synchronizeTabs: true } });
-            console.log('Firestore inicializado con FirestoreSettings.cache.');
+            dbFirebase = initializeFirestore(app, {
+                experimentalAutoDetectLongPolling: true // Crucial para saltarse bloqueos de red en hosting públicos como GitHub Pages.
+            });
+            console.log('Firestore inicializado con experimentalAutoDetectLongPolling.');
         } else {
             dbFirebase = getFirestore(app);
         }
 
         if (!dbFirebase) {
             throw new Error('No se pudo inicializar Firestore.');
+        }
+
+        // HABILITAR PERSISTENCIA LOCAL EN EL NAVEGADOR (WEB PERSISTENCE / IndexedDB)
+        // Garantiza que los datos consultados en Firestore se guarden en el caché del navegador
+        // y se rendericen de inmediato sin quedarse congelados en la carga.
+        if (typeof enableIndexedDbPersistence === 'function') {
+            try {
+                await enableIndexedDbPersistence(dbFirebase);
+                console.log('Persistencia local IndexedDB habilitada correctamente.');
+            } catch (persistErr) {
+                if (persistErr.code === 'failed-precondition') {
+                    console.warn('Persistencia IndexedDB no habilitada: múltiples pestañas abiertas en el mismo navegador.');
+                } else if (persistErr.code === 'unimplemented') {
+                    console.warn('Persistencia IndexedDB no soportada por este navegador.');
+                } else {
+                    console.warn('Error al habilitar persistencia IndexedDB:', persistErr);
+                }
+            }
         }
 
         useFirebase = true;
@@ -229,10 +254,12 @@ limpiarCacheCompleto();
 
 function invalidarCache(storeName) {
     delete _cache[storeName];
+    delete _cloudChecked[storeName];
 }
 
 function limpiarCacheCompleto() {
     Object.keys(_cache).forEach(k => delete _cache[k]);
+    Object.keys(_cloudChecked).forEach(k => delete _cloudChecked[k]);
 }
 
 function openDB() {
@@ -603,14 +630,16 @@ async function guardar(storeName, item) {
 }
 
 // Helper genérico para obtener todos los elementos (con caché)
-async function getTodos(storeName) {
-    // Si hay datos en caché, los devuelve directamente sin tocar la BD
-    if (_cache[storeName]) {
+// opciones.soloLocal: true → no intentar leer desde Firestore si IndexedDB está vacío
+// (usado por la sincronización local→nube para evitar lecturas redundantes a la nube)
+async function getTodos(storeName, opciones = {}) {
+    // Si hay datos en caché (no vacíos), los devuelve directamente sin tocar la BD
+    if (_cache[storeName] && _cache[storeName].length > 0) {
         return _cache[storeName];
     }
 
     // SIEMPRE leer desde IndexedDB como fuente primaria. Firebase es solo para escritura/sync.
-    return new Promise((resolve, reject) => {
+    const dataLocal = await new Promise((resolve, reject) => {
         openDB().then(db => {
             const transaction = db.transaction([storeName], 'readonly');
             const store = transaction.objectStore(storeName);
@@ -626,6 +655,46 @@ async function getTodos(storeName) {
             };
         }).catch(reject);
     });
+
+    // OPTIMIZACIÓN DE LAS FUNCIONES DE CARGA DE DATOS (GETDOCS):
+    // Si la colección local (IndexedDB) está vacía y Firebase está conectado,
+    // forzar un 'await getDocs(collection(dbFirebase, storeName))' directo a la nube
+    // para no quedarse congelado apuntando a un almacenamiento local vacío.
+    if (dataLocal.length === 0 && !opciones.soloLocal && useFirebase && dbFirebase && typeof getDocs === 'function' && typeof collection === 'function' && !_cloudChecked[storeName]) {
+        _cloudChecked[storeName] = true;
+        try {
+            console.log(`Colección '${storeName}' vacía en IndexedDB. Forzando lectura directa desde Firestore...`);
+            const querySnapshot = await getDocs(collection(dbFirebase, storeName));
+            const dataNube = [];
+            querySnapshot.forEach(docSnap => {
+                const item = docSnap.data();
+                item.id = Number(docSnap.id) || docSnap.id;
+                dataNube.push(item);
+            });
+            _cache[storeName] = dataNube;
+
+            // Guardar en IndexedDB para futuras cargas rápidas sin depender de la red
+            if (dataNube.length > 0) {
+                try {
+                    const db = await openDB();
+                    const transaction = db.transaction([storeName], 'readwrite');
+                    const store = transaction.objectStore(storeName);
+                    for (const item of dataNube) {
+                        store.put(item);
+                    }
+                } catch (e) {
+                    console.warn(`No se pudo guardar en IndexedDB la colección '${storeName}':`, e);
+                }
+            }
+
+            console.log(`Colección '${storeName}' cargada desde Firestore: ${dataNube.length} registros.`);
+            return dataNube;
+        } catch (e) {
+            console.warn(`Error al leer '${storeName}' desde Firestore:`, e);
+        }
+    }
+
+    return dataLocal;
 }
 
 // Helper genérico para eliminar por ID
@@ -692,8 +761,22 @@ if (typeof window !== 'undefined') {
     window.firebaseSyncResult = { status: 'pending', message: 'Conectando...', count: 0 };
 }
 
+// Obtiene los nombres REALES de las colecciones desde IndexedDB (fuente de verdad local)
+// para garantizar que la sincronización apunte exactamente a las mismas colecciones
+// que usa la aplicación (evita desajustes de nombres entre local y nube).
+async function obtenerNombresColeccionesLocales() {
+    const db = await openDB();
+    return Array.from(db.objectStoreNames);
+}
+
 // Sincronizar todos los datos locales (IndexedDB) a Firebase
-// Se ejecuta automáticamente cuando Firebase se conecta
+// Se ejecuta automáticamente cuando Firebase se conecta.
+// VERIFICACIÓN Y CREACIÓN DE COLECCIONES LOCALES -> NUBE:
+// - Descubre dinámicamente los nombres reales de las colecciones desde IndexedDB.
+// - Verifica si Firestore está vacía (0 registros) en cada colección.
+// - Si está vacía, sube OBLIGATORIAMENTE TODOS los registros locales uno por uno,
+//   conservando la misma estructura.
+// - Al finalizar, dispara un evento para que la interfaz se recargue de inmediato.
 async function sincronizarLocalAFirebase() {
     if (!useFirebase || !dbFirebase) {
         if (typeof window !== 'undefined') {
@@ -702,29 +785,69 @@ async function sincronizarLocalAFirebase() {
         return;
     }
 
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos'];
+    // 1) Descubrir dinámicamente los nombres REALES de las colecciones desde IndexedDB
+    let stores;
+    try {
+        stores = await obtenerNombresColeccionesLocales();
+        console.log('Colecciones locales detectadas en IndexedDB:', stores);
+    } catch (e) {
+        console.warn('No se pudieron obtener las colecciones locales, usando lista por defecto:', e);
+        stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos'];
+    }
+
     let total = 0;
+    const detalle = [];
 
     for (const storeName of stores) {
-        // Leer desde IndexedDB (forzando sin caché)
-        invalidarCache(storeName);
-        const data = await getTodos(storeName);
-        for (const item of data) {
-            try {
-                const docRef = doc(dbFirebase, storeName, String(item.id));
-                const itemToSync = limpiarObjetoParaFirebase(item);
-                await setDoc(docRef, itemToSync);
-                total++;
-            } catch (e) {
-                console.warn(`Error sync ${storeName}/${item.id}:`, e);
+        // 2) VERIFICAR si Firestore ya tiene datos en esta colección
+        let registrosNube = 0;
+        try {
+            const snapNube = await getDocs(collection(dbFirebase, storeName));
+            registrosNube = snapNube.size;
+        } catch (e) {
+            console.warn(`No se pudo verificar la colección '${storeName}' en Firestore:`, e);
+        }
+
+        // 3) Si Firestore está VACÍA (0 registros), subir TODOS los registros locales
+        if (registrosNube === 0) {
+            // Leer desde IndexedDB (forzando sin caché y sin intentar leer de la nube,
+            // porque ya sabemos que Firestore está vacía)
+            invalidarCache(storeName);
+            const data = await getTodos(storeName, { soloLocal: true });
+            for (const item of data) {
+                try {
+                    const docRef = doc(dbFirebase, storeName, String(item.id));
+                    const itemToSync = limpiarObjetoParaFirebase(item);
+                    await setDoc(docRef, itemToSync);
+                    total++;
+                } catch (e) {
+                    console.warn(`Error sync ${storeName}/${item.id}:`, e);
+                }
             }
+            if (data.length > 0) {
+                detalle.push(`${storeName}: ${data.length} registros subidos (Firestore estaba vacía)`);
+                console.log(`Colección '${storeName}': Firestore vacía → subidos ${data.length} registros locales.`);
+            } else {
+                detalle.push(`${storeName}: 0 registros (local y nube vacíos)`);
+            }
+        } else {
+            detalle.push(`${storeName}: ${registrosNube} registros ya en Firestore (se omite subida)`);
+            console.log(`Colección '${storeName}': ya tiene ${registrosNube} registros en Firestore. Se omite la subida.`);
         }
     }
 
     if (typeof window !== 'undefined') {
-        window.firebaseSyncResult = { status: 'synced', message: `Completado: ${total} registros.`, count: total };
+        window.firebaseSyncResult = { status: 'synced', message: `Completado: ${total} registros subidos.`, count: total, detalle };
     }
     console.log(`Sincronización local→Firebase completada: ${total} registros subidos.`);
+    console.log('Detalle de sincronización:', detalle);
+
+    // RENDERIZADO ASÍNCRONO DE LA INTERFAZ:
+    // Disparar evento para que la interfaz gráfica se recargue de inmediato
+    // y dibuje los datos descargados/subidos sin necesidad de recargar la página.
+    if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('firebase-sync-complete', { detail: { total, detalle } }));
+    }
 }
 
 // Función para importar datos desde backup
