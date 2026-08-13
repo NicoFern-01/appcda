@@ -1,7 +1,6 @@
 /* styles.css - Hoja de Estilos de Premium Dark Theme para Control de Automovilismo */
 
 :root {
-    font-size: 13px !important; /* Fuente base fija y compacta - anti-zoom */
     --bg-primary: #0b0f19;
     --bg-secondary: #161f30;
     --bg-card: #1f2a40;
@@ -17,10 +16,14 @@
     --sidebar-width: 260px;
 }
 
-* {
-    box-sizing: border-box;
+/* RESET DE ESCALA GENERAL (ROOT FLUIDO) */
+html, body {
+    font-size: 11px !important;
+    width: 100vw;
+    overflow-x: hidden !important;
     margin: 0;
     padding: 0;
+    box-sizing: border-box;
 }
 
 body {
@@ -29,8 +32,12 @@ body {
     font-family: var(--font-sans);
     min-height: 100vh;
     display: flex;
-    max-width: 100%;
-    overflow-x: hidden;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
 }
 
 /* Sidebar */
@@ -126,15 +133,24 @@ aside {
     background-color: rgba(255, 71, 87, 0.12);
 }
 
-/* Main Content Area */
+/* Main Content Area - Contenedor principal fluido */
 main {
     margin-left: var(--sidebar-width);
     flex-grow: 1;
-    padding: 2rem;
+    width: 100%;
+    max-width: calc(100vw - 260px);
+    box-sizing: border-box;
+    padding: 1rem;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+}
+
+.main-content, #contenedor-principal, .dashboard-container {
+    width: 100% !important;
+    max-width: calc(100vw - 260px) !important;
+    box-sizing: border-box;
 }
 
 header {
@@ -302,10 +318,10 @@ input, select, textarea {
     background-color: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: 6px;
-    padding: 0.75rem 1rem;
+    padding: 0.4rem 0.6rem;
     color: var(--text-primary);
     font-family: inherit;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     transition: var(--transition);
 }
 
@@ -414,19 +430,37 @@ input:focus, select:focus, textarea:focus {
     min-width: 250px;
 }
 
+/* Tabla protegida contra desbordes - contenedor de scroll horizontal */
 .table-responsive {
-    overflow-x: auto;
+    width: 100% !important;
+    overflow-x: auto !important;
+    margin-top: 1rem;
+}
+
+.table-container {
+    width: 100% !important;
+    overflow-x: auto !important;
+}
+
+table, .table {
+    width: 100% !important;
+    table-layout: fixed !important;
 }
 
 table {
-    width: 100%;
     border-collapse: collapse;
     text-align: left;
 }
 
+table td, table th {
+    padding: 4px 6px !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 th {
     background-color: rgba(0, 0, 0, 0.15);
-    padding: 1rem 1.5rem;
     font-weight: 600;
     font-size: 0.85rem;
     text-transform: uppercase;
@@ -436,7 +470,6 @@ th {
 }
 
 td {
-    padding: 1rem 1.5rem;
     border-bottom: 1px solid var(--border-color);
     font-size: 0.95rem;
     vertical-align: middle;
@@ -1528,6 +1561,17 @@ input[type="file"]:hover {
 /* ==================== PERSONAL POR COMPETENCIA ==================== */
 .personal-comp-table {
     width: 100%;
+    min-width: 900px;
+    table-layout: fixed;
+}
+
+/* Primera columna: protección contra desbordes de la tabla de Personal por Competencia */
+.personal-comp-table th:first-child,
+.personal-comp-table td:first-child {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
 }
 
 .personal-comp-table th {
