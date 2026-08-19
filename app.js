@@ -162,17 +162,9 @@ async function obtenerRolUsuarioDesdeFirestore(uid) {
 // Verifica la contraseña contra un hash guardado, soportando ambos formatos
 // Método A: sha256$salt$hash (nuevo)
 // Método B: hash_xxxxx_yy (antiguo, corto)
-// Método C: Bypass temporal de emergencia si el hash guardado es exactamente lo que el usuario escribió
 async function verificarPasswordConCompatibilidad(passwordInput, passwordHashAlmacenado) {
     // Si no hay hash almacenado, no se puede validar
     if (!passwordHashAlmacenado) return false;
-
-    // MÉTODO C: BYPASS TEMPORAL DE EMERGENCIA
-    // Si el usuario escribe textualmente la cadena exacta del hash almacenado, acceso inmediato
-    if (passwordInput === passwordHashAlmacenado) {
-        console.log("⚠️ BYPASS DE ENCRIPCIÓN ACTIVADO: El usuario ingresó el hash exacto almacenado en Firestore.");
-        return true;
-    }
 
     // MÉTODO A: Formato SHA256 (nuevo) -> formato "sha256$salt$hash"
     if (String(passwordHashAlmacenado).startsWith('sha256$')) {
@@ -387,19 +379,6 @@ function switchView(viewId) {
     cargarDatosVista(viewId);
 }
 
-async function cargarDatosVista(viewId) {
-    switch(viewId) {
-        case 'dashboard':    dashboardDirty = true; await renderDashboard(); break;
-        case 'calendario':   await listarCompetencias(); break;
-        case 'gastos':       await listarGastos(); break;
-        case 'carga-detallada': await listarRendiciones(); break;
-        case 'personal-competencia': await cargarPersonalCompetencia(); break;
-        case 'staff':        await listarStaff(); break;
-        case 'alojamiento':  await listarAlojamientos(); break;
-        case 'configuracion':await listarConfiguraciones(); break;
-    }
-}
-
 // ==================== DASHBOARD & GRÁFICOS ====================
 
 async function renderDashboard() {
@@ -433,12 +412,40 @@ async function renderDashboard() {
 
     // Gastos SIMPLES
     gastos.forEach(g => {
-        if (g.categoriaId === 'general') {
-            gastosPorCat['General / Compartido'] += Number(g.monto);
-        } else {
-            const cat = categorias.find(c => c.id === Number(g.categoriaId));
-            if (cat) gastosPorCat[cat.nombre] = (gastosPorCat[cat.nombre] || 0) + Number(g.monto);
+        // PRIORIDAD 1: El gasto tiene una categoría deportiva específica asignada → usar directamente (por ID o nombre si es string)
+        let catDirecta;
+        if (typeof g.categoriaId === 'number' || (typeof g.categoriaId === 'string' && g.categoriaId !== 'general' && !isNaN(Number(g.categoriaId)))) {
+            catDirecta = categorias.find(c => c.id === Number(g.categoriaId));
+        } else if (typeof g.categoriaId === 'string' && g.categoriaId !== 'general') {
+            // Si es un string y no es 'general', intentar buscar por nombre (posible dato inconsistente o manual)
+            catDirecta = categorias.find(c => c.nombre === g.categoriaId);
         }
+
+        if (catDirecta) {
+            gastosPorCat[catDirecta.nombre] = (gastosPorCat[catDirecta.nombre] || 0) + Number(g.monto || 0);
+            return;
+        }
+
+        if (g.categoriaId === 'general') {
+            gastosPorCat['General / Compartido'] += Number(g.monto || 0);
+            return;
+        }
+        // PRIORIDAD 2: Sin categoría específica ('general' o vacío) → distribuir entre las categorías de la competencia
+        const comp = competencias.find(c => Number(c.id) === Number(g.competenciaId));
+        if (comp && comp.categoriasIds && comp.categoriasIds.length > 0) {
+            const monto = Number(g.monto || 0) / comp.categoriasIds.length;
+            comp.categoriasIds.forEach(catId => {
+                const cat = categorias.find(c => c.id === Number(catId));
+                if (cat) {
+                    gastosPorCat[cat.nombre] = (gastosPorCat[cat.nombre] || 0) + monto;
+                } else {
+                    gastosPorCat['General / Compartido'] += monto;
+                }
+            });
+            return;
+        }
+        // PRIORIDAD 3: Sin competencia ni categoría → todo a General / Compartido
+        gastosPorCat['General / Compartido'] += Number(g.monto || 0);
     });
 
     // Gastos DETALLADOS: rendicion → competenciaId → categoriasIds
@@ -460,7 +467,7 @@ async function renderDashboard() {
             if (cat) {
                 gastosPorCat[cat.nombre] = (gastosPorCat[cat.nombre] || 0) + monto;
             } else {
-                gastosPorCat['General / Compartido'] += monto;
+                gastosPorCat['General / Compartido'] += monto; // Fallback si el ID de categoría en competencia.categoriasIds no existe
             }
         });
     });
@@ -1311,7 +1318,39 @@ async function generarResumenGastosPorCompetencia() {
         const monto = Number(g.monto) || 0;
         const montoFacturar = Number(g.montoFacturar) || 0;
 
-        // Determinar nombre de categoría
+        // PRIORIDAD 1: El gasto tiene una categoría deportiva específica asignada → usar directamente
+        const catDirecta = categorias.find(c => c.id === Number(g.categoriaId));
+        if (catDirecta) {
+            if (!resumen[compId].categorias[catDirecta.nombre]) {
+                resumen[compId].categorias[catDirecta.nombre] = { total: 0, montoFacturar: 0 };
+            }
+            resumen[compId].categorias[catDirecta.nombre].total += monto;
+            resumen[compId].categorias[catDirecta.nombre].montoFacturar += montoFacturar;
+            resumen[compId].total += monto;
+            resumen[compId].montoFacturar += montoFacturar;
+            return;
+        }
+
+        // PRIORIDAD 2: Sin categoría específica ('general' o vacío) → distribuir entre las categorías de la competencia
+        const comp = competencias.find(c => Number(c.id) === compId);
+        if (comp && comp.categoriasIds && comp.categoriasIds.length > 0) {
+            const montoCat = monto / comp.categoriasIds.length;
+            const montoFacturarCat = montoFacturar / comp.categoriasIds.length;
+            comp.categoriasIds.forEach(catId => {
+                const cat = categorias.find(c => c.id === Number(catId));
+                const nombreCat = cat ? cat.nombre : 'General / Compartido';
+                if (!resumen[compId].categorias[nombreCat]) {
+                    resumen[compId].categorias[nombreCat] = { total: 0, montoFacturar: 0 };
+                }
+                resumen[compId].categorias[nombreCat].total += montoCat;
+                resumen[compId].categorias[nombreCat].montoFacturar += montoFacturarCat;
+            });
+            resumen[compId].total += monto;
+            resumen[compId].montoFacturar += montoFacturar;
+            return;
+        }
+
+        // PRIORIDAD 3: Fallback → usar la categoría directamente asignada al gasto si existe
         let catNombre;
         if (g.categoriaId === 'general') {
             catNombre = 'General / Compartido';
@@ -1388,7 +1427,7 @@ async function listarGastos() {
         const acciones = puedeEditar() ? `
             <td style="text-align:right;white-space:nowrap;">
                 <button class="action-btn" onclick="verCompetencia(${comp.id})" title="Ver"><i class="fa-solid fa-eye"></i></button>
-                <button class="action-btn" onclick="editarCompetencia(${comp.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
+                <button class="action-btn" onclick="editarGastoRapido(${comp.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
                 <button class="action-btn delete" onclick="eliminarCompetencia(${comp.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
             </td>
         ` : `
@@ -1418,12 +1457,80 @@ async function listarGastos() {
 
 async function openModalGasto() {
     if (!puedeEditar()) return;
-    await actualizarSelectoresFormularios();
-    document.getElementById('form-gasto').reset();
-    document.getElementById('gasto-id').value = '';
-    document.getElementById('gasto-fecha').value = new Date().toISOString().split('T')[0];
-    document.getElementById('gasto-modal-title').innerText = 'Cargar Gasto';
-    openModal('modal-gasto');
+
+    // Obtener la competencia seleccionada en el filtro de la pantalla
+    const compFiltro = document.getElementById('filtro-competencia-gastos').value;
+    if (!compFiltro || compFiltro === 'todos') {
+        mostrarToast('Seleccioná una competencia en el filtro "Carrera" para cargar un gasto extraordinario.', 'warning');
+        return;
+    }
+
+    const comp = await obtenerPorId('competencias', Number(compFiltro));
+    if (!comp) {
+        mostrarToast('Competencia no encontrada.', 'error');
+        return;
+    }
+
+    // Rellenar datos de la competencia (solo lectura)
+    document.getElementById('age-codigo').textContent = comp.codigo || 'SIN CÓDIGO';
+    document.getElementById('age-nombre').textContent = comp.nombre;
+    document.getElementById('age-fecha-inicio').textContent = formatearFechaVisual(comp.fechaInicio);
+    document.getElementById('age-fecha-fin').textContent = formatearFechaVisual(comp.fechaFin);
+
+    // Limpiar campos del formulario
+    document.getElementById('age-concepto').value = '';
+    document.getElementById('age-monto').value = '';
+    document.getElementById('age-detalle').value = '';
+
+    // Guardar el ID de la competencia en el dataset del modal
+    document.getElementById('modal-agregar-gasto-extraordinario').dataset.compId = compFiltro;
+
+    openModal('modal-agregar-gasto-extraordinario');
+}
+
+// Guarda un nuevo Gasto Extraordinario vinculado a la competencia seleccionada
+async function guardarGastoExtraordinarioNuevo() {
+    if (!puedeEditar()) return;
+
+    const modal = document.getElementById('modal-agregar-gasto-extraordinario');
+    const compId = modal.dataset.compId;
+    if (!compId) return;
+
+    const concepto = document.getElementById('age-concepto').value.trim();
+    const monto = Number(document.getElementById('age-monto').value);
+    const detalle = document.getElementById('age-detalle').value.trim();
+
+    if (!concepto) {
+        mostrarToast('Ingresá el concepto del gasto.', 'error');
+        return;
+    }
+    if (!monto || monto <= 0) {
+        mostrarToast('Ingresá un monto válido.', 'error');
+        return;
+    }
+
+    const gasto = {
+        competenciaId: Number(compId),
+        staffId: null,
+        categoriaId: 'general',
+        concepto: concepto,
+        monto: monto,
+        montoFacturar: monto,
+        fecha: new Date().toISOString().split('T')[0],
+        observaciones: detalle || 'Gasto extraordinario'
+    };
+
+    await guardar('gastos', gasto);
+    dashboardDirty = true;
+
+    // Limpiar formulario
+    document.getElementById('age-concepto').value = '';
+    document.getElementById('age-monto').value = '';
+    document.getElementById('age-detalle').value = '';
+
+    closeModal('modal-agregar-gasto-extraordinario');
+    mostrarToast('Gasto extraordinario guardado correctamente.');
+    await listarGastos();
 }
 
 async function editarGasto(id) {
@@ -1433,6 +1540,9 @@ async function editarGasto(id) {
     await actualizarSelectoresFormularios();
     document.getElementById('gasto-id').value = g.id;
     document.getElementById('gasto-competencia').value = g.competenciaId;
+    if (document.getElementById('gasto-categoria')) {
+        document.getElementById('gasto-categoria').value = g.categoriaId || 'general';
+    }
     document.getElementById('gasto-concepto').value = g.concepto;
     document.getElementById('gasto-monto').value = g.monto;
     document.getElementById('gasto-fecha').value = g.fecha;
@@ -1446,10 +1556,12 @@ async function guardarGastoForm(e) {
     if (!puedeEditar()) return;
     const id = document.getElementById('gasto-id').value;
     const monto = Number(document.getElementById('gasto-monto').value);
+    const categoriaSel = document.getElementById('gasto-categoria');
+    const categoriaId = categoriaSel && categoriaSel.value ? categoriaSel.value : 'general';
     const gasto = {
         competenciaId: Number(document.getElementById('gasto-competencia').value),
         staffId: null,
-        categoriaId: 'general',
+        categoriaId: categoriaId,
         concepto: document.getElementById('gasto-concepto').value,
         monto: monto,
         montoFacturar: monto,
@@ -1611,6 +1723,123 @@ async function guardarGastoExtraordinario() {
     document.getElementById('extra-detalle').value = '';
     
     mostrarToast('Gasto extraordinario guardado correctamente.');
+    await listarGastos();
+}
+
+// ==================== EDICIÓN RÁPIDA DE GASTO (NUEVO COMPONENTE) ====================
+// Abre el modal independiente para editar el Gasto Extraordinario y el Monto a Facturar
+// de una competencia seleccionada en la tabla 'Control de Gastos'.
+async function editarGastoRapido(compId) {
+    if (!puedeEditar()) return;
+
+    const comp = await obtenerPorId('competencias', compId);
+    if (!comp) return;
+
+    // Calcular el monto del gasto extraordinario (gastos simples con categoría 'general')
+    const gastos = await getTodos('gastos');
+    const gastosExtraordinarios = gastos.filter(g =>
+        Number(g.competenciaId) === Number(compId) &&
+        (g.categoriaId === 'general' || g.categoriaId === undefined || g.categoriaId === null)
+    );
+    const montoGastoExtraordinario = gastosExtraordinarios.reduce((s, g) => s + Number(g.monto || 0), 0);
+
+    // Calcular el monto a facturar actual (manual o auto-calculado)
+    const rendiciones = await getTodos('rendiciones');
+    const detalleGastos = await getTodos('detalleGastos');
+    const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(compId));
+    const montoFacturarSinples = gastos.filter(g => Number(g.competenciaId) === Number(compId)).reduce((s, g) => s + (Number(g.montoFacturar) || 0), 0);
+    const montoFacturarDetallado = rendicionesComp.reduce((s, r) => {
+        const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
+        return s + detallesRend.reduce((sd, d) => sd + (Number(d.montoFacturar) || 0), 0);
+    }, 0);
+    const montoFacturarAutoCalc = montoFacturarSinples + montoFacturarDetallado;
+    const montoFacturarActual = (comp.montoFacturarManual !== undefined && comp.montoFacturarManual !== null)
+        ? Number(comp.montoFacturarManual)
+        : montoFacturarAutoCalc;
+
+    // Rellenar datos de la competencia (solo lectura)
+    document.getElementById('egr-codigo').textContent = comp.codigo || 'SIN CÓDIGO';
+    document.getElementById('egr-nombre').textContent = comp.nombre;
+    document.getElementById('egr-fecha-inicio').textContent = formatearFechaVisual(comp.fechaInicio);
+    document.getElementById('egr-fecha-fin').textContent = formatearFechaVisual(comp.fechaFin);
+
+    // Rellenar campos editables
+    document.getElementById('egr-monto-gasto').value = montoGastoExtraordinario > 0 ? montoGastoExtraordinario : '';
+    document.getElementById('egr-monto-facturar').value = montoFacturarActual > 0 ? montoFacturarActual : '';
+
+    // Guardar el ID de la competencia en el dataset del modal
+    document.getElementById('modal-editar-gasto-rapido').dataset.compId = compId;
+
+    openModal('modal-editar-gasto-rapido');
+}
+
+// Guarda los cambios del modal de edición rápida
+async function guardarEdicionGastoRapido() {
+    if (!puedeEditar()) return;
+
+    const modal = document.getElementById('modal-editar-gasto-rapido');
+    const compId = modal.dataset.compId;
+    if (!compId) return;
+
+    const comp = await obtenerPorId('competencias', Number(compId));
+    if (!comp) return;
+
+    const montoGastoInput = document.getElementById('egr-monto-gasto').value;
+    const montoFacturarInput = document.getElementById('egr-monto-facturar').value;
+
+    // 1) Guardar el Monto a Facturar manual (o eliminar si está vacío)
+    if (montoFacturarInput === '' || montoFacturarInput === null || isNaN(Number(montoFacturarInput))) {
+        delete comp.montoFacturarManual;
+    } else {
+        comp.montoFacturarManual = parseFloat(Number(montoFacturarInput).toFixed(2));
+    }
+
+    // 2) Guardar el Gasto Extraordinario
+    // Buscar los gastos extraordinarios existentes de esta competencia
+    const gastos = await getTodos('gastos');
+    const gastosExtraordinarios = gastos.filter(g =>
+        Number(g.competenciaId) === Number(compId) &&
+        (g.categoriaId === 'general' || g.categoriaId === undefined || g.categoriaId === null)
+    );
+
+    if (montoGastoInput === '' || montoGastoInput === null || isNaN(Number(montoGastoInput))) {
+        // Si el campo está vacío, eliminar los gastos extraordinarios existentes
+        for (const g of gastosExtraordinarios) {
+            await eliminar('gastos', g.id);
+        }
+    } else {
+        const nuevoMonto = parseFloat(Number(montoGastoInput).toFixed(2));
+        if (gastosExtraordinarios.length > 0) {
+            // Actualizar el primer gasto extraordinario con el nuevo monto
+            const primerGasto = gastosExtraordinarios[0];
+            primerGasto.monto = nuevoMonto;
+            primerGasto.montoFacturar = nuevoMonto;
+            await guardar('gastos', primerGasto);
+
+            // Eliminar los demás gastos extraordinarios duplicados
+            for (let i = 1; i < gastosExtraordinarios.length; i++) {
+                await eliminar('gastos', gastosExtraordinarios[i].id);
+            }
+        } else {
+            // Crear un nuevo gasto extraordinario
+            const nuevoGasto = {
+                competenciaId: Number(compId),
+                staffId: null,
+                categoriaId: 'general',
+                concepto: 'Gasto Extraordinario',
+                monto: nuevoMonto,
+                montoFacturar: nuevoMonto,
+                fecha: new Date().toISOString().split('T')[0],
+                observaciones: 'Gasto extraordinario'
+            };
+            await guardar('gastos', nuevoGasto);
+        }
+    }
+
+    await guardar('competencias', comp);
+    dashboardDirty = true;
+    closeModal('modal-editar-gasto-rapido');
+    mostrarToast('Cambios guardados correctamente.');
     await listarGastos();
 }
 
@@ -2097,10 +2326,13 @@ async function actualizarSelectoresFormularios() {
     const competencias = await getTodos('competencias');
     const staff = await getTodos('staff');
 
+    // Helper para construir <option> de forma segura escapando valores
+    function opcionSegura(value, texto) { return `<option value="${value}">${escapeHtml(texto)}</option>`; }
+
     const selectCircuito = document.getElementById('competencia-circuito');
     const savedCirc = selectCircuito.value;
     selectCircuito.innerHTML = '<option value="">Seleccione un autódromo...</option>';
-    circuitos.forEach(c => selectCircuito.innerHTML += `<option value="${c.id}">${c.nombre} (${c.ubicacion})</option>`);
+    circuitos.forEach(c => selectCircuito.innerHTML += opcionSegura(c.id, `${c.nombre} (${c.ubicacion})`));
     selectCircuito.value = savedCirc;
 
     const checkContainer = document.getElementById('competencia-categorias-checkboxes');
@@ -2110,7 +2342,7 @@ async function actualizarSelectoresFormularios() {
         checkContainer.innerHTML += `
             <label class="checkbox-label">
                 <input type="checkbox" value="${cat.id}" ${checkedIds.includes(String(cat.id)) ? 'checked' : ''} onchange="actualizarCodigoCompetenciaPorCategoria()">
-                <span>${cat.nombre}</span>
+                <span>${escapeHtml(cat.nombre)}</span>
             </label>`;
     });
 
@@ -2125,7 +2357,7 @@ async function actualizarSelectoresFormularios() {
                 staffContainer.innerHTML += `
                     <label class="checkbox-label">
                         <input type="checkbox" value="${persona.id}" ${checkedStaffIds.includes(String(persona.id)) ? 'checked' : ''}>
-                        <span>${persona.nombre} ${persona.apellido} (${persona.funcion})</span>
+                        <span>${escapeHtml(persona.nombre)} ${escapeHtml(persona.apellido)} (${escapeHtml(persona.funcion)})</span>
                     </label>`;
             });
         }
@@ -2134,31 +2366,39 @@ async function actualizarSelectoresFormularios() {
     const selectGastoComp = document.getElementById('gasto-competencia');
     const savedComp = selectGastoComp.value;
     selectGastoComp.innerHTML = '<option value="">Seleccione la carrera...</option>';
-    competencias.forEach(c => selectGastoComp.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
+    competencias.forEach(c => selectGastoComp.innerHTML += opcionSegura(c.id, c.nombre));
     selectGastoComp.value = savedComp;
+
+    const selectGastoCat = document.getElementById('gasto-categoria');
+    if (selectGastoCat) {
+        const savedCat = selectGastoCat.value;
+        selectGastoCat.innerHTML = '<option value="">Seleccione la categoría...</option><option value="general">General / Compartido</option>';
+        categorias.forEach(cat => selectGastoCat.innerHTML += opcionSegura(cat.id, cat.nombre));
+        selectGastoCat.value = savedCat;
+    }
 
     const datalistConceptos = document.getElementById('conceptos-sugeridos');
     const conceptos = await getTodos('conceptos');
     datalistConceptos.innerHTML = '';
-    conceptos.forEach(conc => datalistConceptos.innerHTML += `<option value="${conc.nombre}"></option>`);
+    conceptos.forEach(conc => datalistConceptos.innerHTML += `<option value="${escapeHtml(conc.nombre)}"></option>`);
 
     const filterCat = document.getElementById('filtro-categoria-gastos');
     const savedFilterCat = filterCat.value;
     filterCat.innerHTML = '<option value="todos">Todas las categorías</option><option value="general">Gasto General / Compartido</option>';
-    categorias.forEach(cat => filterCat.innerHTML += `<option value="${cat.id}">${cat.nombre}</option>`);
+    categorias.forEach(cat => filterCat.innerHTML += opcionSegura(cat.id, cat.nombre));
     filterCat.value = savedFilterCat;
 
     const filterComp = document.getElementById('filtro-competencia-gastos');
     const savedFilterComp = filterComp.value;
     filterComp.innerHTML = '<option value="todos">Todas las competencias</option>';
-    competencias.forEach(c => filterComp.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
+    competencias.forEach(c => filterComp.innerHTML += opcionSegura(c.id, c.nombre));
     filterComp.value = savedFilterComp;
 
     const filtroCatCal = document.getElementById('calendario-filtro-categoria');
     if (filtroCatCal) {
         const saved = filtroCatCal.value;
         filtroCatCal.innerHTML = '<option value="todos">Todas</option>';
-        categorias.forEach(cat => filtroCatCal.innerHTML += `<option value="${cat.id}">${cat.nombre}</option>`);
+        categorias.forEach(cat => filtroCatCal.innerHTML += opcionSegura(cat.id, cat.nombre));
         filtroCatCal.value = saved || 'todos';
     }
 
@@ -2167,7 +2407,7 @@ async function actualizarSelectoresFormularios() {
         const savedM = filtroMesCal.value;
         const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
         filtroMesCal.innerHTML = '<option value="todos">Todos</option>';
-        meses.forEach((m, idx) => filtroMesCal.innerHTML += `<option value="${idx+1}">${m}</option>`);
+        meses.forEach((m, idx) => filtroMesCal.innerHTML += '<option value="' + (idx+1) + '">' + escapeHtml(m) + '</option>');
         filtroMesCal.value = savedM || 'todos';
     }
 
@@ -2181,7 +2421,7 @@ async function actualizarSelectoresFormularios() {
         });
         const anosArr = Array.from(anos).sort((a,b) => b-a);
         filtroAnoCal.innerHTML = '<option value="todos">Todos</option>';
-        anosArr.forEach(y => filtroAnoCal.innerHTML += `<option value="${y}">${y}</option>`);
+        anosArr.forEach(y => filtroAnoCal.innerHTML += '<option value="' + y + '">' + y + '</option>');
         filtroAnoCal.value = savedY || 'todos';
     }
 }
@@ -4693,6 +4933,16 @@ async function exportarArticulosExcel() {
     let csv = '\uFEFF';
     csv += 'Código,Nombre,Descripción,Categoría,Marca,Modelo,Color,Stock Total,Stock Mínimo,Estado\r\n';
 
+    // Función para sanitizar campos CSV contra inyección de fórmulas
+    function sanitizarCSVExport(valor) {
+        const str = String(valor ?? '').replace(/,/g, ' ');
+        // Prevenir CSV Injection: si empieza con =, +, -, @, tab o retorno, anteponer comilla simple
+        if (/^[=+\-@\t\r]/.test(str)) {
+            return "'" + str;
+        }
+        return str;
+    }
+
     for (const art of articulos) {
         const cat = categorias.find(c => c.id === Number(art.categoriaId));
         const catName = cat ? cat.nombre : '-';
@@ -4705,9 +4955,9 @@ async function exportarArticulosExcel() {
         }
         const estado = art.activo !== false ? 'Activo' : 'Inactivo';
         const linea = [
-            art.codigo, art.nombre, (art.descripcion || '').replace(/,/g, ' '),
-            catName, art.marca || '', art.modelo || '', art.color || '',
-            stock, art.stockMinimo || 0, estado
+            sanitizarCSVExport(art.codigo), sanitizarCSVExport(art.nombre), sanitizarCSVExport(art.descripcion || ''),
+            sanitizarCSVExport(catName), sanitizarCSVExport(art.marca || ''), sanitizarCSVExport(art.modelo || ''), sanitizarCSVExport(art.color || ''),
+            stock, art.stockMinimo || 0, sanitizarCSVExport(estado)
         ].join(',');
         csv += linea + '\r\n';
     }

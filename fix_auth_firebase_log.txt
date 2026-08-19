@@ -1,9 +1,0 @@
-OK: Variables de Firebase Auth agregadas en db.js
-OK: Módulo firebase-auth.js importado en db.js
-OK: Funciones de Firebase Auth asignadas en db.js
-OK: authFirebase inicializado en db.js
-OK: authFirebase expuesto globalmente en db.js
---- app.js ---
-OK: handleLogin() reemplazado con Firebase Auth
-OK: handleLogout() usa signOut() de Firebase
-OK: onAuthStateChanged configurado para persistencia de sesión

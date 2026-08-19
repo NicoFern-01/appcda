@@ -1,5 +1,0 @@
-INFO: Configuración dinámica ya está aplicada en db.js
-INFO: inicializarFirebase() ya usa obtenerConfigFirebase()
-INFO: Verificación de configuración Firebase ya está aplicada
---- app.js ---
-INFO: guardarYConectarFirebase() ya ajusta authDomain dinámicamente

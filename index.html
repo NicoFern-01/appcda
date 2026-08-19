@@ -57,7 +57,7 @@
     </div>
 
     <!-- ==================== APLICACIÓN PRINCIPAL ==================== -->
-    <div id="app-main" style="display:none; width:100%; min-height:100vh; display:none; flex-direction:row;">
+    <div id="app-main" style="display:none; width:100%; min-height:100vh;">
 
         <!-- SIDEBAR -->
         <aside>
@@ -157,7 +157,7 @@
         <main>
             <!-- VIEW: DASHBOARD -->
             <section id="view-dashboard" class="view active">
-                <header>
+                <header style="margin-bottom: 1.2rem;">
                     <div>
                         <h1 class="page-title">Dashboard General</h1>
                         <p class="page-subtitle">Monitoreo de costos y competencias en tiempo real</p>
@@ -219,7 +219,7 @@
                 <div class="charts-grid">
                     <div class="chart-card" style="grid-column: 1 / -1;">
                         <h3>Distribución de Gastos por Concepto</h3>
-                        <div class="chart-container" style="height: 250px;">
+                        <div class="chart-container" style="height: 200px;">
                             <canvas id="chart-concepto"></canvas>
                         </div>
                     </div>
@@ -301,14 +301,15 @@
                         <table>
                             <thead>
                                 <tr>
-                                    <th>ID Competencia</th>
+                                    <th>Código</th>
                                     <th>Competencia</th>
                                     <th>Fecha</th>
-                                    <th>Personal</th>
-                                    <th>Concepto</th>
+                                    <th>Personal Asignado</th>
+                                    <th>Gastos</th>
                                     <th>Costo Personal</th>
-                                    <th>Gastos Totales</th>
-                                    <th class="editor-only" style="text-align: right;">Gasto Extra</th>
+                                    <th>Total</th>
+                                    <th>Monto a Facturar</th>
+                                    <th class="editor-only" style="text-align: right;">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody id="gastos-table-body"></tbody>
@@ -1111,6 +1112,12 @@
                         </datalist>
                     </div>
                     <div class="form-group">
+                        <label for="gasto-categoria">Categoría del Gasto</label>
+                        <select id="gasto-categoria" required>
+                            <option value="">Seleccione la categoría...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
                         <label for="gasto-monto">Monto ($)</label>
                         <input type="number" id="gasto-monto" min="0" step="0.01" required>
                     </div>
@@ -1119,7 +1126,7 @@
                         <input type="date" id="gasto-fecha" required>
                     </div>
                     <div class="form-group full-width">
-                        <label for="gasto-notas">Gasto simple</label>
+                        <label for="gasto-notas">Detalle adicional</label>
                         <textarea id="gasto-notas" rows="3" placeholder="Detalle adicional..."></textarea>
                     </div>
                 </div>
@@ -1920,6 +1927,84 @@
             filter: blur(0);
         }
     </style>
+
+    <!-- MODAL: AGREGAR GASTO EXTRAORDINARIO (NUEVO COMPONENTE) -->
+    <div id="modal-agregar-gasto-extraordinario" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">Agregar Gasto Extraordinario</h2>
+                <button class="modal-close" onclick="closeModal('modal-agregar-gasto-extraordinario')">&times;</button>
+            </div>
+            <div class="modal-content">
+                <!-- Competencia seleccionada (solo lectura) -->
+                <div class="form-card" style="margin-bottom:1rem;background:rgba(0,0,0,0.2);">
+                    <div class="form-title"><i class="fa-solid fa-flag-checkered"></i> Competencia</div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem 1rem;padding:0.5rem 0;font-size:0.9rem;">
+                        <div><span style="color:var(--text-secondary);">Código:</span> <strong id="age-codigo" style="font-family:monospace;">-</strong></div>
+                        <div><span style="color:var(--text-secondary);">Nombre:</span> <strong id="age-nombre">-</strong></div>
+                        <div><span style="color:var(--text-secondary);">Fecha inicio:</span> <span id="age-fecha-inicio">-</span></div>
+                        <div><span style="color:var(--text-secondary);">Fecha fin:</span> <span id="age-fecha-fin">-</span></div>
+                    </div>
+                </div>
+
+                <!-- Campos del gasto extraordinario -->
+                <div class="form-group">
+                    <label for="age-concepto">Concepto del Gasto</label>
+                    <input type="text" id="age-concepto" placeholder="Ej: Viáticos, Combustible, Alquiler..." required>
+                </div>
+                <div class="form-group">
+                    <label for="age-monto">Monto ($)</label>
+                    <input type="number" id="age-monto" min="0" step="0.01" placeholder="0.00" required>
+                </div>
+                <div class="form-group">
+                    <label for="age-detalle">Detalle adicional</label>
+                    <textarea id="age-detalle" rows="3" placeholder="Detalle del gasto extraordinario..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-agregar-gasto-extraordinario')">Cancelar</button>
+                <button type="button" class="btn" onclick="guardarGastoExtraordinarioNuevo()"><i class="fa-solid fa-floppy-disk"></i> Guardar Gasto</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: EDITAR GASTO RÁPIDO (NUEVO COMPONENTE INDEPENDIENTE) -->
+    <div id="modal-editar-gasto-rapido" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">Editar Gasto de Competencia</h2>
+                <button class="modal-close" onclick="closeModal('modal-editar-gasto-rapido')">&times;</button>
+            </div>
+            <div class="modal-content">
+                <!-- Datos de la competencia (solo lectura) -->
+                <div class="form-card" style="margin-bottom:1rem;background:rgba(0,0,0,0.2);">
+                    <div class="form-title"><i class="fa-solid fa-flag-checkered"></i> Competencia</div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem 1rem;padding:0.5rem 0;font-size:0.9rem;">
+                        <div><span style="color:var(--text-secondary);">Código:</span> <strong id="egr-codigo" style="font-family:monospace;">-</strong></div>
+                        <div><span style="color:var(--text-secondary);">Nombre:</span> <strong id="egr-nombre">-</strong></div>
+                        <div><span style="color:var(--text-secondary);">Fecha inicio:</span> <span id="egr-fecha-inicio">-</span></div>
+                        <div><span style="color:var(--text-secondary);">Fecha fin:</span> <span id="egr-fecha-fin">-</span></div>
+                    </div>
+                </div>
+
+                <!-- Campos editables -->
+                <div class="form-group">
+                    <label for="egr-monto-gasto">Gasto Extraordinario ($)</label>
+                    <input type="number" id="egr-monto-gasto" min="0" step="0.01" placeholder="0.00">
+                    <small style="color:var(--text-secondary);">Monto del gasto extraordinario de la competencia.</small>
+                </div>
+                <div class="form-group">
+                    <label for="egr-monto-facturar">Monto a Facturar ($)</label>
+                    <input type="number" id="egr-monto-facturar" min="0" step="0.01" placeholder="0.00">
+                    <small style="color:var(--text-secondary);">Monto total a facturar. Dejalo vacío para usar el cálculo automático.</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-editar-gasto-rapido')">Cancelar</button>
+                <button type="button" class="btn" onclick="guardarEdicionGastoRapido()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
+            </div>
+        </div>
+    </div>
 
     <!-- MODAL: EDITAR TOTAL GASTOS -->
     <div id="modal-editar-total-gastos" class="modal-overlay">

@@ -1,3 +1,0 @@
-WARN: No se encontró handleLogin() con Firebase Auth en app.js
-OK: handleLogout() simplificado para limpiar sesión local
-OK: Inicialización restaura sesión desde localStorage

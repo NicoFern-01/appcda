@@ -1,5 +1,0 @@
-WARN: No se encontró el bloque DEFAULT_FIREBASE_CONFIG exacto
-WARN: No se encontró el bloque de inicialización de config en inicializarFirebase()
-OK: Verificación de configuración Firebase insertada al cargar
---- app.js ---
-WARN: No se encontró el bloque de guardarYConectarFirebase() en app.js
