@@ -1030,6 +1030,8 @@ async function editarCompetencia(id) {
     if (!puedeEditar()) return;
     const comp = await obtenerPorId('competencias', id);
     if (!comp) return;
+    // Cargar los selectores con las listas más recientes de categorías activas y staff activo
+    await actualizarSelectoresFormularios();
 
     document.getElementById('competencia-id').value = comp.id;
     document.getElementById('competencia-nombre').value = comp.nombre;
@@ -1046,11 +1048,14 @@ async function editarCompetencia(id) {
     adminCodigoInput.dataset.auto = 'false';
     document.getElementById('admin-edit-codigo-group').style.display = esAdmin() ? 'block' : 'none';
 
+    // Normalizar los arrays de IDs guardados en la BD (pueden venir como number o string legacy)
+    const categoriasIdsGuardadas = (comp.categoriasIds || []).map(Number);
     document.querySelectorAll('#competencia-categorias-checkboxes input').forEach(cb => {
-        cb.checked = comp.categoriasIds.includes(Number(cb.value));
+        cb.checked = categoriasIdsGuardadas.includes(Number(cb.value));
     });
+    const staffIdsGuardados = (comp.staffIds || []).map(Number);
     document.querySelectorAll('#competencia-staff-checkboxes input').forEach(cb => {
-        cb.checked = (comp.staffIds || []).includes(Number(cb.value));
+        cb.checked = staffIdsGuardados.includes(Number(cb.value));
     });
     document.getElementById('competencia-modal-title').innerText = 'Editar Competencia';
     openModal('modal-competencia');
@@ -1945,7 +1950,8 @@ async function guardarStaffForm(e) {
         mail: document.getElementById('staff-mail').value,
         mail2: document.getElementById('staff-mail2').value,
         numeroRegistroGrado: document.getElementById('staff-numero-registro-grado').value,
-        equipos: document.getElementById('staff-equipos').value
+        equipos: document.getElementById('staff-equipos').value,
+        activo: true
     };
     if (id) s.id = Number(id);
     const savedStaffId = await guardar('staff', s);
@@ -2071,7 +2077,7 @@ async function guardarCategoriaForm(e) {
     e.preventDefault();
     if (!puedeEditar()) return;
     const id = document.getElementById('categoria-id').value;
-    const cat = { nombre: document.getElementById('categoria-nombre').value, descripcion: document.getElementById('categoria-descripcion').value };
+    const cat = { nombre: document.getElementById('categoria-nombre').value, descripcion: document.getElementById('categoria-descripcion').value, activo: true };
     if (id) cat.id = Number(id);
     await guardar('categorias', cat);
     closeModal('modal-categoria');
@@ -2338,7 +2344,7 @@ async function actualizarSelectoresFormularios() {
     const checkContainer = document.getElementById('competencia-categorias-checkboxes');
     const checkedIds = Array.from(checkContainer.querySelectorAll('input:checked')).map(cb => cb.value);
     checkContainer.innerHTML = '';
-    categorias.forEach(cat => {
+    categorias.filter(cat => cat.activo !== false).forEach(cat => {
         checkContainer.innerHTML += `
             <label class="checkbox-label">
                 <input type="checkbox" value="${cat.id}" ${checkedIds.includes(String(cat.id)) ? 'checked' : ''} onchange="actualizarCodigoCompetenciaPorCategoria()">
@@ -2353,7 +2359,7 @@ async function actualizarSelectoresFormularios() {
         if (staff.length === 0) {
             staffContainer.innerHTML = '<p style="color:var(--text-secondary); margin:0;">No hay personal registrado. Agrega personal primero.</p>';
         } else {
-            staff.forEach(persona => {
+            staff.filter(persona => persona.activo !== false).forEach(persona => {
                 staffContainer.innerHTML += `
                     <label class="checkbox-label">
                         <input type="checkbox" value="${persona.id}" ${checkedStaffIds.includes(String(persona.id)) ? 'checked' : ''}>
@@ -4873,7 +4879,7 @@ async function eliminarArticulo(id) {
         mostrarToast('No se puede eliminar un artículo con movimientos asociados.', 'error');
         return;
     }
-    if (!confirm('¿Eliminar este artículo permanentemente?')) return;
+    if (!(await mostrarConfirmacion('Eliminar Artículo', '¿Eliminar este artículo permanentemente?'))) return;
 
     const tallesArt = await getTodos('articuloTalles');
     for (const t of tallesArt.filter(t => Number(t.articuloId) === Number(id))) {
@@ -5271,7 +5277,7 @@ async function eliminarCategoriaInventario(id) {
         mostrarToast('No se puede eliminar una categoría con artículos asociados.', 'error');
         return;
     }
-    if (!confirm('¿Eliminar esta categoría de inventario?')) return;
+    if (!(await mostrarConfirmacion('Eliminar Categoría', '¿Eliminar esta categoría de inventario?'))) return;
     await eliminar('categoriasInventario', id);
     invalidarCache('categoriasInventario');
     listarCategoriasInventario();
@@ -5326,7 +5332,7 @@ async function guardarSubcategoriaForm(e) {
 
 async function eliminarSubcategoria(id) {
     if (!puedeEditar()) return;
-    if (!confirm('¿Eliminar esta subcategoría?')) return;
+    if (!(await mostrarConfirmacion('Eliminar Subcategoría', '¿Eliminar esta subcategoría?'))) return;
     await eliminar('subcategoriasInventario', id);
     invalidarCache('subcategoriasInventario');
     listarCategoriasInventario();
@@ -5375,7 +5381,7 @@ async function eliminarTalle(id) {
         mostrarToast('No se puede eliminar un talle que tiene stock asociado.', 'error');
         return;
     }
-    if (!confirm('¿Eliminar este talle?')) return;
+    if (!(await mostrarConfirmacion('Eliminar Talle', '¿Eliminar este talle?'))) return;
     for (const t of tallesArt.filter(t => Number(t.talleId) === Number(id))) {
         await eliminar('articuloTalles', t.id);
     }
@@ -5662,7 +5668,7 @@ async function guardarEntregaForm(e) {
 
 async function eliminarEntrega(id) {
     if (!puedeEditar()) return;
-    if (!confirm('¿Eliminar esta entrega? No se restaurará el stock automáticamente.')) return;
+    if (!(await mostrarConfirmacion('Eliminar Entrega', '¿Eliminar esta entrega? No se restaurará el stock automáticamente.'))) return;
 
     const detalles = await getTodos('detalleEntregas');
     for (const d of detalles.filter(d => Number(d.entregaId) === Number(id))) {

@@ -413,12 +413,12 @@ async function inicializarDatosPorDefecto() {
     const categorias = await getTodos('categorias');
     if (categorias.length === 0) {
         const categoriasIniciales = [
-            { nombre: 'TC2000', descripcion: 'La máxima expresión tecnológica de autos de turismo.' },
-            { nombre: 'Top Race V6', descripcion: 'Autos de alta potencia con carrocerías siluetas.' },
-            { nombre: 'Top Race Series', descripcion: 'Categoría escuela y antesala del TRV6.' },
-            { nombre: 'Fórmula Nacional', descripcion: 'Histórico semillero oficial de monoplazas.' },
-            { nombre: 'Fiat Competizione', descripcion: 'Monomarca nacional' },
-            { nombre: 'Argentino de Karting', descripcion: 'Rotax y Iame series' }
+            { nombre: 'TC2000', descripcion: 'La máxima expresión tecnológica de autos de turismo.', activo: true },
+            { nombre: 'Top Race V6', descripcion: 'Autos de alta potencia con carrocerías siluetas.', activo: true },
+            { nombre: 'Top Race Series', descripcion: 'Categoría escuela y antesala del TRV6.', activo: true },
+            { nombre: 'Fórmula Nacional', descripcion: 'Histórico semillero oficial de monoplazas.', activo: true },
+            { nombre: 'Fiat Competizione', descripcion: 'Monomarca nacional', activo: true },
+            { nombre: 'Argentino de Karting', descripcion: 'Rotax y Iame series', activo: true }
         ];
         for (const cat of categoriasIniciales) {
             await guardar('categorias', cat);
