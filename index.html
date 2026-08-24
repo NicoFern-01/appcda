@@ -125,6 +125,12 @@
                     </div>
                 </li>
                 <li>
+                    <div class="menu-item" onclick="switchView('estadisticas-personal')">
+                        <i class="fa-solid fa-chart-column"></i>
+                        <span>Estadísticas de Personal</span>
+                    </div>
+                </li>
+                <li>
                     <div class="menu-item" onclick="switchView('alojamiento')">
                         <i class="fa-solid fa-hotel"></i>
                         <span>Alojamiento</span>
@@ -850,6 +856,77 @@
                                 </tr>
                             </thead>
                             <tbody id="staff-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: ESTADÍSTICAS DE PERSONAL -->
+            <section id="view-estadisticas-personal" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Estadísticas de Asistencia de Personal</h1>
+                        <p class="page-subtitle">Análisis de asistencia y participación del personal por competencia</p>
+                    </div>
+                </header>
+
+                <div class="table-card" style="margin-bottom:1.5rem;">
+                    <div class="inv-filters">
+                        <div class="form-group">
+                            <label for="estadisticas-filtro-competencia">Competencia</label>
+                            <select id="estadisticas-filtro-competencia" onchange="listarEstadisticasPersonal()">
+                                <option value="todas">Todas las competencias</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="estadisticas-filtro-mes">Mes</label>
+                            <select id="estadisticas-filtro-mes" onchange="listarEstadisticasPersonal()">
+                                <option value="todos">Todos los meses</option>
+                                <option value="1">Enero</option>
+                                <option value="2">Febrero</option>
+                                <option value="3">Marzo</option>
+                                <option value="4">Abril</option>
+                                <option value="5">Mayo</option>
+                                <option value="6">Junio</option>
+                                <option value="7">Julio</option>
+                                <option value="8">Agosto</option>
+                                <option value="9">Septiembre</option>
+                                <option value="10">Octubre</option>
+                                <option value="11">Noviembre</option>
+                                <option value="12">Diciembre</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="estadisticas-filtro-ano">Año</label>
+                            <select id="estadisticas-filtro-ano" onchange="listarEstadisticasPersonal()">
+                                <option value="todos">Todos los años</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-card">
+                    <div class="table-header-tools">
+                        <h3>Resultados de Asistencia</h3>
+                    </div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Nombre y Apellido</th>
+                                    <th>Función/Rol</th>
+                                    <th>Competencias Asistidas</th>
+                                    <th>Total Competencias</th>
+                                    <th>% Asistencia</th>
+                                </tr>
+                            </thead>
+                            <tbody id="estadisticas-personal-body">
+                                <tr>
+                                    <td colspan="5" style="text-align:center;color:var(--text-secondary);padding:2rem;">
+                                        Seleccione los filtros para ver las estadísticas de asistencia.
+                                    </td>
+                                </tr>
+                            </tbody>
                         </table>
                     </div>
                 </div>

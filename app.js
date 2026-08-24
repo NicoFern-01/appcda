@@ -19,7 +19,7 @@ let chartConceptoInstance = null;
 // Flag para evitar re-renderizar el dashboard si no cambiaron los datos
 let dashboardDirty = true;
 
-const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'alojamiento', 'configuracion'];
+const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal', 'alojamiento', 'configuracion'];
 
 // ==================== RENDERIZADO ASÍNCRONO DE LA INTERFAZ ====================
 // Escucha el evento disparado por db.js cuando la sincronización con Firestore
@@ -2006,6 +2006,137 @@ async function quitarStaffDeCompetencias(staffId) {
             await guardar('competencias', comp);
         }
     }
+}
+
+// ==================== ESTADÍSTICAS DE ASISTENCIA DE PERSONAL ====================
+
+// Carga la vista de estadísticas de personal: llena los selectores de competencia y año,
+// y calcula la asistencia del personal agrupando por persona usando .filter() y .reduce().
+async function listarEstadisticasPersonal() {
+    const [competencias, staff] = await Promise.all([
+        getTodos('competencias'),
+        getTodos('staff')
+    ]);
+
+    // Llenar selector de competencias
+    const selComp = document.getElementById('estadisticas-filtro-competencia');
+    if (selComp) {
+        const savedComp = selComp.value;
+        selComp.innerHTML = '<option value="todas">Todas las competencias</option>';
+        competencias.sort((a, b) => new Date(b.fechaInicio) - new Date(a.fechaInicio));
+        competencias.forEach(c => {
+            const label = c.codigo ? `${c.codigo} - ${c.nombre}` : c.nombre;
+            selComp.innerHTML += `<option value="${c.id}">${escapeHtml(label)}</option>`;
+        });
+        selComp.value = savedComp;
+    }
+
+    // Llenar selector de años
+    const selAno = document.getElementById('estadisticas-filtro-ano');
+    if (selAno) {
+        const savedAno = selAno.value;
+        const anos = new Set();
+        competencias.forEach(c => {
+            if (c.fechaInicio) anos.add(new Date(c.fechaInicio).getFullYear());
+            if (c.fechaFin) anos.add(new Date(c.fechaFin).getFullYear());
+        });
+        const anosArr = Array.from(anos).sort((a, b) => b - a);
+        selAno.innerHTML = '<option value="todos">Todos los años</option>';
+        anosArr.forEach(y => selAno.innerHTML += `<option value="${y}">${y}</option>`);
+        selAno.value = savedAno;
+    }
+
+    // Obtener valores de los filtros
+    const filtroComp = selComp ? selComp.value : 'todas';
+    const filtroMes = document.getElementById('estadisticas-filtro-mes') ? document.getElementById('estadisticas-filtro-mes').value : 'todos';
+    const filtroAno = selAno ? selAno.value : 'todos';
+
+    // Filtrar competencias según los filtros seleccionados
+    const competenciasFiltradas = competencias.filter(comp => {
+        // Filtro por competencia específica
+        if (filtroComp !== 'todas' && Number(comp.id) !== Number(filtroComp)) return false;
+        // Filtro por mes (usando fecha de inicio)
+        if (filtroMes !== 'todos' && comp.fechaInicio) {
+            const mes = new Date(comp.fechaInicio).getMonth() + 1;
+            if (Number(filtroMes) !== mes) return false;
+        }
+        // Filtro por año (usando fecha de inicio)
+        if (filtroAno !== 'todos' && comp.fechaInicio) {
+            const ano = new Date(comp.fechaInicio).getFullYear();
+            if (Number(filtroAno) !== ano) return false;
+        }
+        return true;
+    });
+
+    // Agrupar la asistencia del personal usando .reduce()
+    // Para cada persona, contamos en cuántas competencias filtradas está asignada
+    const asistenciaPorPersona = staff.reduce((acumulador, persona) => {
+        // Obtener las competencias en las que esta persona está asignada
+        // (usando comp.staffIds de cada competencia filtrada)
+        const competenciasAsistidas = competenciasFiltradas.filter(comp => {
+            return (comp.staffIds || []).map(Number).includes(Number(persona.id));
+        });
+
+        // Solo incluir personas que tienen al menos una asistencia
+        if (competenciasAsistidas.length > 0) {
+            acumulador.push({
+                persona: persona,
+                competenciasAsistidas: competenciasAsistidas,
+                cantidad: competenciasAsistidas.length,
+                totalCompetencias: competenciasFiltradas.length,
+                porcentaje: competenciasFiltradas.length > 0
+                    ? Math.round((competenciasAsistidas.length / competenciasFiltradas.length) * 100)
+                    : 0
+            });
+        }
+        return acumulador;
+    }, []);
+
+    // Ordenar por cantidad de asistencias descendente
+    asistenciaPorPersona.sort((a, b) => b.cantidad - a.cantidad);
+
+    // Renderizar la tabla de resultados
+    const tbody = document.getElementById('estadisticas-personal-body');
+    if (!tbody) return;
+
+    if (asistenciaPorPersona.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="5" style="text-align:center;color:var(--text-secondary);padding:2rem;">
+                    No hay personal asignado a las competencias que coinciden con los filtros seleccionados.
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = '';
+    asistenciaPorPersona.forEach(item => {
+        const tr = document.createElement('tr');
+        // Listar los nombres de las competencias asistidas
+        const nombresCompetencias = item.competenciasAsistidas
+            .map(c => c.codigo ? `${c.codigo} - ${c.nombre}` : c.nombre)
+            .join(', ');
+
+        tr.innerHTML = `
+            <td style="font-weight:600;">${escapeHtml(item.persona.nombre)} ${escapeHtml(item.persona.apellido)}</td>
+            <td><span class="badge badge-info">${escapeHtml(item.persona.funcion)}</span></td>
+            <td style="text-align:center;font-weight:600;color:var(--accent);">${item.cantidad}</td>
+            <td style="text-align:center;">${item.totalCompetencias}</td>
+            <td>
+                <div style="display:flex;align-items:center;gap:0.5rem;">
+                    <div style="flex:1;background:var(--bg-secondary);border-radius:4px;height:8px;overflow:hidden;">
+                        <div style="width:${item.porcentaje}%;height:100%;background:${item.porcentaje >= 75 ? 'var(--accent-green)' : item.porcentaje >= 50 ? '#ff9f43' : 'var(--accent)'};border-radius:4px;"></div>
+                    </div>
+                    <span style="font-weight:700;min-width:45px;text-align:right;">${item.porcentaje}%</span>
+                </div>
+                <small style="color:var(--text-secondary);display:block;margin-top:0.25rem;" title="${escapeHtml(nombresCompetencias)}">
+                    ${escapeHtml(nombresCompetencias.length > 60 ? nombresCompetencias.substring(0, 60) + '...' : nombresCompetencias)}
+                </small>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
 }
 
 // ==================== CONFIGURACIÓN: CATEGORÍAS & CIRCUITOS ====================
@@ -4263,6 +4394,7 @@ async function cargarDatosVista(viewId) {
         case 'categorias-inventario': await listarCategoriasInventario(); break;
         case 'entregas-inventario': await listarEntregas(); break;
         case 'staff':        await listarStaff(); break;
+        case 'estadisticas-personal': await listarEstadisticasPersonal(); break;
         case 'alojamiento':  await listarAlojamientos(); break;
         case 'configuracion':await listarConfiguraciones(); break;
     }
