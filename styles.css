@@ -334,20 +334,6 @@ input:focus, select:focus, textarea:focus {
     box-shadow: 0 0 0 3px rgba(0, 210, 211, 0.15);
 }
 
-/* Input específico: Días de Competencia (Personal por Competencia) */
-#personal-comp-dias {
-    max-width: 90px;
-    width: 6rem;
-    text-align: center;
-}
-
-/* Evita que el contenedor del campo se expanda horizontalmente por toda la pantalla */
-#personal-comp-dias.form-group,
-.form-group:has(#personal-comp-dias) {
-    flex: 0 0 auto;
-    width: max-content;
-}
-
 .btn {
     background-color: var(--accent);
     color: white;
@@ -377,6 +363,11 @@ input:focus, select:focus, textarea:focus {
 .btn-secondary:hover {
     background-color: var(--bg-card);
     border-color: var(--border-hover);
+}
+
+.report-print-btn {
+    width: auto !important;
+    flex: 0 0 auto;
 }
 
 .btn-danger {
@@ -1074,10 +1065,14 @@ tr:hover td {
     .alojamiento-card {
         max-width: 100% !important;
     }
-    .personal-comp-top-row {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 0.75rem;
+    .personal-comp-fields {
+        grid-template-columns: 1fr;
+        gap: 0.9rem;
+    }
+    .personal-comp-total {
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
     }
     .total-general {
         grid-column: 1 / -1;
@@ -1762,6 +1757,63 @@ input[type="file"]:hover {
 }
 
 /* ==================== PERSONAL POR COMPETENCIA ==================== */
+.personal-comp-panel {
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto 1.5rem;
+    padding: 1.5rem;
+}
+
+.personal-comp-panel .form-title {
+    margin-bottom: 1.25rem;
+}
+
+.personal-comp-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(120px, 1fr);
+    gap: 1rem;
+    align-items: end;
+}
+
+.personal-comp-fields .form-group {
+    min-width: 0;
+    margin-bottom: 0;
+}
+
+.personal-comp-fields input,
+.personal-comp-fields select {
+    width: 100%;
+    min-height: 42px;
+}
+
+.personal-comp-days input {
+    text-align: center;
+}
+
+.personal-comp-total {
+    display: flex;
+    align-items: baseline;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.personal-comp-total-label {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.personal-comp-total-value {
+    color: var(--accent);
+    font-size: 1.6rem;
+    font-weight: 800;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
 .personal-comp-table {
     width: 100%;
     min-width: 900px;
@@ -1851,6 +1903,50 @@ input[type="file"]:hover {
     .personal-comp-table .personal-bruto-input {
         width: 90px !important;
     }
+}
+
+/* ==================== TABLA ESTADÍSTICAS DE PERSONAL ==================== */
+/* Tabla de resultados de asistencia: columna "Ver" compacta y centrada */
+#view-estadisticas-personal .table-card table {
+    table-layout: fixed;
+}
+
+/* Columna "Ver": ancho mínimo para el ícono del ojo, centrado */
+#view-estadisticas-personal .table-card th:last-child,
+#view-estadisticas-personal .table-card td:last-child {
+    width: 60px;
+    text-align: center;
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+}
+
+/* Cabecera "Ver" perfectamente centrada */
+#view-estadisticas-personal .table-card th:last-child {
+    text-align: center;
+}
+
+/* Botón del ojo: centrado en su celda, compacto */
+#view-estadisticas-personal .table-card .stats-eye-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    margin: 0 auto;
+}
+
+/* Columna "% Asistencia": aprovecha el espacio sobrante */
+#view-estadisticas-personal .table-card th:nth-child(5),
+#view-estadisticas-personal .table-card td:nth-child(5) {
+    min-width: 160px;
+}
+
+/* Columnas de nombres (izquierda): aprovechan el espacio liberado */
+#view-estadisticas-personal .table-card th:first-child,
+#view-estadisticas-personal .table-card td:first-child {
+    width: auto;
+    min-width: 180px;
 }
 
 /* ==================== MÓDULO ALOJAMIENTO ==================== */
@@ -2116,4 +2212,58 @@ input[type="file"]:hover {
     .gastos-detalle-table, .personal-comp-table {
         min-width: 650px !important;
     }
+}
+
+/* ==================== REPORTE DE ASISTENCIA (IMPRESIÓN) ==================== */
+/* El contenedor del reporte y su pie de página permanecen ocultos en la
+   pantalla normal del software; sólo se muestran al imprimir. */
+#reporte-impresion-estadisticas {
+    display: none;
+    font-family: Arial, Helvetica, sans-serif;
+    color: #222;
+    padding: 1.5rem;
+    box-sizing: border-box;
+}
+#reporte-impresion-estadisticas h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+#reporte-impresion-estadisticas .reporte-sub { color: #666; font-size: 0.9rem; margin: 0 0 1rem; }
+#reporte-impresion-estadisticas .reporte-filtros { font-size: 0.8rem; color: #444; margin-bottom: 1rem; background: #f7f7f7; padding: 0.5rem 0.7rem; border-radius: 4px; }
+#reporte-impresion-estadisticas .reporte-tabla { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.85rem; }
+#reporte-impresion-estadisticas .reporte-tabla th { background: #1f2a40; color: #fff; padding: 0.45rem 0.6rem; text-align: left; border: 1px solid #ddd; }
+#reporte-impresion-estadisticas .reporte-tabla td { padding: 0.4rem 0.6rem; border: 1px solid #e0e0e0; }
+#reporte-impresion-estadisticas .reporte-tabla tbody tr:nth-child(even) { background: #f9f9f9; }
+#reporte-impresion-estadisticas .reporte-footer { display: none; }
+
+@media print {
+    /* Ocultar la interfaz del software; mostrar sólo el reporte de estadísticas */
+    body.imprimiendo-estadisticas #app-main,
+    body.imprimiendo-estadisticas #login-screen,
+    body.imprimiendo-estadisticas .modal-overlay {
+        display: none !important;
+    }
+
+    body.imprimiendo-estadisticas #reporte-impresion-estadisticas {
+        display: block;
+        padding: 0.6in 0.5in;
+    }
+
+    body.imprimiendo-estadisticas #reporte-impresion-estadisticas .reporte-contenido {
+        margin-bottom: 2.5rem; /* espacio reservado para el pie de página fijo */
+    }
+
+    /* Pie de página: abajo de todo en la hoja impresa, tipografía pequeña y discreta */
+    body.imprimiendo-estadisticas #reporte-impresion-estadisticas .reporte-footer {
+        display: block;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        text-align: center;
+        font-size: 0.7rem;
+        color: #777;
+        border-top: 1px solid #bbb;
+        padding: 0.5rem 0;
+        box-sizing: border-box;
+    }
+
+    @page { margin-bottom: 1in; }
 }

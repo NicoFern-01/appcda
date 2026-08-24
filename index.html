@@ -507,22 +507,23 @@
                     </div>
                 </header>
 
-                <div class="form-card" style="margin-bottom:1rem;">
-                    <div class="personal-comp-top-row">
-                        <div class="form-group">
+                <div class="form-card personal-comp-panel" style="margin-bottom:1rem;">
+                    <div class="form-title">Seleccione Competencia</div>
+                    <div class="personal-comp-fields">
+                        <div class="form-group personal-comp-competition">
                             <label for="personal-comp-select">Competencia (ID)</label>
                             <select id="personal-comp-select" onchange="cargarPersonalCompetencia()">
                                 <option value="">Seleccione una competencia...</option>
                             </select>
                         </div>
-                        <div class="form-group">
+                        <div class="form-group personal-comp-days">
                             <label for="personal-comp-dias">Días de Competencia</label>
                             <input type="number" id="personal-comp-dias" min="1" max="999" value="1">
                         </div>
-                        <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0;">
-                            <span style="font-weight:600;font-size:0.8rem;">Total Gastos Personal:</span>
-                            <span id="personal-comp-total" style="font-weight:700;color:var(--accent);font-size:1rem;">$0.00</span>
-                        </div>
+                    </div>
+                    <div class="personal-comp-total">
+                        <span class="personal-comp-total-label">Total Gastos Personal</span>
+                        <span id="personal-comp-total" class="personal-comp-total-value">$0.00</span>
                     </div>
                 </div>
 
@@ -868,6 +869,9 @@
                         <h1 class="page-title">Estadísticas de Asistencia de Personal</h1>
                         <p class="page-subtitle">Análisis de asistencia y participación del personal por competencia</p>
                     </div>
+                    <div style="display:flex;gap:0.5rem;align-items:center;">
+                        <button class="btn btn-secondary report-print-btn" onclick="imprimirReporteAsistencia()"><i class="fa-solid fa-print"></i> Imprimir Reporte</button>
+                    </div>
                 </header>
 
                 <div class="table-card" style="margin-bottom:1.5rem;">
@@ -918,11 +922,12 @@
                                     <th>Competencias Asistidas</th>
                                     <th>Total Competencias</th>
                                     <th>% Asistencia</th>
+                                    <th style="width:60px;text-align:center;">Ver</th>
                                 </tr>
                             </thead>
                             <tbody id="estadisticas-personal-body">
                                 <tr>
-                                    <td colspan="5" style="text-align:center;color:var(--text-secondary);padding:2rem;">
+                                    <td colspan="6" style="text-align:center;color:var(--text-secondary);padding:2rem;">
                                         Seleccione los filtros para ver las estadísticas de asistencia.
                                     </td>
                                 </tr>
@@ -931,6 +936,25 @@
                     </div>
                 </div>
             </section>
+
+            <!-- MODAL: DETALLE DE ASISTENCIA DE PERSONAL -->
+            <div id="modal-detalle-asistencia" class="modal-overlay">
+                <div class="modal">
+                    <div class="modal-header">
+                        <h2 class="modal-title"><i class="fa-solid fa-user-check"></i> <span id="detalle-asistencia-nombre"></span></h2>
+                        <button class="modal-close" onclick="cerrarModalDetalleAsistencia()">&times;</button>
+                    </div>
+                    <div class="modal-content">
+                        <div class="form-card" style="margin-bottom:1rem;">
+                            <div class="form-title"><i class="fa-solid fa-trophy"></i> Carreras Asistidas</div>
+                            <div id="detalle-asistencia-lista" style="display:flex;flex-direction:column;gap:0.5rem;padding:0.5rem 0;"></div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" onclick="cerrarModalDetalleAsistencia()">Cerrar</button>
+                    </div>
+                </div>
+            </div>
 
             <!-- VIEW: ALOJAMIENTO -->
             <section id="view-alojamiento" class="view">
@@ -2126,6 +2150,10 @@
             </div>
         </div>
     </div>
+
+    <!-- Contenedor de reporte de estadísticas de asistencia (preparado para imprimir) -->
+    <!-- Permanece oculto en pantalla normal; los estilos @media print lo muestran al imprimir -->
+    <div id="reporte-impresion-estadisticas"></div>
 
     <!-- Scripts -->
     <script src="db.js"></script>

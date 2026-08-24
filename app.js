@@ -2113,10 +2113,8 @@ async function listarEstadisticasPersonal() {
     tbody.innerHTML = '';
     asistenciaPorPersona.forEach(item => {
         const tr = document.createElement('tr');
-        // Listar los nombres de las competencias asistidas
-        const nombresCompetencias = item.competenciasAsistidas
-            .map(c => c.codigo ? `${c.codigo} - ${c.nombre}` : c.nombre)
-            .join(', ');
+        tr.dataset.personaId = item.persona.id;
+        tr.dataset.nombrePersona = `${item.persona.nombre} ${item.persona.apellido}`;
 
         tr.innerHTML = `
             <td style="font-weight:600;">${escapeHtml(item.persona.nombre)} ${escapeHtml(item.persona.apellido)}</td>
@@ -2130,13 +2128,198 @@ async function listarEstadisticasPersonal() {
                     </div>
                     <span style="font-weight:700;min-width:45px;text-align:right;">${item.porcentaje}%</span>
                 </div>
-                <small style="color:var(--text-secondary);display:block;margin-top:0.25rem;" title="${escapeHtml(nombresCompetencias)}">
-                    ${escapeHtml(nombresCompetencias.length > 60 ? nombresCompetencias.substring(0, 60) + '...' : nombresCompetencias)}
-                </small>
+            </td>
+            <td style="text-align:center;">
+                <button type="button" class="action-btn stats-eye-btn" onclick='verDetalleAsistencia(${item.persona.id}, ${JSON.stringify(item.competenciasAsistidas.map(c => ({ codigo: c.codigo || '', nombre: c.nombre })))})' title="Ver carreras asistidas" style="cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;">
+                    <i class="fa-solid fa-eye"></i>
+                </button>
             </td>
         `;
         tbody.appendChild(tr);
     });
+}
+
+// ==================== MODAL DETALLE ASISTENCIA ====================
+
+// Abre el modal con el detalle de carreras asistidas por una persona
+function verDetalleAsistencia(personaId, competenciasJson) {
+    let nombrePersona = 'Personal';
+    let competencias = competenciasJson && Array.isArray(competenciasJson) ? competenciasJson : [];
+    // Buscar la persona en los datos actuales de la tabla
+    const tbody = document.getElementById('estadisticas-personal-body');
+    if (tbody) {
+        const filas = tbody.querySelectorAll('tr');
+        for (const fila of filas) {
+            if (fila.dataset.personaId && Number(fila.dataset.personaId) === Number(personaId)) {
+                nombrePersona = fila.dataset.nombrePersona || 'Personal';
+                break;
+            }
+        }
+    }
+
+    document.getElementById('detalle-asistencia-nombre').textContent = nombrePersona;
+
+    const lista = document.getElementById('detalle-asistencia-lista');
+    lista.innerHTML = '';
+
+    if (competencias.length === 0) {
+        lista.innerHTML = '<span style="color:var(--text-secondary);text-align:center;">Sin carreras registradas en el período filtrado.</span>';
+    } else {
+        competencias.forEach(c => {
+            const itemDiv = document.createElement('div');
+            itemDiv.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.65rem 0.85rem;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border-color);';
+            itemDiv.innerHTML = `
+                <i class="fa-solid fa-trophy" style="color:var(--accent);font-size:1rem;"></i>
+                <span style="font-weight:500;flex:1;">${escapeHtml(c.nombre || c.codigo || 'Carrera')}</span>
+                ${c.codigo ? `<span style="color:var(--text-sscondary);font-family:monospace;font-size:0.85rem;text-align:right;">${escapeHtml(c.codigo)}</span>` : ''}
+            `;
+            lista.appendChild(itemDiv);
+        });
+    }
+
+    openModal('modal-detalle-asistencia');
+}
+
+// Cierra el modal detalle asistencia
+function cerrarModalDetalleAsistencia() {
+    closeModal('modal-detalle-asistencia');
+}
+
+// ==================== REPORTE DE ASISTENCIA IMPRESIBLE ====================
+
+// Formatea la fecha/hora del reporte en español (es-AR):
+// "Reporte generado el DD/MM/AAAA a las HH:MM hs."
+function formatearFechaHoraReporte(fecha) {
+    const dia = String(fecha.getDate()).padStart(2, '0');
+    const mes = String(fecha.getMonth() + 1).padStart(2, '0');
+    const anio = fecha.getFullYear();
+    const horas = String(fecha.getHours()).padStart(2, '0');
+    const minutos = String(fecha.getMinutes()).padStart(2, '0');
+    return `Reporte generado el ${dia}/${mes}/${anio} a las ${horas}:${minutos} hs.`;
+}
+
+// Prepara y abre la vista de impresión del reporte de asistencia de personal.
+// Captura la fecha/hora exacta del clic en el botón de imprimir con new Date().
+async function imprimirReporteAsistencia() {
+    const contenedor = document.getElementById('reporte-impresion-estadisticas');
+    if (!contenedor) return;
+
+    // 1) Momento exacto del clic (new Date())
+    const fechaReporte = new Date();
+
+    const [competencias, staff] = await Promise.all([
+        getTodos('competencias'),
+        getTodos('staff')
+    ]);
+
+    // Filtros aplicados en pantalla
+    const selComp = document.getElementById('estadisticas-filtro-competencia');
+    const selMes = document.getElementById('estadisticas-filtro-mes');
+    const selAno = document.getElementById('estadisticas-filtro-ano');
+    const filtroComp = selComp ? selComp.value : 'todas';
+    const filtroMes = selMes ? selMes.value : 'todos';
+    const filtroAno = selAno ? selAno.value : 'todos';
+
+    // Filtrar competencias (misma lógica que listarEstadisticasPersonal)
+    const competenciasFiltradas = competencias.filter(comp => {
+        if (filtroComp !== 'todas' && Number(comp.id) !== Number(filtroComp)) return false;
+        if (filtroMes !== 'todos' && comp.fechaInicio) {
+            if (Number(filtroMes) !== (new Date(comp.fechaInicio).getMonth() + 1)) return false;
+        }
+        if (filtroAno !== 'todos' && comp.fechaInicio) {
+            if (Number(filtroAno) !== new Date(comp.fechaInicio).getFullYear()) return false;
+        }
+        return true;
+    });
+    competenciasFiltradas.sort((a, b) => new Date(a.fechaInicio) - new Date(b.fechaInicio));
+
+    // Agrupar asistencia del personal usando .reduce()
+    const asistenciaPorPersona = staff.reduce((acumulador, persona) => {
+        const competenciasAsistidas = competenciasFiltradas.filter(comp => {
+            return (comp.staffIds || []).map(Number).includes(Number(persona.id));
+        });
+        if (competenciasAsistidas.length > 0) {
+            acumulador.push({
+                persona,
+                cantidad: competenciasAsistidas.length,
+                totalCompetencias: competenciasFiltradas.length,
+                porcentaje: competenciasFiltradas.length > 0
+                    ? Math.round((competenciasAsistidas.length / competenciasFiltradas.length) * 100)
+                    : 0
+            });
+        }
+        return acumulador;
+    }, []);
+    asistenciaPorPersona.sort((a, b) => b.cantidad - a.cantidad);
+
+    // Textos legibles de los filtros aplicados
+    const txtComp = filtroComp === 'todas'
+        ? 'Todas las competencias'
+        : (selComp ? (selComp.options[selComp.selectedIndex]?.textContent.trim() || 'Todas las competencias') : 'Todas las competencias');
+    const mesesNombres = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    const txtMes = filtroMes === 'todos'
+        ? 'Todos los meses'
+        : (selMes ? (selMes.options[selMes.selectedIndex]?.textContent.trim() || 'Todos los meses') : 'Todos los meses');
+    const txtAno = filtroAno === 'todos' ? 'Todos los años' : String(filtroAno);
+
+    // 2) Formatear la fecha/hora exacta del reporte (es-AR)
+    const fechaFormateada = formatearFechaHoraReporte(fechaReporte);
+
+    // Filas de la tabla de resultados
+    let filasHtml = '';
+    if (asistenciaPorPersona.length === 0) {
+        filasHtml = '<tr><td colspan="5" style="text-align:center;color:#888;padding:1.5rem;">No hay personal asignado a las competencias que coinciden con los filtros seleccionados.</td></tr>';
+    } else {
+        asistenciaPorPersona.forEach(item => {
+            filasHtml += `<tr>
+                <td style="font-weight:600;">${escapeHtml(item.persona.nombre)} ${escapeHtml(item.persona.apellido)}</td>
+                <td>${escapeHtml(item.persona.funcion)}</td>
+                <td style="text-align:center;font-weight:600;">${item.cantidad}</td>
+                <td style="text-align:center;">${item.totalCompetencias}</td>
+                <td style="text-align:center;">${item.porcentaje}%</td>
+            </tr>`;
+        });
+    }
+
+    // 3) Armar la estructura imprimible con el elemento footer (fecha/hora exacta)
+    contenedor.innerHTML = `
+        <div class="reporte-contenido">
+            <h1>Estadísticas de Asistencia de Personal</h1>
+            <p class="reporte-sub">Análisis de asistencia y participación del personal por competencia</p>
+            <div class="reporte-filtros">
+                <strong>Filtros aplicados:</strong> Competencia: ${escapeHtml(txtComp)} | Mes: ${escapeHtml(txtMes)} | Año: ${escapeHtml(txtAno)}
+            </div>
+            <table class="reporte-tabla">
+                <thead>
+                    <tr>
+                        <th>Nombre y Apellido</th>
+                        <th>Función/Rol</th>
+                        <th>Asistencias</th>
+                        <th>Total Competencias</th>
+                        <th>% Asistencia</th>
+                    </tr>
+                </thead>
+                <tbody>${filasHtml}</tbody>
+            </table>
+        </div>
+        <!-- Pie de página: fecha y hora exacta en que se genera el reporte -->
+        <footer class="reporte-footer">${escapeHtml(fechaFormateada)}</footer>
+    `;
+
+    // 4) Activar estilos de impresión y disparar la impresión
+    document.body.classList.add('imprimiendo-estadisticas');
+    window.print();
+
+    const limpiar = () => {
+        document.body.classList.remove('imprimiendo-estadisticas');
+        contenedor.innerHTML = '';
+    };
+    if (typeof window.onafterprint !== 'undefined') {
+        window.onafterprint = limpiar;
+    } else {
+        // Firefox no soporta onafterprint
+        setTimeout(limpiar, 1000);
+    }
 }
 
 // ==================== CONFIGURACIÓN: CATEGORÍAS & CIRCUITOS ====================
@@ -5189,7 +5372,6 @@ async function openModalMovimiento() {
     document.getElementById('movimiento-id').value = '';
     document.getElementById('movimiento-talle-group').style.display = 'none';
     document.getElementById('movimiento-modal-title').textContent = 'Registrar Movimiento';
-    document.getElementById('movimiento-fecha').value = new Date().toISOString().split('T')[0];
     openModal('modal-movimiento');
 }
 
