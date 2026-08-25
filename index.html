@@ -742,6 +742,7 @@
                                     <tr>
                                         <th>Nombre</th>
                                         <th>Controla Talles</th>
+                                        <th>Tipo de Bien</th>
                                         <th>Estado</th>
                                         <th class="editor-only" style="text-align:right;">Acciones</th>
                                     </tr>
@@ -1302,8 +1303,13 @@
                         <input type="number" id="detalle-basico" step="0.01" min="0" oninput="recalcularTotalFila()">
                     </div>
                     <div class="form-group">
-                        <label for="detalle-iva">IVA ($)</label>
-                        <input type="number" id="detalle-iva" step="0.01" min="0" oninput="recalcularTotalFila()">
+                        <label for="detalle-iva-porcentaje">IVA (%)</label>
+                        <select id="detalle-iva-porcentaje" onchange="recalcularTotalFila()">
+                            <option value="21">21%</option>
+                            <option value="10.5">10,5%</option>
+                            <option value="0">0%</option>
+                        </select>
+                        <input type="number" id="detalle-iva" step="0.01" min="0" readonly aria-label="IVA calculado">
                     </div>
                     <div class="form-group">
                         <label for="detalle-impuestos-internos">Impuestos Internos ($)</label>
@@ -1700,6 +1706,7 @@
             </div>
             <form id="form-articulo" onsubmit="guardarArticuloForm(event)">
                 <input type="hidden" id="articulo-id">
+                <input type="hidden" id="articulo-tipo-bien" value="">
                 <div class="form-grid">
                     <div class="form-group">
                         <label for="articulo-codigo">Código</label>
@@ -1718,6 +1725,7 @@
                         <select id="articulo-categoria" required onchange="onCambioCategoriaArticulo()">
                             <option value="">Seleccione...</option>
                         </select>
+                        <small id="articulo-tipo-bien-info" style="display:none;color:var(--text-secondary);font-size:0.8rem;margin-top:0.25rem;"></small>
                     </div>
                     <div class="form-group">
                         <label for="articulo-subcategoria">Subcategoría</label>
@@ -1746,6 +1754,28 @@
                         <select id="articulo-estado">
                             <option value="true">Activo</option>
                             <option value="false">Inactivo</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="articulo-proveedor">Proveedor</label>
+                        <select id="articulo-proveedor">
+                            <option value="">Seleccione...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="articulo-comprobante">N° Comprobante (Remito / Factura)</label>
+                        <input type="text" id="articulo-comprobante" placeholder="Ej: R-0001 / F-0001">
+                    </div>
+                    <div id="contenedor-sector" class="form-group" style="display:none;">
+                        <label for="articulo-sector">Sector Asignado</label>
+                        <select id="articulo-sector">
+                            <option value="">Seleccione...</option>
+                            <option value="Depósito Central">Depósito Central</option>
+                            <option value="Taller">Taller</option>
+                            <option value="Oficinas">Oficinas</option>
+                            <option value="Carrera">Carrera</option>
+                            <option value="Stand / Box">Stand / Box</option>
+                            <option value="Otro">Otro</option>
                         </select>
                     </div>
                     <div class="form-group full-width">
@@ -1804,16 +1834,18 @@
             </div>
             <form id="form-movimiento" onsubmit="guardarMovimientoForm(event)">
                 <input type="hidden" id="movimiento-id">
+                <input type="hidden" id="movimiento-tipo-bien" value="">
                 <div class="form-grid">
                     <div class="form-group full-width">
                         <label for="movimiento-articulo">Artículo</label>
                         <select id="movimiento-articulo" required onchange="onCambioArticuloMovimiento()">
                             <option value="">Seleccione un artículo...</option>
                         </select>
+                        <small id="movimiento-tipo-bien-info" style="display:none;color:var(--text-secondary);font-size:0.8rem;margin-top:0.25rem;"></small>
                     </div>
                     <div class="form-group">
                         <label for="movimiento-tipo">Tipo de Movimiento</label>
-                        <select id="movimiento-tipo" required>
+                        <select id="movimiento-tipo" required onchange="onCambioTipoMovimiento()">
                             <option value="">Seleccione...</option>
                             <option value="ingreso">Ingreso</option>
                             <option value="egreso">Egreso</option>
@@ -1837,6 +1869,18 @@
                         <select id="movimiento-talle">
                             <option value="">Sin talle</option>
                         </select>
+                    </div>
+                    <div class="form-group full-width" id="movimiento-sector-group" style="display:none;">
+                        <label for="movimiento-sector-destino">Sector de Destino <span style="color:var(--accent);">*</span></label>
+                        <select id="movimiento-sector-destino">
+                            <option value="">Seleccione sector...</option>
+                            <option value="Depósito">Depósito</option>
+                            <option value="Carrera">Carrera</option>
+                            <option value="Oficina">Oficina</option>
+                            <option value="Taller">Taller</option>
+                            <option value="Otro">Otro</option>
+                        </select>
+                        <small style="color:var(--text-secondary);font-size:0.8rem;">Transferencia interna: se resta de Depósito y se suma al sector seleccionado, sin dar de baja el bien del inventario global.</small>
                     </div>
                     <div class="form-group full-width">
                         <label for="movimiento-motivo">Motivo</label>
@@ -1940,6 +1984,14 @@
                         <textarea id="categoria-inv-descripcion" rows="2" placeholder="Descripción de la categoría..."></textarea>
                     </div>
                     <div class="form-group">
+                        <label for="categoria-inv-tipo-bien">Tipo de Bien</label>
+                        <select id="categoria-inv-tipo-bien" required>
+                            <option value="">Seleccione...</option>
+                            <option value="consumible">Consumible</option>
+                            <option value="bien_uso">Bien de Uso / Activo</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
                         <label for="categoria-inv-controla-talles">Controla Talles</label>
                         <select id="categoria-inv-controla-talles">
                             <option value="false">No</option>
@@ -2037,9 +2089,15 @@
                 <button class="modal-close" onclick="closeModal('modal-agregar-gasto-extraordinario')">&times;</button>
             </div>
             <div class="modal-content">
-                <!-- Competencia seleccionada (solo lectura) -->
+                <!-- Selección de competencia y resumen -->
                 <div class="form-card" style="margin-bottom:1rem;background:rgba(0,0,0,0.2);">
                     <div class="form-title"><i class="fa-solid fa-flag-checkered"></i> Competencia</div>
+                    <div class="form-group" style="margin-bottom:0.75rem;">
+                        <label for="age-competencia">Seleccioná una competencia</label>
+                        <select id="age-competencia" required onchange="actualizarDatosCompetenciaGastoExtraordinario()">
+                            <option value="">Seleccione la competencia...</option>
+                        </select>
+                    </div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem 1rem;padding:0.5rem 0;font-size:0.9rem;">
                         <div><span style="color:var(--text-secondary);">Código:</span> <strong id="age-codigo" style="font-family:monospace;">-</strong></div>
                         <div><span style="color:var(--text-secondary);">Nombre:</span> <strong id="age-nombre">-</strong></div>

@@ -521,19 +521,19 @@ async function inicializarDatosPorDefecto() {
     const catInv = await getTodos('categoriasInventario');
     if (catInv.length === 0) {
         const categoriasInventario = [
-            { nombre: 'Indumentaria', descripcion: 'Prendas y uniformes', activo: true, controlaTalles: true },
-            { nombre: 'Banderas', descripcion: 'Banderas y banderines', activo: true, controlaTalles: false },
-            { nombre: 'Equipamiento', descripcion: 'Equipamiento general', activo: true, controlaTalles: false },
-            { nombre: 'Herramientas', descripcion: 'Herramientas manuales y eléctricas', activo: true, controlaTalles: false },
-            { nombre: 'Papelería', descripcion: 'Papelería e impresos', activo: true, controlaTalles: false },
-            { nombre: 'Electrónica', descripcion: 'Dispositivos electrónicos', activo: true, controlaTalles: false },
-            { nombre: 'Comunicación', descripcion: 'Equipos de comunicación', activo: true, controlaTalles: false },
-            { nombre: 'Mobiliario', descripcion: 'Muebles y mobiliario', activo: true, controlaTalles: false },
-            { nombre: 'Consumibles', descripcion: 'Materiales consumibles', activo: true, controlaTalles: false },
-            { nombre: 'Repuestos', descripcion: 'Repuestos y recambios', activo: true, controlaTalles: false },
-            { nombre: 'Material Deportivo', descripcion: 'Material deportivo y pista', activo: true, controlaTalles: false },
-            { nombre: 'Seguridad', descripcion: 'Elementos de seguridad', activo: true, controlaTalles: false },
-            { nombre: 'Otros', descripcion: 'Otros artículos', activo: true, controlaTalles: false }
+            { nombre: 'Indumentaria', descripcion: 'Prendas y uniformes', activo: true, controlaTalles: true, tipoBien: 'bien_uso' },
+            { nombre: 'Banderas', descripcion: 'Banderas y banderines', activo: true, controlaTalles: false, tipoBien: 'bien_uso' },
+            { nombre: 'Equipamiento', descripcion: 'Equipamiento general', activo: true, controlaTalles: false, tipoBien: 'bien_uso' },
+            { nombre: 'Herramientas', descripcion: 'Herramientas manuales y eléctricas', activo: true, controlaTalles: false, tipoBien: 'bien_uso' },
+            { nombre: 'Papelería', descripcion: 'Papelería e impresos', activo: true, controlaTalles: false, tipoBien: 'consumible' },
+            { nombre: 'Electrónica', descripcion: 'Dispositivos electrónicos', activo: true, controlaTalles: false, tipoBien: 'bien_uso' },
+            { nombre: 'Comunicación', descripcion: 'Equipos de comunicación', activo: true, controlaTalles: false, tipoBien: 'bien_uso' },
+            { nombre: 'Mobiliario', descripcion: 'Muebles y mobiliario', activo: true, controlaTalles: false, tipoBien: 'bien_uso' },
+            { nombre: 'Consumibles', descripcion: 'Materiales consumibles', activo: true, controlaTalles: false, tipoBien: 'consumible' },
+            { nombre: 'Repuestos', descripcion: 'Repuestos y recambios', activo: true, controlaTalles: false, tipoBien: 'consumible' },
+            { nombre: 'Material Deportivo', descripcion: 'Material deportivo y pista', activo: true, controlaTalles: false, tipoBien: 'bien_uso' },
+            { nombre: 'Seguridad', descripcion: 'Elementos de seguridad', activo: true, controlaTalles: false, tipoBien: 'bien_uso' },
+            { nombre: 'Otros', descripcion: 'Otros artículos', activo: true, controlaTalles: false, tipoBien: 'consumible' }
         ];
         for (const c of categoriasInventario) {
             await guardar('categoriasInventario', c);

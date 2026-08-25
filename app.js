@@ -1463,34 +1463,39 @@ async function listarGastos() {
 async function openModalGasto() {
     if (!puedeEditar()) return;
 
-    // Obtener la competencia seleccionada en el filtro de la pantalla
+    const competencias = await getTodos('competencias');
     const compFiltro = document.getElementById('filtro-competencia-gastos').value;
-    if (!compFiltro || compFiltro === 'todos') {
-        mostrarToast('Seleccioná una competencia en el filtro "Carrera" para cargar un gasto extraordinario.', 'warning');
-        return;
-    }
+    const selectComp = document.getElementById('age-competencia');
+    selectComp.innerHTML = '<option value="">Seleccione la competencia...</option>';
+    competencias
+        .sort((a, b) => new Date(b.fechaInicio) - new Date(a.fechaInicio))
+        .forEach(c => {
+            const label = c.codigo ? `${c.codigo} - ${c.nombre}` : c.nombre;
+            selectComp.innerHTML += `<option value="${c.id}">${escapeHtml(label)}</option>`;
+        });
+    selectComp.value = competencias.some(c => String(c.id) === String(compFiltro)) ? compFiltro : '';
 
-    const comp = await obtenerPorId('competencias', Number(compFiltro));
-    if (!comp) {
-        mostrarToast('Competencia no encontrada.', 'error');
-        return;
-    }
-
-    // Rellenar datos de la competencia (solo lectura)
-    document.getElementById('age-codigo').textContent = comp.codigo || 'SIN CÓDIGO';
-    document.getElementById('age-nombre').textContent = comp.nombre;
-    document.getElementById('age-fecha-inicio').textContent = formatearFechaVisual(comp.fechaInicio);
-    document.getElementById('age-fecha-fin').textContent = formatearFechaVisual(comp.fechaFin);
+    await actualizarDatosCompetenciaGastoExtraordinario();
 
     // Limpiar campos del formulario
     document.getElementById('age-concepto').value = '';
     document.getElementById('age-monto').value = '';
     document.getElementById('age-detalle').value = '';
 
-    // Guardar el ID de la competencia en el dataset del modal
-    document.getElementById('modal-agregar-gasto-extraordinario').dataset.compId = compFiltro;
-
     openModal('modal-agregar-gasto-extraordinario');
+}
+
+async function actualizarDatosCompetenciaGastoExtraordinario() {
+    const selectComp = document.getElementById('age-competencia');
+    const compId = selectComp.value;
+    const modal = document.getElementById('modal-agregar-gasto-extraordinario');
+    modal.dataset.compId = compId;
+
+    const comp = compId ? await obtenerPorId('competencias', Number(compId)) : null;
+    document.getElementById('age-codigo').textContent = comp ? (comp.codigo || 'SIN CÓDIGO') : '-';
+    document.getElementById('age-nombre').textContent = comp ? comp.nombre : '-';
+    document.getElementById('age-fecha-inicio').textContent = comp ? formatearFechaVisual(comp.fechaInicio) : '-';
+    document.getElementById('age-fecha-fin').textContent = comp ? formatearFechaVisual(comp.fechaFin) : '-';
 }
 
 // Guarda un nuevo Gasto Extraordinario vinculado a la competencia seleccionada
@@ -3995,6 +4000,7 @@ async function agregarFilaGasto() {
     document.getElementById('detalle-concepto').value = '';
     document.getElementById('detalle-descripcion').value = '';
     document.getElementById('detalle-basico').value = '';
+    document.getElementById('detalle-iva-porcentaje').value = '21';
     document.getElementById('detalle-iva').value = '';
     document.getElementById('detalle-impuestos-internos').value = '';
     document.getElementById('detalle-percepcion-iibb').value = '';
@@ -4030,6 +4036,11 @@ async function editarFilaGasto(index) {
     document.getElementById('detalle-concepto').value = detalle.conceptoId || '';
     document.getElementById('detalle-descripcion').value = detalle.descripcion || '';
     document.getElementById('detalle-basico').value = detalle.basico || '';
+    const ivaPorcentaje = detalle.ivaPorcentaje !== undefined
+        ? Number(detalle.ivaPorcentaje)
+        : (Number(detalle.basico) > 0 ? (Number(detalle.iva) / Number(detalle.basico)) * 100 : 21);
+    const ivaPorcentajeValido = [0, 10.5, 21].includes(ivaPorcentaje) ? ivaPorcentaje : 0;
+    document.getElementById('detalle-iva-porcentaje').value = String(ivaPorcentajeValido);
     document.getElementById('detalle-iva').value = detalle.iva || '';
     document.getElementById('detalle-impuestos-internos').value = detalle.impuestosInternos || '';
     document.getElementById('detalle-percepcion-iibb').value = detalle.percepcionIIBB || '';
@@ -4070,7 +4081,9 @@ function recalcularKilometros() {
 
 function recalcularTotalFila() {
     const basico = Number(document.getElementById('detalle-basico').value) || 0;
-    const iva = Number(document.getElementById('detalle-iva').value) || 0;
+    const ivaPorcentaje = Number(document.getElementById('detalle-iva-porcentaje').value) || 0;
+    const iva = Number((basico * ivaPorcentaje / 100).toFixed(2));
+    document.getElementById('detalle-iva').value = iva.toFixed(2);
     const impInt = Number(document.getElementById('detalle-impuestos-internos').value) || 0;
     const iibb = Number(document.getElementById('detalle-percepcion-iibb').value) || 0;
     const percIva = Number(document.getElementById('detalle-percepcion-iva').value) || 0;
@@ -4099,6 +4112,7 @@ async function guardarDetalleGastoForm(e) {
         conceptoId: Number(conceptoId),
         descripcion: document.getElementById('detalle-descripcion').value.trim(),
         basico: Number(document.getElementById('detalle-basico').value) || 0,
+        ivaPorcentaje: Number(document.getElementById('detalle-iva-porcentaje').value) || 0,
         iva: Number(document.getElementById('detalle-iva').value) || 0,
         impuestosInternos: Number(document.getElementById('detalle-impuestos-internos').value) || 0,
         percepcionIIBB: Number(document.getElementById('detalle-percepcion-iibb').value) || 0,
@@ -4949,12 +4963,18 @@ async function openModalArticulo() {
     await cargarSelectoresArticulo();
     document.getElementById('form-articulo').reset();
     document.getElementById('articulo-id').value = '';
+    document.getElementById('articulo-tipo-bien').value = '';
+    const tipoBienInfo = document.getElementById('articulo-tipo-bien-info');
+    if (tipoBienInfo) tipoBienInfo.style.display = 'none';
     document.getElementById('articulo-modal-title').textContent = 'Nuevo Artículo';
     document.getElementById('seccion-talles-articulo').style.display = 'none';
     document.getElementById('seccion-stock-unico').style.display = 'none';
     document.getElementById('articulo-stock-inicial').value = '0';
     document.getElementById('articulo-stock-minimo').value = '0';
     document.getElementById('articulo-estado').value = 'true';
+    document.getElementById('articulo-proveedor').value = '';
+    document.getElementById('articulo-comprobante').value = '';
+    actualizarVisibilidadSector('');
     document.getElementById('articulo-gallery').innerHTML = '';
     window.articuloImagenes = [];
     renderizarSizeMatrix([]);
@@ -4978,6 +4998,9 @@ async function editarArticulo(id) {
     document.getElementById('articulo-color').value = art.color || '';
     document.getElementById('articulo-stock-minimo').value = art.stockMinimo || 0;
     document.getElementById('articulo-estado').value = art.activo !== false ? 'true' : 'false';
+    document.getElementById('articulo-proveedor').value = art.proveedorId || '';
+    document.getElementById('articulo-comprobante').value = art.comprobante || '';
+    document.getElementById('articulo-sector').value = art.sector || '';
     document.getElementById('articulo-observaciones').value = art.observaciones || '';
     document.getElementById('articulo-imagen').value = art.imagenPrincipal || '';
     document.getElementById('articulo-modal-title').textContent = 'Editar Artículo';
@@ -5005,10 +5028,18 @@ async function editarArticulo(id) {
 }
 
 async function cargarSelectoresArticulo() {
-    const categorias = await getTodos('categoriasInventario');
-    const subcategorias = await getTodos('subcategoriasInventario');
+    const [categorias, subcategorias, proveedores] = await Promise.all([
+        getTodos('categoriasInventario'),
+        getTodos('subcategoriasInventario'),
+        getTodos('proveedores')
+    ]);
 
     const selCat = document.getElementById('articulo-categoria');
+    // Escucha el evento 'change' para evaluar el tipo de bien y la visibilidad del sector
+    if (selCat && !selCat.dataset.listenerArticuloAdjunto) {
+        selCat.addEventListener('change', onCambioCategoriaArticulo);
+        selCat.dataset.listenerArticuloAdjunto = 'true';
+    }
     const savedCat = selCat.value;
     selCat.innerHTML = '<option value="">Seleccione...</option>';
     categorias.forEach(c => selCat.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
@@ -5022,6 +5053,12 @@ async function cargarSelectoresArticulo() {
         selSub.innerHTML += `<option value="${s.id}">${s.nombre}</option>`;
     });
     selSub.value = savedSub;
+
+    const selProv = document.getElementById('articulo-proveedor');
+    const savedProv = selProv.value;
+    selProv.innerHTML = '<option value="">Seleccione...</option>';
+    proveedores.forEach(p => selProv.innerHTML += `<option value="${p.id}">${p.nombre}</option>`);
+    selProv.value = savedProv;
 }
 
 async function onCambioCategoriaArticulo() {
@@ -5029,10 +5066,29 @@ async function onCambioCategoriaArticulo() {
     if (!catId) {
         document.getElementById('seccion-talles-articulo').style.display = 'none';
         document.getElementById('seccion-stock-unico').style.display = 'none';
+        document.getElementById('articulo-tipo-bien').value = '';
+        const infoEl = document.getElementById('articulo-tipo-bien-info');
+        if (infoEl) infoEl.style.display = 'none';
         return;
     }
     const cat = await obtenerPorId('categoriasInventario', Number(catId));
     const controlaTalles = cat && cat.controlaTalles;
+
+    // ===== HERENCIA AUTOMÁTICA DEL TIPO DE BIEN =====
+    // El artículo no permite elegir el Tipo de Bien manualmente:
+    // se hereda automáticamente desde la categoría padre.
+    const tipoBien = (cat && cat.tipoBien) || 'consumible';
+    const tipoBienInput = document.getElementById('articulo-tipo-bien');
+    const tipoBienInfo = document.getElementById('articulo-tipo-bien-info');
+    if (tipoBienInput) {
+        tipoBienInput.value = tipoBien;
+    }
+    if (tipoBienInfo) {
+        const label = tipoBien === 'bien_uso' ? 'Bien de Uso / Activo' : 'Consumible';
+        const color = tipoBien === 'bien_uso' ? 'var(--accent-green)' : 'var(--accent)';
+        tipoBienInfo.innerHTML = `<i class="fa-solid fa-circle-info"></i> Tipo de Bien: <strong style="color:${color};">${label}</strong> (heredado de la categoría)`;
+        tipoBienInfo.style.display = 'block';
+    }
 
     const subcategorias = await getTodos('subcategoriasInventario');
     const selSub = document.getElementById('articulo-subcategoria');
@@ -5050,6 +5106,26 @@ async function onCambioCategoriaArticulo() {
     } else {
         document.getElementById('seccion-talles-articulo').style.display = 'none';
         document.getElementById('seccion-stock-unico').style.display = 'block';
+    }
+
+    // ===== VISIBILIDAD DEL CAMPO SECTOR ASIGNADO (SEGÚN TIPO DE BIEN) =====
+    actualizarVisibilidadSector(tipoBien);
+}
+
+// ===== CONTROL DE VISIBILIDAD DEL CAMPO SECTOR ASIGNADO =====
+// Si el artículo es un "Bien de Uso" (heredado de su categoría), se solicita
+// el sector de asignación física. Si es "Consumible" o no hay categoría,
+// se oculta el campo porque los consumibles van directo al depósito general.
+function actualizarVisibilidadSector(tipoBien) {
+    const contenedor = document.getElementById('contenedor-sector');
+    if (!contenedor) return;
+
+    if (tipoBien === 'bien_uso') {
+        contenedor.style.display = 'block';
+    } else {
+        contenedor.style.display = 'none';
+        const selectSector = document.getElementById('articulo-sector');
+        if (selectSector) selectSector.value = '';
     }
 }
 
@@ -5115,6 +5191,18 @@ async function guardarArticuloForm(e) {
     const cat = await obtenerPorId('categoriasInventario', Number(catId));
     const controlaTalles = cat && cat.controlaTalles;
 
+    // ===== HERENCIA AUTOMÁTICA DEL TIPO DE BIEN =====
+    // El artículo hereda el Tipo de Bien de su categoría padre.
+    // Si el hidden input está vacío, se re-deriva desde la categoría.
+    const tipoBienHeredado = document.getElementById('articulo-tipo-bien').value || (cat && cat.tipoBien) || 'consumible';
+
+    // ===== VALIDACIÓN CONDICIONAL DEL SECTOR ASIGNADO =====
+    // Si el artículo es un Bien de Uso, el sector es obligatorio para su asignación física.
+    if (tipoBienHeredado === 'bien_uso' && !document.getElementById('articulo-sector').value) {
+        mostrarToast('Para Bienes de Uso debe seleccionar un Sector Asignado.', 'error');
+        return;
+    }
+
     const articulo = {
         codigo,
         nombre: document.getElementById('articulo-nombre').value.trim(),
@@ -5125,8 +5213,12 @@ async function guardarArticuloForm(e) {
         modelo: document.getElementById('articulo-modelo').value.trim(),
         color: document.getElementById('articulo-color').value.trim(),
         stockMinimo: Number(document.getElementById('articulo-stock-minimo').value) || 0,
+        proveedorId: document.getElementById('articulo-proveedor').value || null,
+        comprobante: document.getElementById('articulo-comprobante').value.trim(),
+        sector: document.getElementById('articulo-sector').value || null,
         observaciones: document.getElementById('articulo-observaciones').value.trim(),
         imagenPrincipal: document.getElementById('articulo-imagen').value.trim(),
+        tipoBien: tipoBienHeredado,
         controlaTalles,
         activo: document.getElementById('articulo-estado').value === 'true',
         stockUnico: controlaTalles ? 0 : (Number(document.getElementById('articulo-stock-inicial').value) || 0),
@@ -5371,6 +5463,10 @@ async function openModalMovimiento() {
     document.getElementById('form-movimiento').reset();
     document.getElementById('movimiento-id').value = '';
     document.getElementById('movimiento-talle-group').style.display = 'none';
+    document.getElementById('movimiento-sector-group').style.display = 'none';
+    document.getElementById('movimiento-tipo-bien').value = '';
+    const tipoBienInfo = document.getElementById('movimiento-tipo-bien-info');
+    if (tipoBienInfo) tipoBienInfo.style.display = 'none';
     document.getElementById('movimiento-modal-title').textContent = 'Registrar Movimiento';
     openModal('modal-movimiento');
 }
@@ -5379,6 +5475,10 @@ async function onCambioArticuloMovimiento() {
     const artId = document.getElementById('movimiento-articulo').value;
     if (!artId) {
         document.getElementById('movimiento-talle-group').style.display = 'none';
+        document.getElementById('movimiento-sector-group').style.display = 'none';
+        document.getElementById('movimiento-tipo-bien').value = '';
+        const infoEl = document.getElementById('movimiento-tipo-bien-info');
+        if (infoEl) infoEl.style.display = 'none';
         return;
     }
     const art = await obtenerPorId('articulos', Number(artId));
@@ -5393,6 +5493,54 @@ async function onCambioArticuloMovimiento() {
     } else {
         document.getElementById('movimiento-talle-group').style.display = 'none';
     }
+
+    // ===== LECTURA DEL TIPO DE BIEN DESDE LA CATEGORÍA DEL ARTÍCULO =====
+    // El artículo heredó el tipoBien de su categoría. Si no lo tiene, se re-deriva desde la categoría padre.
+    let tipoBien = art && art.tipoBien;
+    if (!tipoBien && art && art.categoriaId) {
+        const cat = await obtenerPorId('categoriasInventario', Number(art.categoriaId));
+        tipoBien = (cat && cat.tipoBien) || 'consumible';
+    }
+    if (!tipoBien) tipoBien = 'consumible';
+
+    const tipoBienInput = document.getElementById('movimiento-tipo-bien');
+    const tipoBienInfo = document.getElementById('movimiento-tipo-bien-info');
+    if (tipoBienInput) tipoBienInput.value = tipoBien;
+    if (tipoBienInfo) {
+        const label = tipoBien === 'bien_uso' ? 'Bien de Uso / Activo' : 'Consumible';
+        const color = tipoBien === 'bien_uso' ? 'var(--accent-green)' : 'var(--accent)';
+        tipoBienInfo.innerHTML = `<i class="fa-solid fa-circle-info"></i> Tipo de Bien: <strong style="color:${color};">${label}</strong>`;
+        tipoBienInfo.style.display = 'block';
+    }
+
+    // Evaluar visibilidad del Sector de Destino ante cambios de artículo o tipo
+    onCambioTipoMovimiento();
+}
+
+// ===== LÓGICA CONDICIONAL SEGÚN TIPO DE MOVIMIENTO Y TIPO DE BIEN =====
+// Si el movimiento es EGRESO y el artículo es "Consumible": se restará el stock por completo.
+// Si el movimiento es EGRESO y el artículo es "Bien de Uso": se debe indicar el Sector de Destino
+// para realizar una transferencia interna (restar de Depósito y sumar a Sector), sin dar de baja el bien.
+function onCambioTipoMovimiento() {
+    const tipoMovimiento = document.getElementById('movimiento-tipo').value;
+    const tipoBien = document.getElementById('movimiento-tipo-bien').value;
+
+    // Solo para EGRESO con Bien de Uso se muestra el Sector de Destino obligatorio
+    const esEgreso = tipoMovimiento === 'egreso';
+    const esBienUso = tipoBien === 'bien_uso';
+    const sectorGroup = document.getElementById('movimiento-sector-group');
+    const sectorSelect = document.getElementById('movimiento-sector-destino');
+
+    if (esEgreso && esBienUso) {
+        if (sectorGroup) sectorGroup.style.display = 'block';
+        if (sectorSelect) sectorSelect.required = true;
+    } else {
+        if (sectorGroup) sectorGroup.style.display = 'none';
+        if (sectorSelect) {
+            sectorSelect.required = false;
+            sectorSelect.value = '';
+        }
+    }
 }
 
 async function guardarMovimientoForm(e) {
@@ -5405,6 +5553,8 @@ async function guardarMovimientoForm(e) {
     const talleId = document.getElementById('movimiento-talle').value || null;
     const motivo = document.getElementById('movimiento-motivo').value.trim();
     const observaciones = document.getElementById('movimiento-observaciones').value.trim();
+    const tipoBien = document.getElementById('movimiento-tipo-bien').value || 'consumible';
+    const sectorDestino = document.getElementById('movimiento-sector-destino').value;
 
     if (!articuloId || !tipo || !cantidad || !motivo) {
         mostrarToast('Completá todos los campos requeridos.', 'error');
@@ -5414,7 +5564,19 @@ async function guardarMovimientoForm(e) {
     const art = await obtenerPorId('articulos', Number(articuloId));
     if (!art) { mostrarToast('Artículo no encontrado.', 'error'); return; }
 
+    // ===== LÓGICA CONDICIONAL SEGÚN TIPO DE BIEN =====
     const esEgreso = ['egreso', 'entrega', 'perdida', 'rotura', 'transferencia'].includes(tipo);
+    const esBienUso = tipoBien === 'bien_uso';
+
+    // Si es EGRESO y el artículo es Bien de Uso: se requiere Sector de Destino (transferencia interna)
+    if (tipo === 'egreso' && esBienUso) {
+        if (!sectorDestino) {
+            mostrarToast('Para Bienes de Uso, debe seleccionar el Sector de Destino.', 'error');
+            return;
+        }
+    }
+
+    // Validar stock suficiente para egresos
     if (esEgreso) {
         let stockActual = 0;
         if (art.controlaTalles && talleId) {
@@ -5434,6 +5596,9 @@ async function guardarMovimientoForm(e) {
         articuloId: Number(articuloId),
         talleId: talleId ? Number(talleId) : null,
         tipoMovimiento: tipo,
+        tipoBien: tipoBien,
+        sectorDestino: sectorDestino || null,
+        esTransferencia: (tipo === 'egreso' && esBienUso),
         cantidad,
         motivo,
         observaciones,
@@ -5443,6 +5608,11 @@ async function guardarMovimientoForm(e) {
 
     await guardar('movimientosInventario', mov);
 
+    // ===== AJUSTE DE STOCK =====
+    // Consumible en EGRESO: se resta el stock (se da de baja el bien consumible).
+    // Bien de Uso en EGRESO (transferencia interna): se resta de Depósito, y el bien
+    // permanece en el inventario global (no se da de baja). El sector de destino
+    // queda registrado en el movimiento para trazabilidad.
     if (art.controlaTalles && talleId) {
         const tallesArt = await getTodos('articuloTalles');
         let talleArt = tallesArt.find(t => Number(t.articuloId) === Number(articuloId) && Number(t.talleId) === Number(talleId));
@@ -5473,7 +5643,8 @@ async function guardarMovimientoForm(e) {
     invalidarCache('movimientosInventario');
 
     closeModal('modal-movimiento');
-    mostrarToast(`Movimiento registrado: ${tipo} de ${cantidad} unidades.`);
+    const tipoLabel = (tipo === 'egreso' && esBienUso) ? `transferencia interna a ${sectorDestino}` : `${tipo} de ${cantidad} unidades`;
+    mostrarToast(`Movimiento registrado: ${tipoLabel}.`);
 
     const activeView = document.querySelector('.view.active');
     if (activeView) {
@@ -5499,10 +5670,12 @@ async function listarCategoriasInventario() {
             </td>
         ` : '';
         const tallesBadge = c.controlaTalles ? '<span class="badge badge-info">Sí</span>' : '<span class="badge badge-secondary">No</span>';
+        const tipoBienBadge = c.tipoBien === 'bien_uso' ? '<span class="badge badge-active">Bien de Uso</span>' : '<span class="badge badge-secondary">Consumible</span>';
         const estadoBadge = c.activo !== false ? '<span class="badge badge-active">Activo</span>' : '<span class="badge badge-inactive">Inactivo</span>';
         catBody.innerHTML += `<tr>
             <td style="font-weight:600;">${escapeHtml(c.nombre)}</td>
             <td>${tallesBadge}</td>
+            <td>${tipoBienBadge}</td>
             <td>${estadoBadge}</td>
             ${acciones}
         </tr>`;
@@ -5547,6 +5720,7 @@ function openModalCategoriaInventario() {
     if (!puedeEditar()) return;
     document.getElementById('form-categoria-inventario').reset();
     document.getElementById('categoria-inv-id').value = '';
+    document.getElementById('categoria-inv-tipo-bien').value = '';
     document.getElementById('categoria-inv-controla-talles').value = 'false';
     document.getElementById('categoria-inv-activo').value = 'true';
     document.getElementById('categoria-inv-modal-title').textContent = 'Nueva Categoría de Inventario';
@@ -5560,6 +5734,7 @@ async function editarCategoriaInventario(id) {
     document.getElementById('categoria-inv-id').value = c.id;
     document.getElementById('categoria-inv-nombre').value = c.nombre;
     document.getElementById('categoria-inv-descripcion').value = c.descripcion || '';
+    document.getElementById('categoria-inv-tipo-bien').value = c.tipoBien || 'consumible';
     document.getElementById('categoria-inv-controla-talles').value = c.controlaTalles ? 'true' : 'false';
     document.getElementById('categoria-inv-activo').value = c.activo !== false ? 'true' : 'false';
     document.getElementById('categoria-inv-modal-title').textContent = 'Editar Categoría';
@@ -5570,9 +5745,15 @@ async function guardarCategoriaInventarioForm(e) {
     e.preventDefault();
     if (!puedeEditar()) return;
     const id = document.getElementById('categoria-inv-id').value;
+    const tipoBien = document.getElementById('categoria-inv-tipo-bien').value;
+    if (!tipoBien) {
+        mostrarToast('Debe seleccionar un Tipo de Bien.', 'error');
+        return;
+    }
     const cat = {
         nombre: document.getElementById('categoria-inv-nombre').value.trim(),
         descripcion: document.getElementById('categoria-inv-descripcion').value.trim(),
+        tipoBien: tipoBien,
         controlaTalles: document.getElementById('categoria-inv-controla-talles').value === 'true',
         activo: document.getElementById('categoria-inv-activo').value === 'true'
     };
