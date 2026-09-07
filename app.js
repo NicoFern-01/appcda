@@ -66,6 +66,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
         await inicializarFirebase();
         await inicializarDatosPorDefecto();
+
+        // FASE 1: migración del esquema de inventario a stock por ubicación (DB v9).
+        // Idempotente: solo se ejecuta una vez (flag en localStorage).
+        try {
+            await migrarInventarioV9();
+            await migrarTiposMovimientoV10();
+        } catch (err) {
+            console.warn('La migración V9 no pudo completarse en este arranque:', err);
+        }
         
         // Restaurar sesión desde localStorage si existe
         const sessionStr = localStorage.getItem('cda_session');
@@ -2563,6 +2572,108 @@ function togglePasswordVisibilityModal() {
     passwordInput.type = checkbox.checked ? 'text' : 'password';
 }
 
+// Abre el sub-modal de gestión de tipos de movimiento (solo Admin..
+function abrirGestionTiposMovimientoV10() {
+    if (!esAdmin()) return;
+    renderizarListaTiposMovimiento();
+    openModal('subModalGestionTiposMovimiento');
+}
+
+// Renderiza la lista de tipos (canónicos + personalizados) con toggle Activar/Desactivar..
+async function renderizarListaTiposMovimiento() {
+    const container = document.getElementById('lista-tipos-movimiento');
+    if (!container) return;
+    const tipos = await getTodos('tiposMovimiento');
+    container.innerHTML = '';
+    if (!tipos || tipos.length === 0) {
+        container.innerHTML = '<span style="color:var(--text-secondary);font-size:0.85rem;text-align:center;padding:0.5rem;">No hay tipos registrados.</span>';
+        return;
+    }
+    const CANONICOS_V10 = ['ingreso', 'consumo', 'transferencia_interna', 'devolucion', 'baja', 'ajuste'];
+    for (const t of tipos) {
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0.75rem;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border-color);';
+        const spanWrap = document.createElement('span');
+        spanWrap.style.cssText = 'display:flex;align-items:center;gap:0.4rem;';
+        const span = document.createElement('span');
+        span.textContent = t.label || t.valor;
+        span.style.cssText = 'font-weight:500;';
+        spanWrap.appendChild(span);
+        const natBadge = document.createElement('span');
+        natBadge.className = 'badge badge-info';
+        natBadge.style.fontSize = '0.7rem';
+        natBadge.textContent = 'Naturaleza: ' + (t.naturaleza || t.valor);
+        spanWrap.appendChild(natBadge);
+        if (CANONICOS_V10.includes(t.valor)) {
+            const canBadge = document.createElement('span');
+            canBadge.className = 'badge badge-active';
+            canBadge.style.fontSize = '0.7rem';
+            canBadge.textContent = 'Canónico';
+            spanWrap.appendChild(canBadge);
+        }
+        if (t.activo === false) {
+            const inactBadge = document.createElement('span');
+            inactBadge.className = 'badge badge-inactive';
+            inactBadge.style.fontSize = '0.7rem';
+            inactBadge.textContent = 'Inactivo';
+            spanWrap.appendChild(inactBadge);
+        }
+        const btnWrap = document.createElement('span');
+        btnWrap.style.cssText = 'display:flex;align-items:center;gap:0.3rem;';
+        const btnToggle = document.createElement('button');
+        btnToggle.type = 'button';
+        btnToggle.className = 'action-btn';
+        btnToggle.title = t.activo === false ? 'Activar tipo' : 'Desactivar tipo';
+        btnToggle.innerHTML = t.activo === false ? '<i class="fa-solid fa-play"></i>' : '<i class="fa-solid fa-pause"></i>';
+        btnToggle.onclick = () => toggleTipoMovimientoActivoV10(t.id);
+        btnWrap.appendChild(btnToggle);
+        div.appendChild(spanWrap);
+        div.appendChild(btnWrap);
+        container.appendChild(div);
+    }
+}
+
+// Crea un tipo personalizado vinculado a una naturaleza canónica (la matemática de stock que
+// heredará). Respalda en IndexedDB y se refleja a Firestore vía guardar()..
+async function agregarTipoMovimientoV10() {
+    if (!esAdmin()) return;
+    const input = document.getElementById('nuevo-tipo-nombre');
+    const naturalezaSel = document.getElementById('nuevo-tipo-naturaleza');
+    if (!input || !naturalezaSel) return;
+    const nombre = input.value.trim();
+    if (!nombre) { mostrarToast('Ingresá el nombre del tipo.', 'warning'); return; }
+    const slug = nombre.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!slug) { mostrarToast('Nombre inválido para generar el identificador.', 'error'); return; }
+    const naturaleza = naturalezaSel.value;
+    const tipos = await getTodos('tiposMovimiento');
+    if (tipos.some(t => String(t.valor).toLowerCase() === slug.toLowerCase())) {
+        mostrarToast('Ya existe un tipo con ese identificador.', 'error');
+        return;
+    }
+    await guardar('tiposMovimiento', { valor: slug, label: nombre, naturaleza, activo: true });
+    invalidarCache('tiposMovimiento');
+    input.value = '';
+    await renderizarListaTiposMovimiento();
+    await poblarSelectTiposMovimientoV9();
+    // Preseleccionar el nuevo tipo en el formulario de fondo..
+    const selMov = document.getElementById('movimiento-tipo');
+    if (selMov) selMov.value = slug;
+    mostrarToast(`Tipo "${nombre}" creado y preseleccionado.`);
+}
+
+// Toggle Activar/Desactivar de un tipo de movimiento (solo Admin..
+async function toggleTipoMovimientoActivoV10(id) {
+    if (!esAdmin()) return;
+    const t = await obtenerPorId('tiposMovimiento', Number(id));
+    if (!t) return;
+    t.activo= t.activo === false ? true : false;
+    await guardar('tiposMovimiento', t);
+    invalidarCache('tiposMovimiento');
+    await renderizarListaTiposMovimiento();
+    await poblarSelectTiposMovimientoV9();
+    mostrarToast(`Tipo "${t.label || t.valor}" ${t.activo ? 'activado' : 'desactivado'}.`);
+}
+
 async function eliminarUsuario(id) {
     if (!esAdmin()) return;
     if (currentUser && currentUser.id === id) { alert('No podés eliminar tu propio usuario.'); return; }
@@ -2606,7 +2717,8 @@ async function exportarDatos() {
         entregasInventario: await getTodos('entregasInventario'),
         detalleEntregas: await getTodos('detalleEntregas'),
         imagenesArticulo: await getTodos('imagenesArticulo'),
-        personalCompetencia: await getTodos('personalCompetencia')
+        personalCompetencia: await getTodos('personalCompetencia'),
+        ubicacionesInventario: await getTodos('ubicacionesInventario')
     };
     const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(backup, null, 2))}`;
     const a = document.createElement('a');
@@ -3273,7 +3385,7 @@ async function listarRendiciones() {
     tbody.innerHTML = '';
 
     if (filtradas.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-secondary);">No hay rendiciones registradas. Hacé clic en "Nueva Rendición" para comenzar.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);">No hay rendiciones registradas. Hacé clic en "Nueva Rendición" para comenzar.</td></tr>`;
         return;
     }
 
@@ -4597,6 +4709,170 @@ async function cargarDatosVista(viewId) {
     }
 }
 
+// ===== CLASIFICACIÓN VISUAL DE MOVIMIENTOS (vocabulario canónico Fase 3) =====
+// Reemplaza las listas hardcodeadas de ingresos/egresos: se basa en 'tipoMovimiento'
+// y en la propiedad booleana 'esIngreso' (migrada en Fase 1 y escrita en Fase 2).
+function categorizarMovimientoV9(mov) {
+    const tipo = String(mov.tipoMovimiento || '').toLowerCase();
+    const LABELS = {
+        ingreso: 'Ingreso',
+        consumo: 'Consumo',
+        'transferencia_interna': 'Transferencia interna',
+        devolucion: 'Devolución',
+        baja: 'Baja',
+        ajuste: 'Ajuste'
+    };
+    const label = LABELS[tipo] || tipo || 'Movimiento';
+    const cantidad = Number(mov.cantidad || 0);
+    switch (tipo) {
+        case 'ingreso':
+        case 'devolucion':
+            return { clase: 'mov-in', icono: 'fa-arrow-down', label, signo: '+', cantidad };
+        case 'consumo':
+        case 'baja':
+            return { clase: 'mov-out', icono: 'fa-arrow-up', label, signo: '-', cantidad };
+        case 'transferencia_interna':
+            return { clase: 'mov-transfer', icono: 'fa-arrow-right-arrow-left', label, signo: '', cantidad };
+        case 'ajuste':
+            return { clase: 'mov-adjust', icono: 'fa-scale-balanced', label, signo: '±', cantidad };
+        default: {
+            const esIngreso = mov.esIngreso === true || ['ingreso', 'devolucion', 'compra', 'reposicion'].includes(tipo);
+            return { clase: esIngreso ? 'mov-in' : 'mov-out', icono: esIngreso ? 'fa-arrow-down' : 'fa-arrow-up', label, signo: esIngreso ? '+' : '-', cantidad };
+        }
+    }
+}
+
+// ===== DESGLOSE DE STOCK POR UBICACIÓN (Fase 3) =====
+// Agrega el array embebido articulo.ubicaciones[] por ubicación (sumando entre talles)
+// y devuelve [{ nombre, cantidad }] ordenado de mayor a menor. Devuelve [] si el artículo
+// aún no tiene datos migrados (legacy), en cuyo caso la UI muestra solo el total.
+function construirDesgloseStockV9(art, articuloTalles, ubicaciones) {
+    if (!art || !Array.isArray(art.ubicaciones) || art.ubicaciones.length === 0) return [];
+    const nombreDe = (idUbi) => {
+        const u = (ubicaciones || []).find(x => Number(x.id) === Number(idUbi));
+        return u ? u.nombre : null;
+    };
+    const mapa = new Map();
+    for (const fila of art.ubicaciones) {
+        if (!fila) continue;
+        const cant = Number(fila.cantidad || 0);
+        if (!cant) continue;
+        const nombre = nombreDe(fila.ubicacionId) || `Ubicación ${fila.ubicacionId}`;
+        mapa.set(nombre, (mapa.get(nombre) || 0) + cant);
+    }
+    return Array.from(mapa.entries())
+        .map(([nombre, cantidad]) => ({ nombre, cantidad }))
+        .sort((a, b) => b.cantidad - a.cantidad);
+}
+
+// Muestra/oculta el desglose de ubicaciones bajo el badge de stock de la tabla de artículos.
+function toggleDesgloseStockV9(badgeEl) {
+    const detalle = badgeEl.parentElement && badgeEl.parentElement.querySelector('.stock-desglose');
+    if (!detalle) return;
+    const visible = detalle.style.display !== 'none';
+    detalle.style.display = visible ? 'none' : 'block';
+    const chev = badgeEl.querySelector('.fa-chevron-down, .fa-chevron-up');
+    if (chev) chev.className = visible ? 'fa-solid fa-chevron-down fa-xs' : 'fa-solid fa-chevron-up fa-xs';
+}
+// ===== TIPO DE BIEN EFECTIVO (corrección Fase 3) =====
+// Los artículos legacy no tienen 'tipoBien' propio: lo heredan de su categoría. Si se lee
+// 'art.tipoBien' directo, un Bien de Uso antiguo se clasifica como 'consumible' y una
+// entrega le descuenta stock del patrimonio total. Resolver SIEMPRE con estos helpers.
+// ===== AUTO-REPARACIÓN DE ubicaciones[] (pura, sin efectos secundarios) =====
+// Reconstruye la distribución por ubicación de un artículo cuyo array fue perdido
+// (ej.: re-escritura del documento desde el formulario de edición). Replays el historial
+// de movimientos y devuelve las filas SOLO si el replay cuadra con el stock declarado.
+function reconstruirUbicacionesDesdeMovimientosV9(art, movimientos, catalogo, idBodega) {
+    try {
+        if (!art || art.controlaTalles) return null; // artículos con talles usan el fallback clásico
+        if (!Array.isArray(movimientos) || !Array.isArray(catalogo) || !Number.isFinite(Number(idBodega))) return null;
+        const mapaUbiV9 = new Map(catalogo.map(u => [String(u && u.nombre).trim().toLowerCase(), Number(u.id)]));
+        const idDeNombre = (nombre) => {
+            const id = mapaUbiV9.get(String(nombre == null ? '' : nombre).trim().toLowerCase());
+            return Number.isFinite(id) ? id : null;
+        };
+        const clave = (u, t) => `${u == null ? 'null' : Number(u)}|${t == null ? 'null' : Number(t)}`;
+        // Estrategia A: el stock declarado arranca en Bodega y se replaya el historial.
+        // Estrategia B: arranca en 0 y el historial (ingresos) crea el stock. Se acepta la
+        // primera cuya suma final coincida con stockUnico; si ninguna cuadra, null (fallback).
+        const replay = (inicialEnBodega) => {
+            const map = new Map();
+            const add = (u, t, d) => { const k = clave(u, t); map.set(k, (map.get(k) || 0) + d); };
+            if (inicialEnBodega) add(Number(idBodega), null, Number(art.stockUnico || 0));
+            const movs = movimientos
+                .filter(m => Number(m && m.articuloId) === Number(art.id))
+                .sort((a, b) => new Date(a.fecha || 0) - new Date(b.fecha || 0));
+            if (movs.length === 0) return inicialEnBodega ? [{ id: -1, ubicacionId: Number(idBodega), talleId: null, cantidad: Number(art.stockUnico || 0) }] : null;
+            for (const m of movs) {
+                const cant = Number(m.cantidad || 0);
+                if (!Number.isFinite(cant) || cant === 0) continue;
+                const talleId = m.talleId ? Number(m.talleId) : null;
+                // Normaliza tipos legacy (egreso/entrega/perdida/...) al vocabulario canónico.
+                const tipo = (typeof mapearTipoMovimientoV9 === 'function')
+                    ? String(mapearTipoMovimientoV9(m.tipoMovimiento, art.tipoBien || null) || '').toLowerCase()
+                    : String(m.tipoMovimiento || '').toLowerCase();
+                if (tipo === 'ingreso' || tipo === 'devolucion') {
+                    const dest = idDeNombre(String(m.ubicacionDestino || '').trim().toLowerCase()) || Number(idBodega);
+                    add(dest, talleId, cant);
+                } else if (tipo === 'consumo' || tipo === 'baja') {
+                    const orig = idDeNombre(String(m.ubicacionOrigen || '').trim().toLowerCase()) || Number(idBodega);
+                    add(orig, talleId, -cant);
+                } else if (tipo === 'transferencia_interna') {
+                    const orig = idDeNombre(String(m.ubicacionOrigen || '').trim().toLowerCase()) || Number(idBodega);
+                    const dest = idDeNombre(String(m.ubicacionDestino || '').trim().toLowerCase());
+                    if (dest != null) { add(orig, talleId, -cant); add(dest, talleId, cant); }
+                }
+            }
+            const filas = [];
+            let suma = 0;
+            for (const [k, cant] of map) {
+                const [u, t] = k.split('|');
+                const c = Math.max(0, Number(cant) || 0); // anti-negativos defensivo
+                if (c === 0) continue;
+                suma += c;
+                filas.push({ id: -(Number(art.id) || 0) * 1000 - filas.length - 1, ubicacionId: Number(u), talleId: t === 'null' ? null : Number(t), cantidad: c });
+            }
+            return (filas.length > 0 && suma === Number(art.stockUnico || 0)) ? filas : null;
+        };
+        return replay(true) || replay(false);
+    } catch (e) {
+        console.warn('reconstruirUbicacionesDesdeMovimientosV9: no se pudo reconstruir:', e);
+        return null;
+    }
+}
+
+function tipoBienEfectivoV9(art, categorias) {
+    try {
+        if (art && art.tipoBien) return art.tipoBien;
+        const lista = Array.isArray(categorias) ? categorias : [];
+        const cat = lista.find(c => c && Number(c.id) === Number(art && art.categoriaId));
+        if (cat && cat.tipoBien) return cat.tipoBien;
+        // Última línea de defensa: 'sector' (ubicación física asignada) solo se guarda en
+        // Bienes de Uso. Si el artículo lo tiene poblado sin tipoBien heredable, es un bien de uso.
+        if (art && art.sector) return 'bien_uso';
+        return 'consumible';
+    } catch (e) {
+        console.warn('tipoBienEfectivoV9: datos inconsistentes, fallback a consumible:', e);
+        return 'consumible';
+    }
+}
+
+// Variante async para contextos sin la lista de categorías cargada (formularios).
+async function resolverTipoBienArticuloV9(art) {
+    try {
+        if (art && art.tipoBien) return art.tipoBien;
+        if (art && art.categoriaId) {
+            const cat = await obtenerPorId('categoriasInventario', Number(art.categoriaId));
+            if (cat && cat.tipoBien) return cat.tipoBien;
+        }
+        if (art && art.sector) return 'bien_uso';
+        return 'consumible';
+    } catch (e) {
+        console.warn('resolverTipoBienArticuloV9: datos inconsistentes, fallback a consumible:', e);
+        return 'consumible';
+    }
+}
+
 async function renderDashboardInventario() {
     const [articulos, articuloTalles, movimientos] = await Promise.all([
         getTodos('articulos'),
@@ -4696,17 +4972,16 @@ async function renderDashboardInventario() {
     for (const mov of ultimosMov) {
         const art = await obtenerPorId('articulos', Number(mov.articuloId));
         const artName = art ? art.nombre : 'ID: ' + mov.articuloId;
-        const esIngreso = ['ingreso', 'devolucion', 'compra', 'reposicion'].includes(mov.tipoMovimiento);
+        const c = categorizarMovimientoV9(mov);
         const item = document.createElement('div');
-        item.className = `movement-item ${esIngreso ? 'mov-in' : 'mov-out'}`;
-        const icono = esIngreso ? 'fa-arrow-down' : 'fa-arrow-up';
+        item.className = `movement-item ${c.clase}`;
         item.innerHTML = `
-            <div class="mov-icon"><i class="fa-solid ${icono}"></i></div>
+            <div class="mov-icon"><i class="fa-solid ${c.icono}"></i></div>
             <div class="mov-info">
-                <div class="mov-title">${artName}</div>
-                <div class="mov-meta">${mov.tipoMovimiento} • ${mov.motivo || ''} • ${formatearFechaVisual(mov.fecha)}</div>
+                <div class="mov-title">${escapeHtml(artName)}</div>
+                <div class="mov-meta">${c.label} • ${escapeHtml(mov.motivo || '')} • ${formatearFechaVisual(mov.fecha)}</div>
             </div>
-            <div class="mov-qty">${esIngreso ? '+' : '-'}${mov.cantidad}</div>
+            <div class="mov-qty">${c.signo}${c.cantidad}</div>
         `;
         container.appendChild(item);
     }
@@ -4762,10 +5037,12 @@ async function obtenerStockArticulo(articuloId, articuloTalles) {
 }
 
 async function listarArticulos() {
-    const [articulos, categorias, articuloTalles] = await Promise.all([
+    const [articulos, categorias, articuloTalles, ubicaciones, movimientosInventario] = await Promise.all([
         getTodos('articulos'),
         getTodos('categoriasInventario'),
-        getTodos('articuloTalles')
+        getTodos('articuloTalles'),
+        getTodos('ubicacionesInventario'),
+        getTodos('movimientosInventario')
     ]);
 
     const filtroCat = document.getElementById('filtro-articulo-categoria').value;
@@ -4794,34 +5071,107 @@ async function listarArticulos() {
     tbody.innerHTML = '';
 
     if (filtrados.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-secondary);">No hay artículos que coincidan con los filtros.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-secondary);">No hay artículos que coincidan con los filtros.</td></tr>`;
         return;
     }
 
     for (const art of filtrados) {
+      // Blindaje por artículo (Fase 3-hotfix): si el cálculo de stock/estados de UN artículo
+      // falla, se registra el error y se pinta una fila genérica; la tabla NUNCA queda vacía.
+      try {
         const cat = categorias.find(c => c.id === Number(art.categoriaId));
         const catName = cat ? cat.nombre : '-';
 
-        let stock = 0;
+        // FASE 3 (corrección): cálculo de stock según Tipo de Bien.
+        // Consumible  → stock mostrado = Bodega Central (lo entregado se considera gastado).
+        // Bien de Uso → stock mostrado = SUMATORIA ABSOLUTA de TODAS las ubicaciones
+        //               (Bodega + Camión + Carrera + ...): el activo sigue existiendo.
+        const esBienUso = tipoBienEfectivoV9(art, categorias) === 'bien_uso';
+        let total = 0, enBodega = null, enUsoV9 = 0;
         if (art.controlaTalles) {
             const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
-            stock = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
+            total = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
         } else {
-            stock = Number(art.stockUnico || 0);
+            total = Number(art.stockUnico || 0);
         }
+        const bodegaUbiV9 = (ubicaciones || []).find(u => String(u.nombre).trim().toLowerCase() === 'depósito central')
+            || (ubicaciones || []).find(u => String(u.nombre).trim().toLowerCase().includes('depósito'));
+        // Validación en caliente (solo memoria, no persiste): si la migración V9 aún no cubrió
+        // este artículo (sin ubicaciones[]), se inicializa con todo su stock en Bodega Central
+        // para que el desglose y el cálculo funcionen y la pantalla no quede en blanco.
+        if ((!Array.isArray(art.ubicaciones) || art.ubicaciones.length === 0) && bodegaUbiV9) {
+            // Auto-reparación (Fase-3 hotparche): primero se intenta reconstruir la distribución
+            // REAL desde el historial de movimientos; si no hay historial útil, se asume todo
+            // el stock en Bodega Central (comportamiento anterior).
+            const reconstruidasV9 = reconstruirUbicacionesDesdeMovimientosV9(art, movimientosInventario, ubicaciones || [], Number(bodegaUbiV9.id));
+            art.ubicaciones = reconstruidasV9 || [{ id: -Number(art.id || 0), ubicacionId: Number(bodegaUbiV9.id), talleId: null, cantidad: total }];
+            // La reparación exitosa se persiste para no reprocesarla en cada render (solo entra
+            // aquí cuando el documento NO tiene ubicaciones[]; es idempotente).
+            if (reconstruidasV9) {
+                try {
+                    await guardar('articulos', art);
+                    console.log(`listarArticulos: ubicaciones[] reconstruidas desde movimientos para el artículo ${art.id}.`);
+                } catch (eRepV9) { console.warn('No se pudo persistir la reparación de ubicaciones:', eRepV9); }
+            }
+        }
+        if (Array.isArray(art.ubicaciones) && art.ubicaciones.length > 0 && bodegaUbiV9) {
+            const idBodegaV9 = Number(bodegaUbiV9.id);
+            // "En Bodega" = estrictamente la(s) fila(s) cuya ubicacionId es la Bodega principal.
+            enBodega = art.ubicaciones.filter(f => Number(f.ubicacionId) === idBodegaV9).reduce((s, f) => s + Number(f.cantidad || 0), 0);
+            // "En Uso" = sumatoria DIRECTA de TODAS las demás ubicaciones (Camión, Carrera, ...).
+            // Nunca se deriva del total: se cuenta fila por fila.
+            enUsoV9 = art.ubicaciones.filter(f => Number(f.ubicacionId) !== idBodegaV9).reduce((s, f) => s + Number(f.cantidad || 0), 0);
+        }
+        // REGLA (Bien de Uso): el número principal del badge SIEMPRE es el reduce() absoluto de
+        // TODAS las cantidades del array ubicaciones[] (Bodega + Camión + Carrera + ...). Nunca
+        // el stock de una sola ubicación ni un stockUnico/articuloTalles desactualizado.
+        if (esBienUso && Array.isArray(art.ubicaciones) && art.ubicaciones.length > 0) {
+            total = art.ubicaciones.reduce((s, f) => s + Number(f.cantidad || 0), 0);
+        }
+        const stock = esBienUso ? total : (enBodega != null ? enBodega : total);
 
+        const stockParaAlerta = esBienUso ? total : stock;
         let stockBadge = 'stock-ok';
-        if (stock === 0) stockBadge = 'stock-out';
-        else if (stock <= (art.stockMinimo || 0)) stockBadge = 'stock-low';
+        if (stockParaAlerta === 0) stockBadge = 'stock-out';
+        else if (stockParaAlerta <= (art.stockMinimo || 0)) stockBadge = 'stock-low';
 
         const estadoBadge = art.activo !== false ? 'badge-active' : 'badge-inactive';
         const estadoText = art.activo !== false ? 'Activo' : 'Inactivo';
+
+        // Celda de stock: desglose "¿dónde está físicamente?" a partir de art.ubicaciones[].
+        // Bien de Uso → "Total: 10 (3 en Bodega / 7 en Uso)" con badges de estado.
+        const desgloseStock = construirDesgloseStockV9(art, articuloTalles, ubicaciones || []);
+        let stockCellHtml;
+        if (esBienUso && desgloseStock.length > 0) {
+            // enUsoV9 ya fue calculado como sumatoria directa de las ubicaciones != Bodega.
+            const resumenV9 = desgloseStock.map(d => `${d.nombre}: ${d.cantidad}`).join(' | ') + ` (Total: ${total})`;
+            const itemsV9 = desgloseStock.map(d => `<div class="stock-desglose-item"><span>${escapeHtml(d.nombre)}</span><b>${d.cantidad}</b></div>`).join('');
+            stockCellHtml = `
+                <span class="stock-badge ${stockBadge} stock-desglose-toggle" title="${escapeHtml(resumenV9)}" onclick="toggleDesgloseStockV9(this)"><i class="fa-solid fa-cube"></i> Total: ${total} <i class="fa-solid fa-chevron-down fa-xs"></i></span>
+                <div class="stock-estados-bu">
+                    <span class="stock-estado stock-estado-bodega" title="Disponible en Bodega Central"><i class="fa-solid fa-warehouse"></i> ${enBodega != null ? enBodega : 0} en Bodega</span>
+                    <span class="stock-estado stock-estado-uso" title="Asignado a ubicaciones operativas (en uso)"><i class="fa-solid fa-truck"></i> ${enUsoV9} en Uso</span>
+                </div>
+                <div class="stock-desglose" style="display:none;">${itemsV9}<div class="stock-desglose-item stock-desglose-total"><span>Total</span><b>${total}</b></div></div>`;
+        } else if (desgloseStock.length > 0) {
+            const resumen = desgloseStock.map(d => `${d.nombre}: ${d.cantidad}`).join(' | ') + ` (Total: ${total})`;
+            const items = desgloseStock.map(d => `<div class="stock-desglose-item"><span>${escapeHtml(d.nombre)}</span><b>${d.cantidad}</b></div>`).join('');
+            const tituloV9 = enBodega != null
+                ? `Stock en Bodega Central: ${stock}. Resto consumido/transferido. Total: ${total}`
+                : resumen;
+            stockCellHtml = `
+                <span class="stock-badge ${stockBadge} stock-desglose-toggle" title="${escapeHtml(tituloV9)}" onclick="toggleDesgloseStockV9(this)"><i class="fa-solid fa-cube"></i> ${stock} <i class="fa-solid fa-chevron-down fa-xs"></i></span>
+                <div class="stock-desglose" style="display:none;">${items}<div class="stock-desglose-item stock-desglose-total"><span>Total</span><b>${total}</b></div></div>`;
+        } else {
+            stockCellHtml = `<span class="stock-badge ${stockBadge}" title="${esBienUso ? 'Total de unidades del bien en todas las ubicaciones' : 'Unidades disponibles'}"><i class="fa-solid fa-cube"></i> ${stock}</span>`;
+        }
 
         const acciones = puedeEditar() ? `
             <td style="text-align:right;white-space:nowrap;">
                 <button class="action-btn" onclick="verArticulo(${art.id})" title="Ver detalle"><i class="fa-solid fa-eye"></i></button>
                 <button class="action-btn" onclick="editarArticulo(${art.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
                 <button class="action-btn" onclick="duplicarArticulo(${art.id})" title="Duplicar"><i class="fa-solid fa-copy"></i></button>
+                ${esAdmin() ? `<button class="action-btn" onclick="abrirAjusteStockAdmin(${art.id})" title="Ajustar Stock (solo Administrador)"><i class="fa-solid fa-sliders"></i></button>` : ''}
                 <button class="action-btn delete" onclick="eliminarArticulo(${art.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
             </td>
         ` : `
@@ -4836,11 +5186,30 @@ async function listarArticulos() {
             <td style="font-weight:600;">${escapeHtml(art.nombre)}</td>
             <td>${escapeHtml(catName)}</td>
             <td>${escapeHtml(art.marca || '-')}</td>
-            <td><span class="stock-badge ${stockBadge}"><i class="fa-solid fa-cube"></i> ${stock}</span></td>
+            <td>${stockCellHtml}</td>
             <td><span class="badge ${estadoBadge}">${estadoText}</span></td>
+            <td>${esBienUso ? escapeHtml(art.sector || '-') : '-'}</td>
             ${acciones}
         `;
         tbody.appendChild(tr);
+      } catch (errArt) {
+          console.error(`listarArticulos: error al renderizar el artículo ID ${art && art.id}:`, errArt);
+          // Render genérico de emergencia con el stockUnico legacy, para no perder la fila.
+          const stockFallback = Number((art && art.stockUnico) || 0);
+          const activoFb = art && art.activo !== false;
+          const trFb = document.createElement('tr');
+          trFb.innerHTML = `
+              <td style="font-weight:600;font-family:monospace;">${escapeHtml((art && art.codigo) || '-')}</td>
+              <td style="font-weight:600;">${escapeHtml((art && art.nombre) || `Artículo #${art && art.id}`)}</td>
+              <td>-</td>
+              <td>${escapeHtml((art && art.marca) || '-')}</td>
+              <td><span class="stock-badge ${stockFallback === 0 ? 'stock-out' : 'stock-ok'}"><i class="fa-solid fa-cube"></i> ${stockFallback}</span></td>
+              <td><span class="badge ${activoFb ? 'badge-active' : 'badge-inactive'}">${activoFb ? 'Activo' : 'Inactivo'}</span></td>
+              <td>-</td>
+              <td style="text-align:right;"><button class="action-btn" onclick="verArticulo(${art && art.id})" title="Ver detalle"><i class="fa-solid fa-eye"></i></button></td>
+          `;
+          tbody.appendChild(trFb);
+      }
     }
 
     const selectCat = document.getElementById('filtro-articulo-categoria');
@@ -4854,11 +5223,12 @@ async function verArticulo(id) {
     const art = await obtenerPorId('articulos', id);
     if (!art) return;
     
-    const [categorias, articuloTalles, movimientos, imagenes] = await Promise.all([
+    const [categorias, articuloTalles, movimientos, imagenes, ubicaciones] = await Promise.all([
         getTodos('categoriasInventario'),
         getTodos('articuloTalles'),
         getTodos('movimientosInventario'),
-        getTodos('imagenesArticulo')
+        getTodos('imagenesArticulo'),
+        getTodos('ubicacionesInventario')
     ]);
     
     const cat = categorias.find(c => c.id === Number(art.categoriaId));
@@ -4880,6 +5250,10 @@ async function verArticulo(id) {
         stock = Number(art.stockUnico || 0);
         stockDetalle = `${stock} unidades`;
     }
+
+    // Fase 3: desglose físico por ubicación para el modal de detalle
+    const desgloseUbi = construirDesgloseStockV9(art, articuloTalles, ubicaciones);
+    const stockUbiHtml = desgloseUbi.length > 0 ? `<div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--border-color);display:flex;flex-wrap:wrap;gap:0.5rem;">${desgloseUbi.map(d => `<span style="background:var(--bg-secondary);padding:0.25rem 0.6rem;border-radius:4px;font-size:0.85rem;"><i class="fa-solid fa-location-dot" style="color:var(--accent-blue);margin-right:0.35rem;"></i>${escapeHtml(d.nombre)}: <b>${d.cantidad}</b></span>`).join('')}</div>` : '';
 
     if (!document.getElementById('modal-ver-articulo')) {
         const modalHtml = `
@@ -4935,13 +5309,13 @@ async function verArticulo(id) {
     if (art.controlaTalles) {
         const talles = await getTodos('talles');
         const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
-        document.getElementById('ver-art-stock').innerHTML = tallesArt.length > 0 ? 
+        document.getElementById('ver-art-stock').innerHTML = (tallesArt.length > 0 ? 
             `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0.75rem;">${tallesArt.map(t => {
                 const talle = talles.find(tl => tl.id === Number(t.talleId));
                 return `<div style="background:var(--bg-secondary);padding:0.75rem;border-radius:6px;text-align:center;"><div style="font-size:0.85rem;color:var(--text-secondary);">${talle ? talle.nombre : '?'}</div><div style="font-size:1.3rem;font-weight:700;color:var(--accent-blue);">${t.stock || 0}</div></div>`;
-            }).join('')}</div>` : '<span style="color:var(--text-secondary);">Sin stock configurado por talle.</span>';
+            }).join('')}</div>` : '<span style="color:var(--text-secondary);">Sin stock configurado por talle.</span>') + stockUbiHtml;
     } else {
-        document.getElementById('ver-art-stock').innerHTML = `<span style="font-weight:700;font-size:1.4rem;color:var(--accent);">${stock}</span> <span style="color:var(--text-secondary);">unidades en stock</span>`;
+        document.getElementById('ver-art-stock').innerHTML = `<span style="font-weight:700;font-size:1.4rem;color:var(--accent);">${stock}</span> <span style="color:var(--text-secondary);">unidades en stock</span>` + stockUbiHtml;
     }
 
     if (imagenes.length > 0) {
@@ -4970,6 +5344,8 @@ async function openModalArticulo() {
     document.getElementById('seccion-talles-articulo').style.display = 'none';
     document.getElementById('seccion-stock-unico').style.display = 'none';
     document.getElementById('articulo-stock-inicial').value = '0';
+    document.getElementById('articulo-stock-inicial').disabled = false;
+    document.getElementById('articulo-stock-inicial').title = '';
     document.getElementById('articulo-stock-minimo').value = '0';
     document.getElementById('articulo-estado').value = 'true';
     document.getElementById('articulo-proveedor').value = '';
@@ -5000,7 +5376,21 @@ async function editarArticulo(id) {
     document.getElementById('articulo-estado').value = art.activo !== false ? 'true' : 'false';
     document.getElementById('articulo-proveedor').value = art.proveedorId || '';
     document.getElementById('articulo-comprobante').value = art.comprobante || '';
-    document.getElementById('articulo-sector').value = art.sector || '';
+    // El "Sector Asignado" refleja la ubicación ACTUAL/PRINCIPAL del artículo:
+    // se deduce del array ubicaciones[] (la de mayor cantidad de stock) resuelta contra
+    // el catálogo canónico 'ubicacionesInventario'; fallback al art.sector histórico.
+    const catalogoUbisV9 = await getTodos('ubicacionesInventario');
+    let sectorMostrarV9 = art.sector || '';
+    if (Array.isArray(art.ubicaciones) && art.ubicaciones.length > 0) {
+        const porUbiV9 = new Map();
+        art.ubicaciones.forEach(f => porUbiV9.set(Number(f.ubicacionId), (porUbiV9.get(Number(f.ubicacionId)) || 0) + Number(f.cantidad || 0)));
+        let mejorIdV9 = null, mejorCantV9 = -1;
+        porUbiV9.forEach((cantUbiV9, idUbiV9) => { if (cantUbiV9 > mejorCantV9) { mejorCantV9 = cantUbiV9; mejorIdV9 = idUbiV9; } });
+        const ubiPrincipalV9 = (catalogoUbisV9 || []).find(u => Number(u.id) === Number(mejorIdV9));
+        if (ubiPrincipalV9) sectorMostrarV9 = ubiPrincipalV9.nombre;
+    }
+    const selSectorV9 = document.getElementById('articulo-sector');
+    selSectorV9.value = Array.from(selSectorV9.options).some(o => o.value === sectorMostrarV9) ? sectorMostrarV9 : '';
     document.getElementById('articulo-observaciones').value = art.observaciones || '';
     document.getElementById('articulo-imagen').value = art.imagenPrincipal || '';
     document.getElementById('articulo-modal-title').textContent = 'Editar Artículo';
@@ -5020,6 +5410,13 @@ async function editarArticulo(id) {
             const match = tallesFiltrados.find(t => Number(t.talleId) === talleId);
             inp.value = match ? match.stock : 0;
         });
+    } else if (Array.isArray(art.ubicaciones) && art.ubicaciones.length > 0) {
+        // Con inventario por ubicación, el stock se gestiona por MOVIMIENTOS: el input queda
+        // en modo informativo (deshabilitado) para no sugerir ediciones destructivas del total.
+        const inpStockV9 = document.getElementById('articulo-stock-inicial');
+        inpStockV9.value = art.ubicaciones.reduce((s, f) => s + Number(f.cantidad || 0), 0);
+        inpStockV9.disabled = true;
+        inpStockV9.title = 'Gestioná el stock con movimientos (Ingreso / Consumo / Ajuste).';
     } else {
         document.getElementById('articulo-stock-inicial').value = art.stockUnico || 0;
     }
@@ -5110,6 +5507,202 @@ async function onCambioCategoriaArticulo() {
 
     // ===== VISIBILIDAD DEL CAMPO SECTOR ASIGNADO (SEGÚN TIPO DE BIEN) =====
     actualizarVisibilidadSector(tipoBien);
+}
+
+// ==================== GESTIÓN DE UBICACIONES / SECTORES ====================
+// Fase 3: los sectores ya NO se persisten en localStorage ('cda_sectores'). El catálogo
+// canónico es el store 'ubicacionesInventario' (DB v9). Todos los selects de la UI se
+// alimentan de este catálogo (filtrando por 'activo: true') y se administran con CRUD real.
+
+// Devuelve las ubicaciones activas del catálogo canónico.
+async function obtenerUbicacionesActivas() {
+    const catalogo = await getTodos('ubicacionesInventario');
+    return (catalogo || []).filter(u => u && u.activo !== false);
+}
+
+// Abre el mini-modal de gestión de ubicaciones
+async function abrirModalGestionarSectores() {
+    await renderizarListaSectores();
+    openModal('modal-gestionar-sectores');
+}
+
+// Cierra el mini-modal y refresca los selectores dependientes
+function cerrarModalGestionarSectores() {
+    closeModal('modal-gestionar-sectores');
+    actualizarSelectoresUbicaciones();
+    window.gestionUbicacionesDesde = null;
+}
+
+// Renderiza la lista visual de ubicaciones dentro del mini-modal (muestra TODAS, incluso
+// inactivas para permitir su reactivación; toggle Activar/Desactivar exclusivo del Admin).
+async function renderizarListaSectores() {
+    const container = document.getElementById('lista-sectores');
+    if (!container) return;
+    const ubicaciones = await getTodos('ubicacionesInventario');
+    container.innerHTML = '';
+
+    if (ubicaciones.length === 0) {
+        container.innerHTML = '<span style="color:var(--text-secondary);font-size:0.85rem;text-align:center;padding:0.5rem;">No hay ubicaciones registradas.</span>';
+        return;
+    }
+
+    for (const u of ubicaciones) {
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0.75rem;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border-color);';
+
+        const spanWrap = document.createElement('span');
+        spanWrap.style.cssText = 'display:flex;align-items:center;gap:0.4rem;';
+        const span = document.createElement('span');
+        span.textContent = u.nombre;
+        span.style.cssText = 'font-weight:500;';
+        const badge = document.createElement('span');
+        badge.className = u.tipo === 'movil' ? 'badge badge-info' : 'badge badge-secondary';
+        badge.style.fontSize = '0.7rem';
+        badge.textContent = u.tipo === 'movil' ? 'Móvil' : 'Fija';
+        spanWrap.appendChild(span);
+        spanWrap.appendChild(badge);
+        if (u.activo === false) {
+            const inactBadge = document.createElement('span');
+            inactBadge.className = 'badge badge-inactive';
+            inactBadge.style.fontSize = '0.7rem';
+            inactBadge.textContent = 'Inactiva';
+            spanWrap.appendChild(inactBadge);
+        }
+
+        const btnWrap = document.createElement('span');
+        btnWrap.style.cssText = 'display:flex;align-items:center;gap:0.3rem;';
+        const btnToggle = document.createElement('button');
+        btnToggle.type = 'button';
+        btnToggle.className = 'action-btn';
+        btnToggle.title = u.activo === false ? 'Activar ubicación' : 'Desactivar ubicación';
+        btnToggle.innerHTML = u.activo === false ? '<i class="fa-solid fa-play"></i>' : '<i class="fa-solid fa-pause"></i>';
+        btnToggle.onclick = () => toggleSectorActivoV9(u.id);
+        btnWrap.appendChild(btnToggle);
+
+        const btnEliminar = document.createElement('button');
+        btnEliminar.type = 'button';
+        btnEliminar.className = 'action-btn delete';
+        btnEliminar.title = 'Eliminar ubicación';
+        btnEliminar.innerHTML = '<i class="fa-solid fa-trash"></i>';
+        btnEliminar.onclick = () => eliminarSector(u.id);
+
+        div.appendChild(spanWrap);
+        btnWrap.appendChild(btnEliminar);
+        div.appendChild(btnWrap);
+        container.appendChild(div);
+    }
+}
+
+// Agrega una nueva ubicación desde el campo de texto del mini-modal
+async function agregarNuevoSector() {
+    const input = document.getElementById('nuevo-sector-nombre');
+    if (!input) return;
+
+    const nombre = normalizarNombreUbicacionV9(input.value);
+    if (!nombre) { mostrarToast('Ingresá el nombre de la ubicación.', 'warning'); return; }
+
+    const catalogo = await getTodos('ubicacionesInventario');
+    if (catalogo.some(u => String(u.nombre).toLowerCase() === nombre.toLowerCase())) {
+        mostrarToast('Ya existe una ubicación con ese nombre.', 'error');
+        return;
+    }
+
+    await guardar('ubicacionesInventario', { nombre, tipo: inferirTipoUbicacionV9(nombre), activo: true });
+    invalidarCache('ubicacionesInventario');
+    input.value = '';
+    await renderizarListaSectores();
+    await actualizarSelectoresUbicaciones();
+    // Gestión desde el modal de Movimiento (Admin): preseleccionar la ubicación creada y
+    // asegurar que el contenedor del sector quede visible para continuar el formulario..
+    if (window.gestionUbicacionesDesde === 'movimiento') {
+        const selMovV10 = document.getElementById('movimiento-sector-ubicacion');
+        if (selMovV10) {
+            selMovV10.value = nombre;
+            const contMV10 = document.getElementById('contenedor-sector-movimiento');
+            if (contMV10) contMV10.style.display = 'block';
+        }
+        window.gestionUbicacionesDesde = null;
+    }
+}
+
+// Elimina una ubicación del catálogo (los movimientos conservan el nombre en snapshot)
+async function eliminarSector(id) {
+    const catalogo = await getTodos('ubicacionesInventario');
+    const u = catalogo.find(x => Number(x.id) === Number(id));
+    if (!u) return;
+    if (!(await mostrarConfirmacion('Eliminar ubicación', `¿Eliminar "${u.nombre}"? El historial de movimientos conserva el nombre.`))) return;
+    await eliminar('ubicacionesInventario', Number(id));
+    invalidarCache('ubicacionesInventario');
+    await renderizarListaSectores();
+    await actualizarSelectoresUbicaciones();
+}
+
+// ===== GESTIÓN EN CALIENTE (V10): UBICACIONES Y TIPOS DESDE EL MODAL DE MOVIMIENTO =====
+// Abre el mini-modal de ubicaciones marcando que viene desde el formulario de movimiento (para
+// preseleccionar automáticamente la ubicación creada). Solo para Admin..
+function abrirGestionUbicacionesParaMovimiento() {
+    if (!esAdmin()) return;
+    window.gestionUbicacionesDesde = 'movimiento';
+    abrirModalGestionarSectores();
+}
+
+// Toggle Activar/Desactivar de una ubicación (persiste en IndexedDB + Firestore..
+async function toggleSectorActivoV9(id) {
+    if (!esAdmin()) return;
+    const u = await obtenerPorId('ubicacionesInventario', Number(id));
+    if (!u) return;
+    u.activo= u.activo === false ? true : false;
+    await guardar('ubicacionesInventario', u);
+    invalidarCache('ubicacionesInventario');
+    await renderizarListaSectores();
+    await actualizarSelectoresUbicaciones();
+    mostrarToast(`Ubicación "${u.nombre}" ${u.activo ? 'activada' : 'desactivada'}.`);
+}
+
+// Puebla el select de tipos de movimiento desde el catálogo V10 (canónicos + personalizados),
+// preservando el valor vigente. Las opciones llevan data-naturaleza para el motor de impacto..
+async function poblarSelectTiposMovimientoV9() {
+    const sel = document.getElementById('movimiento-tipo');
+    if (!sel) return;
+    const guardado = sel.value;
+    const tipos = await getTodos('tiposMovimiento');
+    if (!tipos || tipos.length === 0) return; // fallback: opciones hardcodeadas ya presentes en el HTML.
+
+    const CANONICOS_ORDEN_V10 = ['ingreso', 'consumo', 'transferencia_interna', 'devolucion', 'baja', 'ajuste'];
+    const orden = (t) => { const i = CANONICOS_ORDEN_V10.indexOf(t.valor); return i >= 0 ? i : CANONICOS_ORDEN_V10.length + (t.id || 0); };
+    const activos = tipos.filter(t => t && t.activo !== false).sort((a, b) => orden(a) - orden(b));
+    sel.innerHTML = '<option value="">Seleccione...</option>';
+    activos.forEach(t => {
+        sel.innerHTML += `<option value="${escapeHtml(t.valor)}" data-naturaleza="${escapeHtml(t.naturaleza || t.valor)}">${escapeHtml(t.label || t.valor)}${CANONICOS_ORDEN_V10.includes(t.valor) ? '' : ' ⚙'}</option>`;
+    });
+    if (guardado && activos.some(t => String(t.valor) === String(guardado))) sel.value = guardado;
+    else if (activos.length > 0) sel.value = activos[0].valor;
+}
+
+// Refresca todos los <select> de ubicaciones (Artículo y Movimientos) desde el catálogo,
+// preservando el valor seleccionado si todavía existe.
+async function actualizarSelectoresUbicaciones() {
+    const ubicaciones = await obtenerUbicacionesActivas();
+    const nombres = ubicaciones.map(u => u.nombre);
+    const targets = [
+        { el: document.getElementById('articulo-sector'), placeholder: 'Seleccione...' },
+        { el: document.getElementById('movimiento-sector-ubicacion'), placeholder: 'Seleccione sector...' },
+        { el: document.getElementById('movimiento-sector-destino'), placeholder: 'Seleccione...' }
+    ];
+    targets.forEach(t => {
+        if (!t.el) return;
+        const valorActual = t.el.value;
+        t.el.innerHTML = `<option value="">${t.placeholder}</option>`;
+        nombres.forEach(n => t.el.innerHTML += `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`);
+        t.el.value = valorActual && nombres.includes(valorActual) ? valorActual : '';
+    });
+}
+
+// Poblar los selectores de ubicaciones al cargar la página
+if (typeof document !== 'undefined') {
+    document.addEventListener('DOMContentLoaded', () => {
+        actualizarSelectoresUbicaciones();
+    });
 }
 
 // ===== CONTROL DE VISIBILIDAD DEL CAMPO SECTOR ASIGNADO =====
@@ -5228,17 +5821,66 @@ async function guardarArticuloForm(e) {
         fechaModificacion: new Date().toISOString()
     };
 
+    let sectorAnteriorV9 = null;
     if (id) {
         articulo.id = Number(id);
         const orig = await obtenerPorId('articulos', Number(id));
         if (orig) {
             articulo.usuarioCreacion = orig.usuarioCreacion;
             articulo.fechaCreacion = orig.fechaCreacion;
+            // CONSERVACIÓN DEL INVENTARIO FÍSICO: la edición NUNCA puede destruir el desglose
+            // por ubicación; el array ubicaciones[] se hereda del documento original.
+            if (Array.isArray(orig.ubicaciones)) articulo.ubicaciones = orig.ubicaciones;
+            // El stock real vive en ubicaciones[]: si existe, el total se DERIVA de ella y el
+            // input "stock inicial" es solo informativo (los cambios de stock se hacen con
+            // movimientos: Ingreso / Consumo / Ajuste).
+            if (Array.isArray(orig.ubicaciones) && orig.ubicaciones.length > 0 && !controlaTalles) {
+                articulo.stockUnico = orig.ubicaciones.reduce((s, f) => s + Number(f.cantidad || 0), 0);
+            }
+            sectorAnteriorV9 = orig.sector || null;
+        }
+    } else if (!controlaTalles) {
+        // Artículo NUEVO: se siembra la fila inicial en Bodega Central para que el array
+        // ubicaciones[] nazca consistente con el stock declarado (evita drift futuro).
+        const stockInicialV9 = Number(articulo.stockUnico || 0);
+        if (stockInicialV9 > 0) {
+            const idBodegaV9 = await resolverUbicacionV9('Depósito Central');
+            articulo.ubicaciones = [{ id: Date.now(), ubicacionId: Number(idBodegaV9), talleId: null, cantidad: stockInicialV9 }];
         }
     }
 
     const savedId = await guardar('articulos', articulo);
     articulo.id = Number(savedId);
+
+    // ===== CAMBIO DE SECTOR ASIGNADO → TRANSFERENCIA INTERNA NO DESTRUCTIVA =====
+    // Si el operador re-asigna el sector de un Bien de Uso, el stock físico NO se reescribe
+    // a mano: se transfiere lo existente en el sector viejo hacia el nuevo vía ajustarStockV9
+    // (valida anti-negativos y recalcula los totales derivados).
+    if (id && tipoBienHeredado === 'bien_uso' && articulo.sector && sectorAnteriorV9
+        && String(articulo.sector).trim().toLowerCase() !== String(sectorAnteriorV9).trim().toLowerCase()) {
+        try {
+            const idOrigenV9 = await resolverUbicacionV9(sectorAnteriorV9);
+            const idDestinoV9 = await resolverUbicacionV9(articulo.sector);
+            if (Number(idOrigenV9) !== Number(idDestinoV9)) {
+                const filasV9 = Array.isArray(articulo.ubicaciones) ? articulo.ubicaciones : [];
+                if (!controlaTalles) {
+                    const enOrigenV9 = filasV9.filter(f => Number(f.ubicacionId) === Number(idOrigenV9)).reduce((s, f) => s + Number(f.cantidad || 0), 0);
+                    if (enOrigenV9 > 0) {
+                        await ajustarStockV9(articulo.id, null, { tipoMovimiento: 'transferencia_interna', cantidad: enOrigenV9, ubicacionOrigenId: idOrigenV9, ubicacionDestinoId: idDestinoV9 });
+                    }
+                } else {
+                    const porTalleV9 = new Map();
+                    filasV9.filter(f => Number(f.ubicacionId) === Number(idOrigenV9) && f.talleId != null)
+                        .forEach(f => porTalleV9.set(Number(f.talleId), (porTalleV9.get(Number(f.talleId)) || 0) + Number(f.cantidad || 0)));
+                    for (const [talleIdV9, cantV9] of porTalleV9) {
+                        if (cantV9 > 0) await ajustarStockV9(articulo.id, talleIdV9, { tipoMovimiento: 'transferencia_interna', cantidad: cantV9, ubicacionOrigenId: idOrigenV9, ubicacionDestinoId: idDestinoV9 });
+                    }
+                }
+            }
+        } catch (errTransfV9) {
+            mostrarToast(`Artículo guardado, pero la transferencia al nuevo sector falló: ${errTransfV9.message}`, 'warning');
+        }
+    }
 
     if (controlaTalles) {
         const sizeInputs = document.querySelectorAll('.size-input');
@@ -5277,6 +5919,155 @@ async function guardarArticuloForm(e) {
     closeModal('modal-articulo');
     mostrarToast(`Artículo "${articulo.nombre}" guardado.`);
     listarArticulos();
+}
+
+// ===== AJUSTE DE STOCK POR UBICACIÓN (EXCLUSIVO ADMIN, V9) =====
+// Panel de superusuario: lista cada combinación (ubicación × talle) con su cantidad actual,
+// calcula el delta contra el valor editado y lo canaliza fila por fila por ajustarStockV9.
+async function abrirAjusteStockAdmin(articuloId) {
+    if (!esAdmin()) { mostrarToast('Solo un Administrador puede ajustar el stock.', 'error'); return; }
+    const art = await obtenerPorId('articulos', Number(articuloId));
+    if (!art) { mostrarToast('Artículo no encontrado.', 'error'); return; }
+    const [talles, articuloTalles, ubicacionesCat] = await Promise.all([
+        getTodos('talles'),
+        getTodos('articuloTalles'),
+        obtenerUbicacionesActivas()
+    ]);
+    if (!ubicacionesCat || ubicacionesCat.length === 0) { mostrarToast('No hay ubicaciones activas en el catálogo.', 'error'); return; }
+    window.ajusteStockArticuloId = Number(articuloId);
+
+    // Cantidad actual por (ubicación, talle). Si el documento aún no tiene ubicaciones[],
+    // el baseline asume todo el stock en Bodega Central (mismo criterio del render de la tabla).
+    const bodegaV9 = ubicacionesCat.find(u => String(u.nombre).trim().toLowerCase() === 'depósito central') || ubicacionesCat[0];
+    const cantEn = (ubiId, talleId) => {
+        if (Array.isArray(art.ubicaciones) && art.ubicaciones.length > 0) {
+            return art.ubicaciones
+                .filter(f => Number(f.ubicacionId) === Number(ubiId) && (talleId == null ? f.talleId == null : Number(f.talleId) === Number(talleId)))
+                .reduce((s, f) => s + Number(f.cantidad || 0), 0);
+        }
+        if (Number(ubiId) === Number(bodegaV9.id)) {
+            if (talleId == null) return Number(art.stockUnico || 0);
+            const t = articuloTalles.find(x => Number(x.articuloId) === Number(art.id) && Number(x.talleId) === Number(talleId));
+            return t ? Number(t.stock || 0) : 0;
+        }
+        return 0;
+    };
+
+    const filasV9 = [];
+    if (art.controlaTalles) {
+        const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
+        for (const t of tallesArt) {
+            const infoTalle = talles.find(x => Number(x.id) === Number(t.talleId));
+            for (const u of ubicacionesCat) {
+                filasV9.push({ talleId: Number(t.talleId), talleNombre: infoTalle ? infoTalle.nombre : `Talle ${t.talleId}`, ubicacionId: Number(u.id), ubicacionNombre: u.nombre, actual: cantEn(u.id, t.talleId) });
+            }
+        }
+    } else {
+        for (const u of ubicacionesCat) filasV9.push({ talleId: null, talleNombre: null, ubicacionId: Number(u.id), ubicacionNombre: u.nombre, actual: cantEn(u.id, null) });
+    }
+
+    const info = document.getElementById('ajuste-stock-art-info');
+    if (info) info.innerHTML = `<strong>${escapeHtml(art.codigo)}</strong> — ${escapeHtml(art.nombre)}${art.controlaTalles ? ' (controla talles)' : ''}`;
+    const body = document.getElementById('ajuste-stock-body');
+    if (!body) return;
+    if (filasV9.length === 0) {
+        body.innerHTML = '<p style="color:var(--text-secondary);text-align:center;padding:1rem;grid-column:1/-1;">No hay filas de stock para ajustar.</p>';
+    } else {
+        // Diseño en grilla de tarjetas: pin + nombre del sector arriba, input grande abajo.
+        body.innerHTML = filasV9.map(f => `
+            <div class="ajuste-card">
+                <div class="ajuste-card-nombre" title="${escapeHtml(f.ubicacionNombre)}"><i class="fa-solid fa-location-dot"></i>${escapeHtml(f.ubicacionNombre)}</div>
+                ${f.talleNombre ? `<span class="badge badge-info ajuste-card-talle">${escapeHtml(f.talleNombre)}</span>` : ''}
+                <input type="number" min="0" class="ajuste-input" value="${f.actual}" data-ubi="${f.ubicacionId}" data-ubi-nombre="${escapeHtml(f.ubicacionNombre)}" data-talle="${f.talleId == null ? '' : f.talleId}" data-actual="${f.actual}">
+            </div>`).join('');
+    }
+    openModal('modalAjustarStockAdmin');
+}
+
+async function guardarAjusteStockAdmin() {
+    if (!esAdmin()) { mostrarToast('Solo un Administrador puede ajustar el stock.', 'error'); return; }
+    const articuloId = Number(window.ajusteStockArticuloId);
+    if (!Number.isFinite(articuloId)) { mostrarToast('Artículo no válido.', 'error'); return; }
+    const art = await obtenerPorId('articulos', articuloId);
+    if (!art) { mostrarToast('Artículo no encontrado.', 'error'); return; }
+
+    // Cálculo de deltas fila por fila: solo filas con delta ≠ 0 se procesan.
+    const inputs = Array.from(document.querySelectorAll('#ajuste-stock-body .ajuste-input'));
+    const cambios = [];
+    for (const inp of inputs) {
+        const nuevo = Number(inp.value);
+        const actual = Number(inp.dataset.actual || 0);
+        const delta = Number.isFinite(nuevo) ? (nuevo - actual) : 0;
+        if (nuevo < 0 || delta === 0) continue;
+        cambios.push({ talleId: inp.dataset.talle ? Number(inp.dataset.talle) : null, ubicacionId: Number(inp.dataset.ubi), ubicacionNombre: inp.dataset.ubiNombre || String(inp.dataset.ubi), actual, nuevo, delta });
+    }
+    if (cambios.length === 0) { mostrarToast('No hay cambios para aplicar.', 'warning'); return; }
+
+    // PASADA 1 (dry-run): ninguna fila puede dejar stock negativo en su ubicación.
+    const articuloTalles = await getTodos('articuloTalles');
+    for (const c of cambios) {
+        if (c.delta >= 0) continue;
+        let disp;
+        if (Array.isArray(art.ubicaciones) && art.ubicaciones.length > 0) {
+            disp = obtenerStockUbicacionV9(art, c.talleId, c.ubicacionId);
+        } else {
+            // Sin array migrado, el stock solo existe en Bodega Central (baseline del modal).
+            disp = (String(c.ubicacionNombre).trim().toLowerCase() === 'depósito central')
+                ? (c.talleId
+                    ? Number((articuloTalles.find(t => Number(t.articuloId) === articuloId && Number(t.talleId) === c.talleId) || {}).stock || 0)
+                    : Number(art.stockUnico || 0))
+                : 0;
+        }
+        if (disp + c.delta < 0) {
+            mostrarToast(`Stock insuficiente en "${c.ubicacionNombre}": disponible ${disp}, ajuste ${c.delta}.`, 'error');
+            return;
+        }
+    }
+
+    // PASADA 2: aplicación secuencial vía ajustarStockV9 + registro histórico explícito
+    // (el helper muta el stock y recalcula derivados; el movimiento de auditoría lo crea el llamador).
+    let aplicados = 0;
+    for (const c of cambios) {
+        try {
+            await ajustarStockV9(articuloId, c.talleId, {
+                tipoMovimiento: 'ajuste',
+                cantidad: c.delta,
+                ubicacionOrigenId: c.delta < 0 ? c.ubicacionId : null,
+                ubicacionDestinoId: c.delta > 0 ? c.ubicacionId : null
+            });
+            await guardar('movimientosInventario', {
+                articuloId,
+                talleId: c.talleId,
+                tipoMovimiento: 'ajuste',
+                esIngreso: false,
+                tipoBien: art.tipoBien || 'consumible',
+                cantidad: Math.abs(c.delta),
+                motivo: `Ajuste arbitrario por Administrador ${currentUser ? currentUser.nombre : 'desconocido'}`,
+                observaciones: '',  // textarea del operador: libre de ruido técnico
+                logTecnico: `Ajuste manual de stock: de ${c.actual} a ${c.nuevo} en "${c.ubicacionNombre}"${c.talleId ? ` (talle ID ${c.talleId})` : ''}. Delta: ${c.delta > 0 ? '+' : ''}${c.delta} (${c.delta > 0 ? 'suma' : 'resta'}).`,
+                ubicacionOrigen: c.delta < 0 ? c.ubicacionNombre : null,
+                ubicacionDestino: c.delta > 0 ? c.ubicacionNombre : null,
+                usuarioId: currentUser ? currentUser.id : null,
+                fecha: new Date().toISOString().split('T')[0],
+                migradoV9: true
+            });
+            aplicados++;
+        } catch (e) {
+            mostrarToast(`No se pudo aplicar el ajuste en "${c.ubicacionNombre}": ${e.message}`, 'error');
+        }
+    }
+
+    invalidarCache('articulos');
+    invalidarCache('articuloTalles');
+    invalidarCache('movimientosInventario');
+    closeModal('modalAjustarStockAdmin');
+    if (aplicados > 0) {
+        mostrarToast(`Ajuste aplicado: ${aplicados} fila(s) modificadas.`);
+        listarArticulos();
+        listarMovimientosInventario();
+    } else {
+        mostrarToast('No se aplicó ningún ajuste.', 'warning');
+    }
 }
 
 async function eliminarArticulo(id) {
@@ -5401,8 +6192,21 @@ async function listarMovimientosInventario() {
     articulos.forEach(a => selArt.innerHTML += `<option value="${a.id}">${a.nombre}</option>`);
     selArt.value = savedArt;
 
+    // Fase 3: el filtro usa el vocabulario canónico. Se normalizan los tipos legacy
+    // (por si quedara algún registro sin migrar) antes de comparar.
+    const MAPA_FILTRO_TIPO = {
+        ingreso: 'ingreso', compra: 'ingreso', reposicion: 'ingreso', alta: 'ingreso', inventario: 'ingreso',
+        devolucion: 'devolucion',
+        consumo: 'consumo', egreso: 'consumo', entrega: 'consumo', salida: 'consumo',
+        transferencia_interna: 'transferencia_interna', transferencia: 'transferencia_interna',
+        baja: 'baja', perdida: 'baja', rotura: 'baja',
+        ajuste: 'ajuste'
+    };
     let filtrados = movimientos.filter(m => {
-        if (filtroTipo !== 'todos' && m.tipoMovimiento !== filtroTipo) return false;
+        if (filtroTipo !== 'todos') {
+            const canon = MAPA_FILTRO_TIPO[String(m.tipoMovimiento || '').toLowerCase()] || m.tipoMovimiento;
+            if (canon !== filtroTipo) return false;
+        }
         if (filtroArt !== 'todos' && String(m.articuloId) !== String(filtroArt)) return false;
         if (buscador) {
             const art = articulos.find(a => Number(a.id) === Number(m.articuloId));
@@ -5425,7 +6229,7 @@ async function listarMovimientosInventario() {
     for (const mov of filtrados) {
         const art = articulos.find(a => Number(a.id) === Number(mov.articuloId));
         const artName = art ? art.nombre : 'ID: ' + mov.articuloId;
-        const esIngreso = ['ingreso', 'devolucion', 'compra', 'reposicion'].includes(mov.tipoMovimiento);
+        const c = categorizarMovimientoV9(mov);
 
         let talleText = '';
         if (mov.talleId) {
@@ -5435,20 +6239,381 @@ async function listarMovimientosInventario() {
         }
 
         const item = document.createElement('div');
-        item.className = `movement-item ${esIngreso ? 'mov-in' : 'mov-out'}`;
-        const icono = esIngreso ? 'fa-arrow-down' : 'fa-arrow-up';
+        item.className = `movement-item ${c.clase}`;
         const fecha = mov.fecha ? formatearFechaVisual(mov.fecha) : '-';
         item.innerHTML = `
-            <div class="mov-icon"><i class="fa-solid ${icono}"></i></div>
+            <div class="mov-icon"><i class="fa-solid ${c.icono}"></i></div>
             <div class="mov-info">
                 <div class="mov-title">${escapeHtml(artName)}${talleText}</div>
-                <div class="mov-meta">${mov.tipoMovimiento} • ${escapeHtml(mov.motivo || '')} • ${fecha}</div>
+                <div class="mov-meta">${c.label} • ${escapeHtml(mov.motivo || '')} • ${fecha}</div>
                 ${mov.observaciones ? `<div class="mov-meta">📝 ${escapeHtml(mov.observaciones)}</div>` : ''}
+                ${mov.ubicacionOrigen || mov.ubicacionDestino ? `<div class="mov-meta">📍 ${escapeHtml([mov.ubicacionOrigen, mov.ubicacionDestino].filter(Boolean).join(' → '))}</div>` : ''}
             </div>
-            <div class="mov-qty">${esIngreso ? '+' : '-'}${mov.cantidad}</div>
+            <div class="mov-qty">${c.signo}${c.cantidad}</div>
+            ${esAdmin() ? `<button class="action-btn mov-edit-btn" onclick="editarMovimientoInventario(${mov.id})" title="Editar movimiento (recalcula el stock)"><i class="fa-solid fa-gear"></i></button>` : ''}
+            ${esAdmin() ? `<button class="action-btn delete mov-delete-btn" onclick="eliminarMovimientoInventario(${mov.id})" title="Eliminar movimiento (revierte el stock)"><i class="fa-solid fa-trash"></i></button>` : ''}
         `;
         container.appendChild(item);
     }
+}
+
+// ===== ELIMINACIÓN DE MOVIMIENTOS (solo Administrador, con rollback de stock) =====
+// Aplica la operación matemática INVERSA sobre articulos.ubicaciones[] vía ajustarStockV9
+// y recién entonces borra el registro (IndexedDB + Firestore vía eliminar()).
+// Si el rollback no es posible (stock ya movido/gastado), aborta SIN borrar el registro.
+async function eliminarMovimientoInventario(id) {
+    if (!esAdmin()) { mostrarToast('Solo un Administrador puede eliminar movimientos.', 'error'); return; }
+    const mov = await obtenerPorId('movimientosInventario', Number(id));
+    if (!mov) { mostrarToast('Movimiento no encontrado.', 'error'); return; }
+    const tipo = String(mov.tipoMovimiento || '').toLowerCase();
+    const cant = Number(mov.cantidad || 0);
+    const art = await obtenerPorId('articulos', Number(mov.articuloId));
+    const artName = art ? art.nombre : ('#' + mov.articuloId);
+    const rutaV9 = [mov.ubicacionOrigen, mov.ubicacionDestino].filter(Boolean).join(' → ') || 'ubicación por defecto';
+    const confirmado = await mostrarConfirmacion('Eliminar Movimiento',
+        `Se eliminará el movimiento "${tipo}" de ${cant} unidad(es) de "${artName}" (${rutaV9}) y se REVERTIRÁ su efecto sobre el stock. ¿Continuar?`);
+    if (!confirmado) return;
+
+    if (Number.isFinite(cant) && cant > 0) {
+        let opcionesInversas = null;
+        if (tipo === 'ingreso' || tipo === 'devolucion') {
+            // El ingreso/devolución sumó en 'ubicacionDestino' → ahora se resta de esa misma ubicación.
+            opcionesInversas = { tipoMovimiento: 'consumo', cantidad: cant, ubicacionOrigenId: mov.ubicacionDestino || null };
+        } else if (tipo === 'consumo' || tipo === 'baja') {
+            // El consumo/baja restó de 'ubicacionOrigen' → se devuelven las unidades al origen.
+            opcionesInversas = { tipoMovimiento: 'ingreso', cantidad: cant, ubicacionDestinoId: mov.ubicacionOrigen || null };
+        } else if (tipo === 'transferencia_interna') {
+            // Transfirió Origen → Destino: se revierte Destino → Origen (el total global no cambia).
+            opcionesInversas = { tipoMovimiento: 'transferencia_interna', cantidad: cant, ubicacionOrigenId: mov.ubicacionDestino, ubicacionDestinoId: mov.ubicacionOrigen };
+        } else if (tipo === 'ajuste') {
+            // Ajuste ±N sobre una ubicación: se aplica el signo opuesto (-N).
+            opcionesInversas = { tipoMovimiento: 'ajuste', cantidad: -cant, ubicacionOrigenId: mov.ubicacionOrigen || null, ubicacionDestinoId: mov.ubicacionDestino || null };
+        } else {
+            mostrarToast(`Tipo de movimiento desconocido ("${tipo}"): no se puede revertir de forma segura.`, 'error');
+            return;
+        }
+        try {
+            await ajustarStockV9(Number(mov.articuloId), mov.talleId ? Number(mov.talleId) : null, opcionesInversas);
+        } catch (e) {
+            mostrarToast(`No se pudo revertir el stock (${e.message}). El movimiento NO fue eliminado.`, 'error');
+            return;
+        }
+    } else {
+        console.warn('eliminarMovimientoInventario: movimiento sin cantidad válida, se elimina sin rollback.', mov);
+    }
+
+    await eliminar('movimientosInventario', Number(id));
+    invalidarCache('movimientosInventario');
+    invalidarCache('articulos');
+    invalidarCache('articuloTalles');
+    mostrarToast('Movimiento eliminado y stock revertido.');
+    listarMovimientosInventario();
+    listarArticulos();
+}
+
+// ===== EDICIÓN DE MOVIMIENTOS HISTÓRICOS (EXCLUSIVO ADMIN, V9) =====
+// Flujo dual atómico: 1) simulación en memoria (rollback del original + aplicación del nuevo,
+// verificando que ninguna ubicación quede negativa en NINGÚN punto intermedio), 2) ejecución
+// real secuencial vía ajustarStockV9, 3) actualización del documento del movimiento con
+// trazabilidad (fechaEdicion/usuarioEdicion). El artículo NO puede cambiarse.
+
+// Helper PURO: deltas por ubicación para un tipo canónico. Devuelve null si la configuración es inválida.
+function deltasMovimientoV9(tipo, cant, idOrigen, idDestino) {
+    const t = String(tipo || '').toLowerCase();
+    const c = Number(cant);
+    if (!Number.isFinite(c) || c === 0) return null;
+    if (t === 'ingreso' || t === 'devolucion') {
+        if (idDestino == null) return null;
+        return [{ ubicacionId: Number(idDestino), delta: c }];
+    }
+    if (t === 'consumo' || t === 'baja') {
+        if (idOrigen == null) return null;
+        return [{ ubicacionId: Number(idOrigen), delta: -c }];
+    }
+    if (t === 'transferencia_interna') {
+        if (idOrigen == null || idDestino == null || Number(idOrigen) === Number(idDestino)) return null;
+        return [{ ubicacionId: Number(idOrigen), delta: -c }, { ubicacionId: Number(idDestino), delta: c }];
+    }
+    if (t === 'ajuste') {
+        if (idOrigen == null && idDestino == null) return null;
+        return [{ ubicacionId: Number(idOrigen != null ? idOrigen : idDestino), delta: c }];
+    }
+    return null;
+}
+
+// Helper PURO: aplica una secuencia de pasos (deltas) sobre una copia del array ubicaciones[]
+// y devuelve la copia final SOLO si en ningún punto intermedio alguna ubicación queda < 0.
+function simularEdicionMovimientoV9(ubicacionesArr, pasos) {
+    try {
+        const copia = (Array.isArray(ubicacionesArr) ? ubicacionesArr : []).map(f => ({ ...f }));
+        const aplicar = (deltas, talleId) => {
+            if (!Array.isArray(deltas)) return false;
+            const claveT = talleId == null ? null : Number(talleId);
+            for (const d of deltas) {
+                const claveU = Number(d.ubicacionId);
+                let fila = copia.find(f => Number(f.ubicacionId) === claveU && (claveT == null ? f.talleId == null : Number(f.talleId) === claveT));
+                if (!fila) {
+                    if (d.delta < 0) return false;
+                    copia.push({ ubicacionId: claveU, talleId: claveT, cantidad: 0 });
+                    fila = copia[copia.length - 1];
+                }
+                fila.cantidad = Number(fila.cantidad || 0) + d.delta;
+                if (Number(fila.cantidad) < 0) return false;
+            }
+            return true;
+        };
+        for (const p of pasos) { if (!aplicar(p.deltas, p.talleId)) return null; }
+        return copia;
+    } catch (e) {
+        console.warn('simularEdicionMovimientoV9: fallo de simulación:', e);
+        return null;
+    }
+}
+
+async function editarMovimientoInventario(id) {
+    if (!esAdmin()) { mostrarToast('Solo un Administrador puede editar movimientos.', 'error'); return; }
+    const mov = await obtenerPorId('movimientosInventario', Number(id));
+    if (!mov) { mostrarToast('Movimiento no encontrado.', 'error'); return; }
+    const art = await obtenerPorId('articulos', Number(mov.articuloId));
+    window.edicionMovimientoId = Number(id);
+
+    // Tipo canónico (normaliza legacy residual para el motor). mapearTipoMovimientoV9 devuelve
+    // un OBJETO { tipoMovimiento, esIngreso }: extraer el campo, no stringificar el objeto.
+    let tipoCanonV9 = String(mov.tipoMovimiento || '').toLowerCase();
+    if (typeof mapearTipoMovimientoV9 === 'function') {
+        const mapeoV9 = mapearTipoMovimientoV9(mov.tipoMovimiento, mov.tipoBien || null);
+        if (mapeoV9 && mapeoV9.tipoMovimiento) tipoCanonV9 = String(mapeoV9.tipoMovimiento).toLowerCase();
+    }
+    // FLEXIBILIZACIÓN (historial legacy sin tipo mapeable): inferir por 'esIngreso' y, en
+    // última instancia, por la presencia de snapshots de ubicación. Solo se aborta si el
+    // registro no tiene NI tipo NI señales de ubicación.
+    const CANONICOS_V9 = ['ingreso', 'consumo', 'transferencia_interna', 'devolucion', 'baja', 'ajuste'];
+    if (!CANONICOS_V9.includes(tipoCanonV9)) {
+        const tieneDestinoV9 = !!(mov.ubicacionDestino || mov.sectorDestino);
+        const tieneOrigenV9 = !!(mov.ubicacionOrigen || mov.sector);
+        if (mov.esIngreso === true) tipoCanonV9 = 'ingreso';
+        else if (mov.esIngreso === false && tieneDestinoV9 && tieneOrigenV9) tipoCanonV9 = 'transferencia_interna';
+        else if (mov.esIngreso === false) tipoCanonV9 = 'consumo';
+        else if (tieneDestinoV9) tipoCanonV9 = 'ingreso';
+        else if (tieneOrigenV9) tipoCanonV9 = 'consumo';
+    }
+    window.edicionMovTipoOriginalV9 = tipoCanonV9;
+
+    const info = document.getElementById('editar-mov-art-info');
+    if (info) info.innerHTML = `<strong>${escapeHtml(art ? art.codigo : '#' + mov.articuloId)}</strong> — ${escapeHtml(art ? art.nombre : 'Artículo eliminado')}`;
+
+    const selTipo = document.getElementById('editar-mov-tipo');
+    if (!CANONICOS_V9.includes(tipoCanonV9)) {
+        mostrarToast('Movimiento sin tipo ni ubicaciones inferibles: no es editable de forma segura.', 'error');
+        return;
+    }
+    selTipo.value = tipoCanonV9;
+
+    // Talle (solo si el artículo controla talles).
+    const talleGroup = document.getElementById('editar-mov-talle-group');
+    const selTalle = document.getElementById('editar-mov-talle');
+    selTalle.innerHTML = '<option value="">Sin talle</option>';
+    if (art && art.controlaTalles) {
+        const [talles, articuloTalles] = await Promise.all([getTodos('talles'), getTodos('articuloTalles')]);
+        articuloTalles.filter(at => Number(at.articuloId) === Number(mov.articuloId)).forEach(at => {
+            const infoT = talles.find(t => Number(t.id) === Number(at.talleId));
+            selTalle.innerHTML += `<option value="${at.talleId}">${infoT ? escapeHtml(infoT.nombre) : 'Talle ' + at.talleId}</option>`;
+        });
+        selTalle.value = mov.talleId != null ? String(Number(mov.talleId)) : '';
+        talleGroup.style.display = '';
+    } else {
+        talleGroup.style.display = 'none';
+    }
+
+    // Selectores de ubicaciones (por nombre, consistente con el resto de la app). Se agrega
+    // como opción extra cualquier snapshot histórico que ya no esté en el catálogo.
+    const ubicaciones = await obtenerUbicacionesActivas();
+    const nombresV9 = ubicaciones.map(u => u.nombre);
+    const poblar = (sel, valorActual) => {
+        sel.innerHTML = '<option value="">—</option>'
+            + nombresV9.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+        if (valorActual && !nombresV9.includes(valorActual)) {
+            sel.innerHTML += `<option value="${escapeHtml(valorActual)}">${escapeHtml(valorActual)} (histórico)</option>`;
+        }
+        sel.value = valorActual || '';
+    };
+    // FLEXIBILIZACIÓN: los registros legacy guardan ubicaciones en 'sector'/'sectorDestino'
+    // (Fase 1) o directamente no las tienen → fallbacks basados en texto.
+    const nombreOrigenV9 = mov.ubicacionOrigen || mov.sector
+        || (['consumo', 'baja', 'transferencia_interna'].includes(tipoCanonV9) ? 'Depósito Central' : '');
+    const nombreDestinoV9 = mov.ubicacionDestino || mov.sectorDestino
+        || (['ingreso', 'devolucion', 'transferencia_interna'].includes(tipoCanonV9) ? 'Depósito Central' : '');
+    poblar(document.getElementById('editar-mov-origen'), nombreOrigenV9 || '');
+    poblar(document.getElementById('editar-mov-destino'), nombreDestinoV9 || '');
+
+    // Cantidad: para 'ajuste' se reconstruye el signo (Origen=negativo, Destino=positivo,
+    // cantidad ya firmada, o fallback razonable: positivo en Bodega si no hay snapshots).
+    const inpCant = document.getElementById('editar-mov-cantidad');
+    let cantVisual = Math.abs(Number(mov.cantidad || 0));
+    if (tipoCanonV9 === 'ajuste') {
+        if (mov.ubicacionOrigen && !mov.ubicacionDestino) cantVisual = -cantVisual;
+        else if (!mov.ubicacionOrigen && mov.ubicacionDestino) cantVisual = cantVisual;
+        else if (Number(mov.cantidad || 0) < 0) cantVisual = Number(mov.cantidad);
+        if (!nombreOrigenV9) poblar(document.getElementById('editar-mov-origen'), 'Depósito Central');
+        inpCant.removeAttribute('min');
+    } else {
+        inpCant.setAttribute('min', '1');
+    }
+    inpCant.value = cantVisual;
+
+    document.getElementById('editar-mov-observaciones').value = mov.observaciones || '';
+    onEditarMovTipoChange();
+    openModal('modalEditarMovimiento');
+}
+
+// Visibilidad de campos según el tipo de movimiento en el modal de edición.
+function onEditarMovTipoChange() {
+    const tipo = document.getElementById('editar-mov-tipo').value;
+    const gOrigen = document.getElementById('editar-mov-origen-group');
+    const gDestino = document.getElementById('editar-mov-destino-group');
+    const inpCant = document.getElementById('editar-mov-cantidad');
+    // ingreso/devolucion → Destino | consumo/baja → Origen | transferencia → ambos | ajuste → Origen (con signo).
+    gOrigen.style.display = ['consumo', 'baja', 'transferencia_interna', 'ajuste'].includes(tipo) ? '' : 'none';
+    gDestino.style.display = ['ingreso', 'devolucion', 'transferencia_interna'].includes(tipo) ? '' : 'none';
+    if (tipo === 'ajuste') inpCant.removeAttribute('min'); else inpCant.setAttribute('min', '1');
+}
+
+async function guardarEdicionMovimientoInventario() {
+    if (!esAdmin()) { mostrarToast('Solo un Administrador puede editar movimientos.', 'error'); return; }
+    const id = Number(window.edicionMovimientoId);
+    const mov = await obtenerPorId('movimientosInventario', id);
+    if (!mov) { mostrarToast('Movimiento no encontrado.', 'error'); return; }
+    const art = await obtenerPorId('articulos', Number(mov.articuloId));
+    if (!art) { mostrarToast('El artículo del movimiento ya no existe: no es editable.', 'error'); return; }
+
+    const tipoOrigV9 = window.edicionMovTipoOriginalV9;
+    const tipoNuevoV9 = document.getElementById('editar-mov-tipo').value;
+    const origenNombreN = document.getElementById('editar-mov-origen').value || null;
+    const destinoNombreN = document.getElementById('editar-mov-destino').value || null;
+    const talleNuevoV9 = (art.controlaTalles && document.getElementById('editar-mov-talle-group').style.display !== 'none')
+        ? (document.getElementById('editar-mov-talle').value ? Number(document.getElementById('editar-mov-talle').value) : null)
+        : null;
+    const obsNuevas = document.getElementById('editar-mov-observaciones').value.trim();
+
+    // FLEXIBILIZACIÓN: snapshots legacy en 'sector'/'sectorDestino' + fallback a Bodega para
+    // las ubicaciones requeridas por cada tipo que el registro no trae. Los IDs se deducen
+    // en caliente desde los textos (resolverUbicacionV9 crea el catálogo si faltara).
+    const nombreOrigenOrigV9 = mov.ubicacionOrigen || mov.sector || null;
+    const nombreDestinoOrigV9 = mov.ubicacionDestino || mov.sectorDestino || null;
+    let idOrigenOrig = nombreOrigenOrigV9 ? await resolverUbicacionV9(nombreOrigenOrigV9) : null;
+    let idDestinoOrig = nombreDestinoOrigV9 ? await resolverUbicacionV9(nombreDestinoOrigV9) : null;
+    const BODEGA_ID_V9 = await resolverUbicacionV9('Depósito Central');
+    if (['consumo', 'baja'].includes(tipoOrigV9) && !idOrigenOrig) idOrigenOrig = BODEGA_ID_V9;
+    if (['ingreso', 'devolucion'].includes(tipoOrigV9) && !idDestinoOrig) idDestinoOrig = BODEGA_ID_V9;
+    if (tipoOrigV9 === 'transferencia_interna' && !idOrigenOrig && !idDestinoOrig) idOrigenOrig = BODEGA_ID_V9;
+    if (tipoOrigV9 === 'ajuste' && !idOrigenOrig && !idDestinoOrig) idOrigenOrig = BODEGA_ID_V9;
+    const idOrigenN = origenNombreN ? await resolverUbicacionV9(origenNombreN) : null;
+    const idDestinoN = destinoNombreN ? await resolverUbicacionV9(destinoNombreN) : null;
+
+    // Cantidad original con signo ('ajuste': Origen=negativo, Destino=positivo, cantidad
+    // firmada, o fallback razonable: positivo en Bodega si el registro no trae snapshots).
+    let cantOrigConSigno = Number(mov.cantidad || 0);
+    if (tipoOrigV9 === 'ajuste') {
+        if (mov.ubicacionOrigen && !mov.ubicacionDestino) cantOrigConSigno = -Math.abs(cantOrigConSigno);
+        else if (!mov.ubicacionOrigen && mov.ubicacionDestino) cantOrigConSigno = Math.abs(cantOrigConSigno);
+        else if (cantOrigConSigno < 0) { /* ya viene firmado */ }
+        else { cantOrigConSigno = Math.abs(cantOrigConSigno); }
+    }
+    const cantInversaV9 = -cantOrigConSigno;
+
+    // Cantidad nueva con signo (para 'ajuste' el input acepta negativos).
+    let cantNuevaV9 = Number(document.getElementById('editar-mov-cantidad').value);
+    if (!Number.isFinite(cantNuevaV9) || cantNuevaV9 === 0) { mostrarToast('Cantidad inválida.', 'error'); return; }
+    if (tipoNuevoV9 !== 'ajuste' && cantNuevaV9 < 0) { mostrarToast('La cantidad debe ser positiva para este tipo de movimiento.', 'error'); return; }
+    if (!deltasMovimientoV9(tipoNuevoV9, cantNuevaV9, idOrigenN, idDestinoN)) {
+        mostrarToast('Completá las ubicaciones requeridas para el tipo de movimiento elegido.', 'error');
+        return;
+    }
+
+    // No-op: solo cambió texto (observaciones) → guardar documento sin tocar stock.
+    // (comparando contra los nombres EFECTIVOS, incluyendo los fallbacks legacy aplicados)
+    const mismoStock = tipoOrigV9 === tipoNuevoV9
+        && Math.abs(cantNuevaV9) === Math.abs(Number(mov.cantidad || 0))
+        && (origenNombreN || null) === (nombreOrigenOrigV9 || null)
+        && (destinoNombreN || null) === (nombreDestinoOrigV9 || null)
+        && (talleNuevoV9 || null) === (mov.talleId != null ? Number(mov.talleId) : null);
+
+    if (!mismoStock) {
+        // SIMULACIÓN ATÓMICA sobre el baseline del artículo (consistente con el backfill de
+        // ajustarStockV9: art.sector || 'Depósito Central' si aún no tiene ubicaciones[]).
+        let baseUbiV9 = Array.isArray(art.ubicaciones) && art.ubicaciones.length > 0 ? art.ubicaciones : null;
+        if (!baseUbiV9) {
+            const locBaseV9 = await resolverUbicacionV9(art.sector || 'Depósito Central');
+            if (art.controlaTalles) {
+                const ta = await getTodos('articuloTalles');
+                baseUbiV9 = ta.filter(t => Number(t.articuloId) === Number(art.id))
+                    .map((t, i) => ({ id: -(Date.now() + i), ubicacionId: locBaseV9, talleId: Number(t.talleId), cantidad: Number(t.stock || 0) }));
+                if (baseUbiV9.length === 0) baseUbiV9 = [{ ubicacionId: locBaseV9, talleId: null, cantidad: 0 }];
+            } else {
+                baseUbiV9 = [{ ubicacionId: locBaseV9, talleId: null, cantidad: Number(art.stockUnico || 0) }];
+            }
+        }
+        const deltasRollback = deltasMovimientoV9(tipoOrigV9, cantInversaV9, idOrigenOrig, idDestinoOrig);
+        const deltasNuevas = deltasMovimientoV9(tipoNuevoV9, cantNuevaV9, idOrigenN, idDestinoN);
+        if (!deltasRollback || !deltasNuevas) { mostrarToast('Configuración de ubicaciones inválida para la re-edición.', 'error'); return; }
+        const simulado = simularEdicionMovimientoV9(baseUbiV9, [
+            { deltas: deltasRollback, talleId: mov.talleId != null ? Number(mov.talleId) : null },
+            { deltas: deltasNuevas, talleId: talleNuevoV9 }
+        ]);
+        if (!simulado) {
+            mostrarToast('La edición dejaría stock negativo en una ubicación (rollback o aplicación). Operación cancelada: ni el movimiento ni el artículo fueron modificados.', 'error');
+            return;
+        }
+        // PASO 1 real: rollback del original (la simulación ya garantizó la factibilidad).
+        try {
+            await ajustarStockV9(Number(mov.articuloId), mov.talleId != null ? Number(mov.talleId) : null, {
+                tipoMovimiento: tipoOrigV9, cantidad: cantInversaV9,
+                ubicacionOrigenId: idOrigenOrig, ubicacionDestinoId: idDestinoOrig
+            });
+        } catch (e) {
+            mostrarToast(`Paso 1 (reversión) falló: ${e.message}. No se modificó nada.`, 'error');
+            return;
+        }
+        // PASO 2 real: aplicación del nuevo valor (con compensación si algo inesperado fallara).
+        try {
+            await ajustarStockV9(Number(mov.articuloId), talleNuevoV9, {
+                tipoMovimiento: tipoNuevoV9, cantidad: cantNuevaV9,
+                ubicacionOrigenId: idOrigenN, ubicacionDestinoId: idDestinoN
+            });
+        } catch (e) {
+            try {
+                await ajustarStockV9(Number(mov.articuloId), mov.talleId != null ? Number(mov.talleId) : null, {
+                    tipoMovimiento: tipoOrigV9, cantidad: cantOrigConSigno,
+                    ubicacionOrigenId: idOrigenOrig, ubicacionDestinoId: idDestinoOrig
+                });
+            } catch (e2) { console.error('Compensación de rollback falló:', e2); }
+            mostrarToast(`Paso 2 (aplicación) falló: ${e.message}. Se restauró el estado original.`, 'error');
+            return;
+        }
+    }
+
+    // Persistencia del documento editado con trazabilidad (IndexedDB → Firestore vía guardar()).
+    mov.tipoMovimiento = tipoNuevoV9;
+    mov.cantidad = Math.abs(cantNuevaV9);
+    mov.talleId = talleNuevoV9;
+    mov.ubicacionOrigen = origenNombreN;
+    mov.ubicacionDestino = destinoNombreN;
+    mov.sector = origenNombreN;
+    mov.sectorDestino = destinoNombreN;
+    mov.esTransferencia = tipoNuevoV9 === 'transferencia_interna';
+    mov.observaciones = obsNuevas;
+    mov.fechaEdicion = new Date().toISOString();
+    mov.usuarioEdicion = currentUser ? currentUser.id : null;
+    mov.migradoV9 = true;
+    await guardar('movimientosInventario', mov);
+
+    invalidarCache('movimientosInventario');
+    invalidarCache('articulos');
+    invalidarCache('articuloTalles');
+    closeModal('modalEditarMovimiento');
+    mostrarToast(mismoStock ? 'Observaciones actualizadas.' : 'Movimiento editado y stock recalculado.');
+    listarMovimientosInventario();
+    listarArticulos();
 }
 
 async function openModalMovimiento() {
@@ -5465,10 +6630,50 @@ async function openModalMovimiento() {
     document.getElementById('movimiento-talle-group').style.display = 'none';
     document.getElementById('movimiento-sector-group').style.display = 'none';
     document.getElementById('movimiento-tipo-bien').value = '';
+    // Botonera de Impacto en Stock: EXCLUSIVA de Administradores (oculta para otros roles).
+    const impactoGroupV9 = document.getElementById('movimiento-impacto-group');
+    if (impactoGroupV9) impactoGroupV9.style.display = esAdmin() ? '' : 'none';
+    document.querySelectorAll('input[name="movimiento-impacto"]').forEach(r => { r.checked = false; });
+    const impactoHintV9 = document.getElementById('movimiento-impacto-hint');
+    if (impactoHintV9) impactoHintV9.textContent = 'Sin selección explícita se aplica el comportamiento canónico del tipo de movimiento.';
+    // Rueditas de gestión en caliente (V10): visibles EXCLUSIVAMENTE para Administradores.
+
+    const gearTiposV10 = document.getElementById('btn-gestion-tipos');
+    const gearUbisV10 = document.getElementById('btn-gestion-ubicaciones');
+    if (gearTiposV10) gearTiposV10.style.display = esAdmin() ? '' : 'none';
+    if (gearUbisV10) gearUbisV10.style.display = esAdmin() ? '' : 'none';
+    await poblarSelectTiposMovimientoV9();
     const tipoBienInfo = document.getElementById('movimiento-tipo-bien-info');
     if (tipoBienInfo) tipoBienInfo.style.display = 'none';
     document.getElementById('movimiento-modal-title').textContent = 'Registrar Movimiento';
     openModal('modal-movimiento');
+}
+
+// ===== CONTROL DE VISIBILIDAD DEL CAMPO SECTOR / UBICACIÓN EN MOVIMIENTOS =====
+// Si el artículo es un "Bien de Uso" (tipoBien = 'bien_uso'), se muestra el selector
+// de Sector / Ubicación para que el usuario elija su destino.
+// Si es "Consumible" o no hay artículo seleccionado, se oculta, ya que por defecto
+// su destino final siempre será el Depósito Central y no requiere asignación manual.
+function actualizarVisibilidadSectorMovimiento(tipoBien) {
+    const contenedor = document.getElementById('contenedor-sector-movimiento');
+    if (!contenedor) return;
+
+    // FLEXIBILIZACIÓN (Admin): el Administrador puede dirigir el stock a/desde CUALQUIER
+    // ubicación del catálogo, independientemente del tipo de bien del artículo.
+    if (esAdmin()) {
+        contenedor.style.display = 'block';
+        const selectSectorAdmin = document.getElementById('movimiento-sector-ubicacion');
+        if (selectSectorAdmin && !selectSectorAdmin.value) selectSectorAdmin.value = 'Depósito Central';
+        return;
+    }
+
+    if (tipoBien === 'bien_uso') {
+        contenedor.style.display = 'block';
+    } else {
+        contenedor.style.display = 'none';
+        const selectSector = document.getElementById('movimiento-sector-ubicacion');
+        if (selectSector) selectSector.value = '';
+    }
 }
 
 async function onCambioArticuloMovimiento() {
@@ -5479,6 +6684,7 @@ async function onCambioArticuloMovimiento() {
         document.getElementById('movimiento-tipo-bien').value = '';
         const infoEl = document.getElementById('movimiento-tipo-bien-info');
         if (infoEl) infoEl.style.display = 'none';
+        actualizarVisibilidadSectorMovimiento('');
         return;
     }
     const art = await obtenerPorId('articulos', Number(artId));
@@ -5513,6 +6719,9 @@ async function onCambioArticuloMovimiento() {
         tipoBienInfo.style.display = 'block';
     }
 
+    // Evaluar visibilidad del Sector / Ubicación según el Tipo de Bien del artículo
+    actualizarVisibilidadSectorMovimiento(tipoBien);
+
     // Evaluar visibilidad del Sector de Destino ante cambios de artículo o tipo
     onCambioTipoMovimiento();
 }
@@ -5520,18 +6729,39 @@ async function onCambioArticuloMovimiento() {
 // ===== LÓGICA CONDICIONAL SEGÚN TIPO DE MOVIMIENTO Y TIPO DE BIEN =====
 // Si el movimiento es EGRESO y el artículo es "Consumible": se restará el stock por completo.
 // Si el movimiento es EGRESO y el artículo es "Bien de Uso": se debe indicar el Sector de Destino
-// para realizar una transferencia interna (restar de Depósito y sumar a Sector), sin dar de baja el bien.
-function onCambioTipoMovimiento() {
-    const tipoMovimiento = document.getElementById('movimiento-tipo').value;
-    const tipoBien = document.getElementById('movimiento-tipo-bien').value;
+// para realizar una transferencia interna (restar de la ubicación origen y sumar al destino),
+// sin dar de baja el bien. Fase 3: el formulario usa vocabulario canónico, por lo que la
+// Transferencia interna se selecciona explícitamente (ya no existe el 'egreso' genérico).
 
-    // Solo para EGRESO con Bien de Uso se muestra el Sector de Destino obligatorio
-    const esEgreso = tipoMovimiento === 'egreso';
-    const esBienUso = tipoBien === 'bien_uso';
+// V10 (defensivo): resuelve la NATURALEZA (semántica de stock) del tipo seleccionado en el
+// select de movimiento de forma ROBUSTA, sin depender de la API 'selectedOptions' (que en
+// algunos navegadores/entornos puede devolver una colección vacía o indefinida y provocar
+// reads de '.naturaleza' sobre un objeto undefined). Recorre options[selectedIndex] y, como
+// último recurso, cae al value del <select>.
+function obtenerNaturalezaTipoMovimientoV10() {
+    const sel = document.getElementById('movimiento-tipo');
+    if (!sel) return '';
+    const idx = (typeof sel.selectedIndex === 'number') ? sel.selectedIndex : -1;
+    const opt = (idx >= 0 && sel.options && sel.options.length > idx) ? sel.options[idx] : null;
+    if (opt) {
+        const nat = (opt.dataset && opt.dataset.naturaleza) || opt.getAttribute('data-naturaleza');
+        if (nat) return String(nat).trim();
+    }
+    return String(sel.value || '').trim();
+}
+
+function onCambioTipoMovimiento() {
+    const tipoMovimiento = (document.getElementById('movimiento-tipo') || {}).value || '';
+    // V10: la preselección de impacto usa la NATURALEZA del tipo (los tipos personalizados
+    // heredan la semántica canónica de su naturaleza a través de data-naturaleza).
+    const tipoNaturalezaV10 = obtenerNaturalezaTipoMovimientoV10() || tipoMovimiento;
+
+    // Solo la Transferencia interna muestra el Sector de Destino obligatorio
+    const esTransferenciaSel = tipoMovimiento === 'transferencia_interna';
     const sectorGroup = document.getElementById('movimiento-sector-group');
     const sectorSelect = document.getElementById('movimiento-sector-destino');
 
-    if (esEgreso && esBienUso) {
+    if (esTransferenciaSel) {
         if (sectorGroup) sectorGroup.style.display = 'block';
         if (sectorSelect) sectorSelect.required = true;
     } else {
@@ -5541,6 +6771,22 @@ function onCambioTipoMovimiento() {
             sectorSelect.value = '';
         }
     }
+
+    // ===== BOTONERA DE IMPACTO (solo Admin): preselección canónica, NUNCA bloqueada =====
+    if (esAdmin()) {
+        const preseleccionV9 = { ingreso: 'sumar', devolucion: 'sumar', consumo: 'restar', baja: 'restar' }[tipoNaturalezaV10] || '';
+        document.querySelectorAll('input[name="movimiento-impacto"]').forEach(r => { r.checked = r.value === preseleccionV9; });
+        const hintV9 = document.getElementById('movimiento-impacto-hint');
+        if (hintV9) {
+            hintV9.textContent = preseleccionV9
+                ? 'Preselección canónica aplicada: como Administrador podés forzar otra dirección.'
+                : (tipoMovimiento === 'transferencia_interna'
+                    ? 'Transferencia: sin preselección — mueve stock entre ubicaciones, salvo que fuerces Sumar/Restar.'
+                    : tipoMovimiento === 'ajuste'
+                        ? 'Ajuste: sin preselección — el sentido lo define la operación, salvo que fuerces Sumar/Restar.'
+                        : 'Sin selección explícita se aplica el comportamiento canónico del tipo de movimiento.');
+        }
+    }
 }
 
 async function guardarMovimientoForm(e) {
@@ -5548,13 +6794,37 @@ async function guardarMovimientoForm(e) {
     if (!puedeEditar()) return;
 
     const articuloId = document.getElementById('movimiento-articulo').value;
-    const tipo = document.getElementById('movimiento-tipo').value;
+    const tipo = (document.getElementById('movimiento-tipo') || {}).value || '';
+    // GUARD defensivo (V10): sin un tipo válido seleccionado no hay naturaleza qué resolver
+    // ni operación que registrar. Se valida ANTES de consultar el catálogo 'tiposMovimiento'
+    // y antes de leer cualquier dato del option seleccionado (evita leer '.naturaleza' de un
+    // objeto indefinido que congelaba el flujo del formulario).
+    if (!tipo) {
+        mostrarToast('Seleccioná un Tipo de Movimiento.', 'error');
+        return;
+    }
+    // V10: resolución de naturaleza del tipo (canónico o personalizado) mediante helper
+    // robusto (los tipos dinámicos heredan la semántica canónica a través de data-naturaleza).
+    const tipoNaturalezaV10 = obtenerNaturalezaTipoMovimientoV10() || tipo;
     const cantidad = Number(document.getElementById('movimiento-cantidad').value);
     const talleId = document.getElementById('movimiento-talle').value || null;
     const motivo = document.getElementById('movimiento-motivo').value.trim();
     const observaciones = document.getElementById('movimiento-observaciones').value.trim();
     const tipoBien = document.getElementById('movimiento-tipo-bien').value || 'consumible';
     const sectorDestino = document.getElementById('movimiento-sector-destino').value;
+    // ===== BOTONERA DE IMPACTO (solo Admin): separa el rótulo del movimiento de la matemática real =====
+    const impactoSelV9 = esAdmin() ? (((document.querySelector('input[name="movimiento-impacto"]:checked') || {}).value) || '') : '';
+
+    // ===== SECTOR / UBICACIÓN DEL MOVIMIENTO =====
+    // Si el campo #contenedor-sector-movimiento está visible (artículo Bien de Uso),
+    // se guarda el valor seleccionado por el usuario en la propiedad 'sector'.
+    // Si está oculto (artículo Consumible), se asigna por defecto "Depósito Central"
+    // de forma automática, ya que ese es su destino final sin asignación manual.
+    const contenedorSectorMov = document.getElementById('contenedor-sector-movimiento');
+    const esSectorVisible = contenedorSectorMov && contenedorSectorMov.style.display !== 'none';
+    const sectorUbicacion = esSectorVisible
+        ? (document.getElementById('movimiento-sector-ubicacion').value || null)
+        : 'Depósito Central';
 
     if (!articuloId || !tipo || !cantidad || !motivo) {
         mostrarToast('Completá todos los campos requeridos.', 'error');
@@ -5564,86 +6834,124 @@ async function guardarMovimientoForm(e) {
     const art = await obtenerPorId('articulos', Number(articuloId));
     if (!art) { mostrarToast('Artículo no encontrado.', 'error'); return; }
 
-    // ===== LÓGICA CONDICIONAL SEGÚN TIPO DE BIEN =====
-    const esEgreso = ['egreso', 'entrega', 'perdida', 'rotura', 'transferencia'].includes(tipo);
-    const esBienUso = tipoBien === 'bien_uso';
+    // ===== LÓGICA CONDICIONAL SEGÚN TIPO DE BIEN (vocabulario canónico Fase 1/2) =====
+    // El tipoBien se pasa a mapearTipoMovimientoV9; los Bienes de Uso se mueven vía
+    // 'transferencia_interna' y los consumibles se consumen ('consumo').
 
-    // Si es EGRESO y el artículo es Bien de Uso: se requiere Sector de Destino (transferencia interna)
-    if (tipo === 'egreso' && esBienUso) {
-        if (!sectorDestino) {
-            mostrarToast('Para Bienes de Uso, debe seleccionar el Sector de Destino.', 'error');
+    // Fase 3: el formulario ofrece 'transferencia_interna' explícito; el destino obligatorio
+    // se valida más abajo (esTransferencia && !sectorDestino). Los consumibles se registran
+    // como 'consumo' y los ingresos/ajustes no requieren destino.
+
+    // 1) Mapear el tipo del formulario al vocabulario canónico (misma tabla que la migración V9).
+    const canon = mapearTipoMovimientoV9(tipoNaturalezaV10, tipoBien);
+    const esTransferencia = canon.tipoMovimiento === 'transferencia_interna';
+    // Si el Admin forzó Sumar/Restar/Solo Registro, la validación de destino de la
+    // transferencia canónica queda relevada (la dirección la dicta el Impacto).
+    if (esTransferencia && !sectorDestino && !impactoSelV9) {
+        mostrarToast('Para transferencias debe indicar el Sector de Destino.', 'error');
+        return;
+    }
+
+    // 2) Resolver ubicaciones de origen/destino por nombre (crea el catálogo si faltan).
+    const origenNombre = sectorUbicacion || 'Depósito Central';
+    const idOrigen = await resolverUbicacionV9(origenNombre);
+    let idDestino = null;
+    if (esTransferencia || canon.esIngreso) {
+        idDestino = await resolverUbicacionV9(esTransferencia ? sectorDestino : origenNombre);
+    }
+
+    // 3) Ajustar stock: dirección CANÓNICA o FORZADA por el Admin (botonera de Impacto).
+    // En todos los casos el ajuste ocurre ANTES de registrar el movimiento (sin historia fantasma).
+    let stockNegativoForzadoV9 = false;
+    if (impactoSelV9 === 'registro') {
+        // Solo Registro: NO se invoca ajustarStockV9 — el stock físico queda intacto.
+    } else if (impactoSelV9 === 'sumar' || impactoSelV9 === 'restar') {
+        // Dirección FORZADA: el helper hace la matemática ('ingreso'/'consumo' puros) y el
+        // rótulo del movimiento conserva el tipo elegido en el formulario.
+        const opcionesForzadasV9 = {
+            tipoMovimiento: impactoSelV9 === 'sumar' ? 'ingreso' : 'consumo',
+            cantidad,
+            ubicacionOrigenId: impactoSelV9 === 'restar' ? idOrigen : null,
+            ubicacionDestinoId: impactoSelV9 === 'sumar' ? idOrigen : null
+        };
+        try {
+            await ajustarStockV9(Number(articuloId), talleId ? Number(talleId) : null, opcionesForzadasV9);
+        } catch (e) {
+            // Dry-run detectó stock insuficiente: el Admin puede autorizar el negativo.
+            const forzarV9 = await mostrarConfirmacion('Stock insuficiente', `${e.message}. ¿Forzar el ajuste dejando el stock negativo en esa ubicación?`);
+            if (!forzarV9) return;
+            try {
+                stockNegativoForzadoV9 = true;
+                await ajustarStockV9(Number(articuloId), talleId ? Number(talleId) : null, { ...opcionesForzadasV9, permitirNegativo: true });
+            } catch (e2) {
+                mostrarToast(e2.message || 'Error al ajustar el stock.', 'error');
+                return;
+            }
+        }
+    } else {
+        // Comportamiento canónico (sin anulación del Admin).
+        try {
+            await ajustarStockV9(Number(articuloId), talleId ? Number(talleId) : null, {
+                tipoMovimiento: canon.tipoMovimiento,
+                cantidad,
+                ubicacionOrigenId: idOrigen,
+                ubicacionDestinoId: idDestino
+            });
+        } catch (e) {
+            mostrarToast(e.message || 'Error al ajustar el stock.', 'error');
             return;
         }
     }
 
-    // Validar stock suficiente para egresos
-    if (esEgreso) {
-        let stockActual = 0;
-        if (art.controlaTalles && talleId) {
-            const tallesArt = await getTodos('articuloTalles');
-            const talleArt = tallesArt.find(t => Number(t.articuloId) === Number(articuloId) && Number(t.talleId) === Number(talleId));
-            stockActual = talleArt ? talleArt.stock : 0;
-        } else {
-            stockActual = Number(art.stockUnico || 0);
-        }
-        if (cantidad > stockActual) {
-            mostrarToast(`Stock insuficiente. Stock actual: ${stockActual}`, 'error');
-            return;
-        }
+    // Snapshots de ubicación: según la dirección forzada o el comportamiento canónico.
+    let ubicacionOrigenSnapV9, ubicacionDestinoSnapV9;
+    if (impactoSelV9 === 'sumar') { ubicacionOrigenSnapV9 = null; ubicacionDestinoSnapV9 = origenNombre; }
+    else if (impactoSelV9 === 'restar') { ubicacionOrigenSnapV9 = origenNombre; ubicacionDestinoSnapV9 = null; }
+    else {
+        ubicacionOrigenSnapV9 = (canon.tipoMovimiento === 'consumo' || canon.tipoMovimiento === 'baja' || esTransferencia) ? origenNombre : null;
+        ubicacionDestinoSnapV9 = (canon.tipoMovimiento === 'ingreso' || canon.tipoMovimiento === 'devolucion' || esTransferencia) ? (esTransferencia ? sectorDestino : origenNombre) : null;
     }
+    const esIngresoFinalV9 = impactoSelV9 === 'sumar' ? true
+        : impactoSelV9 === 'restar' ? false
+        : canon.esIngreso;
+    // V10: el textarea 'Observaciones' queda estrictamente con el texto libre del operador;
+    // el detalle técnico de auditoría se aísla en una propiedad interna del documento
+    // (logTecnico) y NO contamina el texto visible/editable del operador.
+    const obsFinalesV9 = observaciones;
+    const logTecnicoV9 = impactoSelV9
+        ? `Movimiento ${impactoSelV9} por Administrador ${currentUser ? currentUser.nombre : 'desconocido'}${stockNegativoForzadoV9 ? ' (stock negativo autorizado)' : ''}`.trim()
+        : '';
 
     const mov = {
         articuloId: Number(articuloId),
         talleId: talleId ? Number(talleId) : null,
-        tipoMovimiento: tipo,
+        tipoMovimiento: canon.tipoMovimiento,
+        esIngreso: esIngresoFinalV9,
         tipoBien: tipoBien,
+        impactoForzado: impactoSelV9 || null,
+        forzadoPor: impactoSelV9 && currentUser ? currentUser.nombre : null,
+        stockNegativoForzado: stockNegativoForzadoV9,
         sectorDestino: sectorDestino || null,
-        esTransferencia: (tipo === 'egreso' && esBienUso),
+        sector: origenNombre,
+        ubicacionOrigen: ubicacionOrigenSnapV9,
+        ubicacionDestino: ubicacionDestinoSnapV9,
+        esTransferencia,
         cantidad,
         motivo,
-        observaciones,
+        observaciones: obsFinalesV9,
+        logTecnico: logTecnicoV9,
         usuarioId: currentUser ? currentUser.id : null,
-        fecha: new Date().toISOString().split('T')[0]
+        fecha: new Date().toISOString().split('T')[0],
+        migradoV9: true
     };
 
     await guardar('movimientosInventario', mov);
-
-    // ===== AJUSTE DE STOCK =====
-    // Consumible en EGRESO: se resta el stock (se da de baja el bien consumible).
-    // Bien de Uso en EGRESO (transferencia interna): se resta de Depósito, y el bien
-    // permanece en el inventario global (no se da de baja). El sector de destino
-    // queda registrado en el movimiento para trazabilidad.
-    if (art.controlaTalles && talleId) {
-        const tallesArt = await getTodos('articuloTalles');
-        let talleArt = tallesArt.find(t => Number(t.articuloId) === Number(articuloId) && Number(t.talleId) === Number(talleId));
-        if (esEgreso) {
-            if (talleArt) {
-                talleArt.stock = Math.max(0, Number(talleArt.stock) - cantidad);
-                await guardar('articuloTalles', talleArt);
-            }
-        } else {
-            if (talleArt) {
-                talleArt.stock = Number(talleArt.stock) + cantidad;
-                await guardar('articuloTalles', talleArt);
-            } else {
-                await guardar('articuloTalles', { articuloId: Number(articuloId), talleId: Number(talleId), stock: cantidad });
-            }
-        }
-    } else {
-        if (esEgreso) {
-            art.stockUnico = Math.max(0, Number(art.stockUnico || 0) - cantidad);
-        } else {
-            art.stockUnico = Number(art.stockUnico || 0) + cantidad;
-        }
-        await guardar('articulos', art);
-    }
-
-    invalidarCache('articuloTalles');
-    invalidarCache('articulos');
     invalidarCache('movimientosInventario');
 
     closeModal('modal-movimiento');
-    const tipoLabel = (tipo === 'egreso' && esBienUso) ? `transferencia interna a ${sectorDestino}` : `${tipo} de ${cantidad} unidades`;
+    const tipoLabel = esTransferencia
+        ? `transferencia interna a ${sectorDestino}`
+        : `${canon.tipoMovimiento} de ${cantidad} unidades`;
     mostrarToast(`Movimiento registrado: ${tipoLabel}.`);
 
     const activeView = document.querySelector('.view.active');
@@ -6036,17 +7344,39 @@ async function agregarFilaEntrega() {
             <label>Cantidad</label>
             <input type="number" class="entrega-cantidad-input" min="1" value="1" required>
         </div>
+        <div class="form-group entrega-destino-group" style="flex:1.4;display:none;">
+            <label>Destino</label>
+            <div style="display:flex;gap:0.35rem;align-items:center;">
+                <select class="entrega-destino-select" style="flex:1;min-width:0;" onchange="toggleReceptorEntrega(this)"></select>
+                <input type="text" class="entrega-receptor-input" placeholder="Nombre del receptor" maxlength="80" style="flex:1;min-width:0;display:none;">
+            </div>
+        </div>
         <button type="button" class="action-btn delete" onclick="eliminarFilaEntrega(this)" style="margin-bottom:0.5rem;" title="Quitar"><i class="fa-solid fa-times"></i></button>
     `;
 
     container.appendChild(row);
 }
 
+// Muestra/oculta el campo de texto libre "Nombre del receptor": es OBLIGATORIO cuando el
+// destino de un Bien de Uso es la asignación nominal definitiva a persona (__PERSONA__).
+function toggleReceptorEntrega(destinoSelect) {
+    const row = destinoSelect.closest('.entrega-detalle-row');
+    const inp = row ? row.querySelector('.entrega-receptor-input') : null;
+    if (!inp) return;
+    const esNominal = destinoSelect.value === '__PERSONA__';
+    inp.style.display = esNominal ? '' : 'none';
+    if (!esNominal) inp.value = '';
+}
+
 async function onCambioArticuloEntrega(select) {
     const artId = select.value;
-    const talleSelect = select.closest('.entrega-detalle-row').querySelector('.entrega-talle-select');
+    const row = select.closest('.entrega-detalle-row');
+    const talleSelect = row.querySelector('.entrega-talle-select');
+    const destinoGroup = row.querySelector('.entrega-destino-group');
+    const destinoSelect = row.querySelector('.entrega-destino-select');
     if (!artId) {
         talleSelect.innerHTML = '<option value="">Sin talle</option>';
+        if (destinoGroup) destinoGroup.style.display = 'none';
         return;
     }
     const art = await obtenerPorId('articulos', Number(artId));
@@ -6056,6 +7386,31 @@ async function onCambioArticuloEntrega(select) {
         talles.forEach(t => talleSelect.innerHTML += `<option value="${t.id}">${t.nombre}</option>`);
     } else {
         talleSelect.innerHTML = '<option value="">Sin talle</option>';
+    }
+    // Fase 3: Bien de Uso → el operador elige la ubicación destino (se pre-selecciona
+    // "Carrera"); Consumible → no hay destino físico, el stock se consume.
+    if (destinoGroup && destinoSelect) {
+        // Corrección: resolver tipoBien heredado de la categoría (artículos legacy sin campo propio).
+        const tipoBienFilaV9 = await resolverTipoBienArticuloV9(art);
+        if (art && tipoBienFilaV9 === 'bien_uso') {
+            const ubicaciones = await obtenerUbicacionesActivas();
+            // PASO 2: opción especial de asignación nominal definitiva a persona (baja patrimonial).
+            // El flujo habitual sigue pre-seleccionando "Carrera" (sector interno → transferencia).
+            destinoSelect.innerHTML = '<option value="">Seleccione...</option>'
+                + '<option value="__PERSONA__" data-nombre="__PERSONA__">👤 Asignación definitiva a persona (baja patrimonial)</option>'
+                + ubicaciones
+                    .filter(u => String(u.nombre).trim().toLowerCase() !== 'depósito central')
+                    .map(u => `<option value="${u.id}" data-nombre="${escapeHtml(u.nombre)}">${escapeHtml(u.nombre)}</option>`)
+                    .join('');
+            const carreraOpt = Array.from(destinoSelect.options).find(o => String(o.dataset.nombre || '').trim().toLowerCase() === 'carrera');
+            if (carreraOpt) destinoSelect.value = carreraOpt.value;
+            toggleReceptorEntrega(destinoSelect);
+            destinoGroup.style.display = '';
+        } else {
+            destinoSelect.innerHTML = '<option value="">Sin destino</option>';
+            destinoSelect.value = '';
+            destinoGroup.style.display = 'none';
+        }
     }
 }
 
@@ -6074,7 +7429,6 @@ async function guardarEntregaForm(e) {
 
     const personaId = document.getElementById('entrega-persona').value;
     if (!personaId) { mostrarToast('Debe seleccionar una persona.', 'error'); return; }
-
     const rows = document.querySelectorAll('#entrega-detalles-container .entrega-detalle-row');
     if (rows.length === 0) { mostrarToast('Debe agregar al menos un artículo.', 'error'); return; }
 
@@ -6086,6 +7440,43 @@ async function guardarEntregaForm(e) {
         usuarioId: currentUser ? currentUser.id : null,
         fechaCreacion: new Date().toISOString()
     };
+
+    // PASADA 1 (validación): verificar stock suficiente en Depósito Central para TODAS las filas
+    // antes de guardar el encabezado, evitando entregas parciales.
+    const idOrigenEntrega = await resolverUbicacionV9('Depósito Central');
+    for (const row of rows) {
+        const artSelV = row.querySelector('.entrega-articulo-select');
+        const talleSelV = row.querySelector('.entrega-talle-select');
+        const cantInputV = row.querySelector('.entrega-cantidad-input');
+        const articuloIdV = artSelV.value;
+        const talleIdV = talleSelV.value || null;
+        const cantidadV = Number(cantInputV.value);
+        if (!articuloIdV || !cantidadV) continue;
+        const artV = await obtenerPorId('articulos', Number(articuloIdV));
+        if (!artV) { mostrarToast('Artículo no encontrado.', 'error'); return; }
+        // Corrección: resolver tipoBien heredado de la categoría (artículos legacy sin campo propio).
+        const tipoBienValV9 = await resolverTipoBienArticuloV9(artV);
+        if (tipoBienValV9 === 'bien_uso') {
+            const destSelV = row.querySelector('.entrega-destino-select');
+            if (!destSelV || !destSelV.value) {
+                mostrarToast(`Seleccioná la ubicación destino para "${artV.nombre}" (Bien de Uso).`, 'error');
+                return;
+            }
+            // Asignación nominal: el receptor es texto libre OBLIGATORIO (persona física).
+            if (destSelV.value === '__PERSONA__') {
+                const receptorInpV = row.querySelector('.entrega-receptor-input');
+                if (!receptorInpV || !receptorInpV.value.trim()) {
+                    mostrarToast('Debe escribir el nombre de la persona a quien se le asigna el artículo', 'error');
+                    return;
+                }
+            }
+        }
+        const stockDispV = obtenerStockUbicacionV9(artV, talleIdV ? Number(talleIdV) : null, idOrigenEntrega);
+        if (cantidadV > stockDispV) {
+            mostrarToast(`Stock insuficiente para "${artV.nombre}" en Depósito Central. Disponible: ${stockDispV}`, 'error');
+            return;
+        }
+    }
 
     const entregaId = await guardar('entregasInventario', entrega);
     entrega.id = Number(entregaId);
@@ -6104,17 +7495,44 @@ async function guardarEntregaForm(e) {
         const art = await obtenerPorId('articulos', Number(articuloId));
         if (!art) { mostrarToast('Artículo no encontrado.', 'error'); return; }
 
-        // Validar stock suficiente antes de descontar
-        let stockActual = 0;
-        if (art.controlaTalles && talleId) {
-            const tallesArt = await getTodos('articuloTalles');
-            const talleArt = tallesArt.find(t => Number(t.articuloId) === Number(articuloId) && Number(t.talleId) === Number(talleId));
-            stockActual = talleArt ? Number(talleArt.stock || 0) : 0;
-        } else {
-            stockActual = Number(art.stockUnico || 0);
-        }
-        if (cantidad > stockActual) {
-            mostrarToast(`Stock insuficiente para "${art.nombre}". Stock actual: ${stockActual}`, 'error');
+        // Regla de negocio: Consumible → 'consumo' (baja el total); Bien de Uso → 'transferencia_interna'
+        // (resta de Depósito Central y suma en la ubicación destino elegida por el operador —
+        // pre-seleccionada en "Carrera" por la UI — sin disminuir el stock total).
+        // Corrección clave: resolver el tipoBien heredado de la categoría. Sin esto, un Bien de
+        // Uso legacy (ej. Scanner) caía en el branch 'consumible' y la entrega le descontaba
+        // stock del patrimonio total en lugar de solo moverlo de ubicación.
+        // PASO 2 — BIFURCACIÓN PATRIMONIAL POR FILA (Bienes de Uso):
+        //  • Destino físico (Camión, Carrera, Taller...) → 'transferencia_interna': cambia de
+        //    ubicación y el Stock Total NO disminuye (el activo sigue existiendo).
+        //  • Destino "__PERSONA__" (asignación nominal definitiva) → 'baja': resta la unidad de
+        //    Depósito Central y DISMINUYE el Stock Total patrimonial de forma definitiva; los
+        //    datos del empleado quedan en motivo/observaciones para la auditoría.
+        // Consumibles → 'consumo' (sin cambios).
+        const tipoBienArtEntregaV9 = await resolverTipoBienArticuloV9(art);
+        const esBienUsoEntrega = tipoBienArtEntregaV9 === 'bien_uso';
+        const destinoSelEntrega = esBienUsoEntrega ? row.querySelector('.entrega-destino-select') : null;
+        const esAsignacionNominalV9 = !!(esBienUsoEntrega && destinoSelEntrega && destinoSelEntrega.value === '__PERSONA__');
+        const tipoMovEntrega = esBienUsoEntrega
+            ? (esAsignacionNominalV9 ? 'baja' : 'transferencia_interna')
+            : 'consumo';
+        const destinoNombreEntrega = esBienUsoEntrega
+            ? (esAsignacionNominalV9 ? null
+                : ((destinoSelEntrega && destinoSelEntrega.value && destinoSelEntrega.selectedOptions[0])
+                    ? (destinoSelEntrega.selectedOptions[0].dataset.nombre || 'Carrera')
+                    : 'Carrera'))
+            : null;
+        const idDestinoEntrega = (esBienUsoEntrega && !esAsignacionNominalV9) ? await resolverUbicacionV9(destinoNombreEntrega) : null;
+
+        // Ajuste de stock a través del helper unificado (aplica + recalcula totales derivados).
+        try {
+            await ajustarStockV9(Number(articuloId), talleId ? Number(talleId) : null, {
+                tipoMovimiento: tipoMovEntrega,
+                cantidad,
+                ubicacionOrigenId: idOrigenEntrega,
+                ubicacionDestinoId: idDestinoEntrega
+            });
+        } catch (e) {
+            mostrarToast(`No se pudo descontar stock de "${art.nombre}": ${e.message}`, 'error');
             return;
         }
 
@@ -6126,27 +7544,37 @@ async function guardarEntregaForm(e) {
         };
         await guardar('detalleEntregas', detalle);
 
-        if (art.controlaTalles && talleId) {
-            const tallesArt = await getTodos('articuloTalles');
-            const talleArt = tallesArt.find(t => Number(t.articuloId) === Number(articuloId) && Number(t.talleId) === Number(talleId));
-            if (talleArt) {
-                talleArt.stock = Math.max(0, Number(talleArt.stock) - cantidad);
-                await guardar('articuloTalles', talleArt);
-            }
-        } else {
-            art.stockUnico = Math.max(0, Number(art.stockUnico || 0) - cantidad);
-            await guardar('articulos', art);
-        }
+        // PASO 2-nominal: el nombre del receptor lo escribe el operador (texto libre) y queda
+        // en 'observaciones' y en el campo indexable 'personaNombre' del movimiento de 'baja'.
+        const receptorNominalV9 = esAsignacionNominalV9
+            ? ((row.querySelector('.entrega-receptor-input') || {}).value || '').trim()
+            : null;
+        const motivoEntregaV9 = esAsignacionNominalV9
+            ? `Asignación definitiva a ${receptorNominalV9}`
+            : 'Entrega de indumentaria';
+        const observacionesEntregaV9 = esAsignacionNominalV9
+            ? `Entrega #${entrega.id} — Baja por asignación definitiva a: ${receptorNominalV9}`
+            : `Entrega #${entrega.id} a persona ID: ${personaId}`;
 
         await guardar('movimientosInventario', {
             articuloId: Number(articuloId),
             talleId: talleId ? Number(talleId) : null,
-            tipoMovimiento: 'entrega',
+            tipoMovimiento: tipoMovEntrega,
+            esIngreso: false,
+            tipoBien: tipoBienArtEntregaV9,
+            personaId: Number(personaId),
+            personaNombre: esAsignacionNominalV9 ? receptorNominalV9 : null,
             cantidad,
-            motivo: 'Entrega de indumentaria',
-            observaciones: `Entrega #${entrega.id} a persona ID: ${personaId}`,
+            motivo: motivoEntregaV9,
+            observaciones: observacionesEntregaV9,
+            ubicacionOrigen: 'Depósito Central',
+            ubicacionDestino: destinoNombreEntrega,
+            sector: 'Depósito Central',
+            sectorDestino: destinoNombreEntrega,
+            esTransferencia: esBienUsoEntrega && !esAsignacionNominalV9,
             usuarioId: currentUser ? currentUser.id : null,
-            fecha: new Date().toISOString().split('T')[0]
+            fecha: new Date().toISOString().split('T')[0],
+            migradoV9: true
         });
     }
 

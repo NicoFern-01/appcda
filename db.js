@@ -1,7 +1,11 @@
 ﻿// db.js - Gestión de Base de Datos Local con IndexedDB e integración con Firebase
 
 const DB_NAME = 'ControlAutomovilismoDB';
-const DB_VERSION = 8;
+// V11: bump de seguridad. En V10 la base pudo abrirse con una build que no materializó el
+// store 'tiposMovimiento'; como ya se estaba en la versión objetivo, onupgradeneeded no se
+// volvía a disparar y el store faltaba físicamente (NotFoundError en db.transaction). Al subir
+// a V11 el navegador se ve OBLIGADO a ejecutar la migración y a crear la tabla faltante.
+const DB_VERSION = 11;
 
 let dbInstance = null;
 
@@ -390,6 +394,43 @@ function openDB() {
             if (!db.objectStoreNames.contains('alojamientos')) {
                 db.createObjectStore('alojamientos', { keyPath: 'id', autoIncrement: true });
             }
+
+            // ============ NUEVO EN DB_VERSION 9: CATÁLOGO DE UBICACIONES FÍSICAS ============
+            // Ubicaciones canónicas (Depósito Central, Camión, Carrera, etc.). Reemplaza la
+            // lista de sectores que históricamente vivía en localStorage ('cda_sectores').
+            // Se referencia desde 'articulos.ubicaciones[].ubicacionId'.
+            if (!db.objectStoreNames.contains('ubicacionesInventario')) {
+                const ubicacionesStore = db.createObjectStore('ubicacionesInventario', { keyPath: 'id', autoIncrement: true });
+                ubicacionesStore.createIndex('nombre', 'nombre', { unique: true });
+            }
+
+            // ============ NUEVO EN DB_VERSION 10: CATÁLOGO DE TIPOS DE MOVIMIENTO ============
+            // Tipos canónicos + personalizados. Cada uno define su 'naturaleza' (semántica
+            // canónica de stock) para que ajustarStockV9 nunca reciba tipos desconocidos.
+            if (!db.objectStoreNames.contains('tiposMovimiento')) {
+                const tiposStore = db.createObjectStore('tiposMovimiento', { keyPath: 'id', autoIncrement: true });
+                tiposStore.createIndex('valor', 'valor', { unique: true });
+            }
+
+            // ============ DB_VERSION 11: REPARACIÓN DEFINITIVA DE ESQUEMAS INCONSISTENTES ============
+            // MOTIVO DEL BUMP: en V10 la base pudo abrirse bajo una build que no materializó
+            // 'tiposMovimiento'. Como ya se estaba en la versión objetivo, el evento
+            // onupgradeneeded NO volvía a dispararse jamás y el store faltaba físicamente →
+            // NotFoundError en db.transaction([...]) que congelaba la UI. Al subir a V11 el
+            // navegador ejecuta OBLIGATORIAMENTE esta actualización (oldVersion 10 < 11) y el
+            // guard con .contains() garantiza la creación física del store y su índice.
+            if (event.oldVersion < 11) {
+                if (!db.objectStoreNames.contains('tiposMovimiento')) {
+                    try {
+                        const tiposStoreV11 = db.createObjectStore('tiposMovimiento', { keyPath: 'id', autoIncrement: true });
+                        tiposStoreV11.createIndex('valor', 'valor', { unique: true });
+                    } catch (storeErrV11) {
+                        // Si la creación fallara, la garantía la da el bloque V10 de arriba y el
+                        // control defensivo de transacciones (no congelar la app). Log limpio.
+                        console.warn('[db] V11: no se pudo crear el store tiposMovimiento:', storeErrV11?.message || storeErrV11);
+                    }
+                }
+            }
         };
 
         request.onsuccess = (event) => {
@@ -541,6 +582,431 @@ async function inicializarDatosPorDefecto() {
     }
 }
 
+// ==================== MIGRACIÓN DEL ESQUEMA A DB_VERSION 9 ====================
+// FASE 1 del refactoring de inventario (stock por ubicación):
+//  1) Crea y siembra el catálogo 'ubicacionesInventario' (normaliza los sectores
+//     que históricamente vivían en localStorage bajo 'cda_sectores').
+//  2) Desagrega el stock de 'articulos' en 'articulos.ubicaciones[]' (fuente de
+//     verdad por ubicación), manteniendo 'stockUnico' y 'articuloTalles[].stock'
+//     como totales derivados para no romper las lecturas existentes.
+//  3) Normaliza 'movimientosInventario' hacia los tipos semánticos canónicos
+//     (ingreso, consumo, transferencia_interna, devolucion, baja) y registra
+//     'ubicacionOrigen' / 'ubicacionDestino' como snapshots históricos.
+// Idempotente: protegida con flag en localStorage ('cda_migracion_v9_ok') y con
+// marcas por registro ('migradoV9'). Al re-guardar cada documento, la sincronización
+// con Firestore (guardar -> setDoc) propaga los cambios automáticamente a la nube.
+const DB_MIGRACION_V9_FLAG = 'cda_migracion_v9_ok';
+
+// Nombres históricos con distinta grafía que representan la misma ubicación física.
+const ALIASES_UBICACION = {
+    'Depósito': 'Depósito Central',
+    'Deposito': 'Depósito Central',
+    'Oficina': 'Oficinas'
+};
+
+// Ubicaciones que se trasladan físicamente (camión, autódromo, stand).
+const UBICACIONES_MOVILES = ['Camión', 'Carrera', 'Stand / Box'];
+
+// Categorías canónicas que siempre deben existir en el catálogo (orden de prioridad).
+const UBICACIONES_DEFAULT_ORDER = ['Depósito Central', 'Taller', 'Oficinas', 'Carrera', 'Stand / Box', 'Otro', 'Producción', 'Paddock', 'Camión'];
+
+// Normaliza un nombre de ubicación aplicando el mapa de alias y limpieza básica.
+function normalizarNombreUbicacionV9(nombre) {
+    const limpio = String(nombre || '').trim().replace(/\s+/g, ' ');
+    if (!limpio) return null;
+    for (const alias of Object.keys(ALIASES_UBICACION)) {
+        if (alias.toLowerCase() === limpio.toLowerCase()) {
+            return ALIASES_UBICACION[alias];
+        }
+    }
+    return limpio;
+}
+
+// Clasifica una ubicación como fija (depósito/taller/oficina) o móvil (camión/carrera/stand).
+function inferirTipoUbicacionV9(nombre) {
+    return UBICACIONES_MOVILES.includes(nombre) ? 'movil' : 'fija';
+}
+
+// Mapeo de tipos de movimiento legacy -> canónicos (Fase 1).
+// Idempotente: los tipos que ya son canónicos se conservan tal cual.
+function mapearTipoMovimientoV9(tipoLegacy, tipoBien) {
+    const tipo = String(tipoLegacy || '').toLowerCase();
+    const esBienUso = tipoBien === 'bien_uso';
+    switch (tipo) {
+        case 'ingreso':
+        case 'compra':
+        case 'reposicion':
+        case 'inventario':
+            return { tipoMovimiento: 'ingreso', esIngreso: true };
+        case 'devolucion':
+            return { tipoMovimiento: 'devolucion', esIngreso: true };
+        case 'transferencia':
+        case 'egreso':
+        case 'entrega':
+            return esBienUso
+                ? { tipoMovimiento: 'transferencia_interna', esIngreso: false }
+                : { tipoMovimiento: 'consumo', esIngreso: false };
+        case 'transferencia_interna':
+            return { tipoMovimiento: 'transferencia_interna', esIngreso: false };
+        case 'consumo':
+            return { tipoMovimiento: 'consumo', esIngreso: false };
+        case 'baja':
+            return { tipoMovimiento: 'baja', esIngreso: false };
+        case 'perdida':
+        case 'rotura':
+            return { tipoMovimiento: 'baja', esIngreso: false };
+        case 'ajuste':
+            // Sin signo no puede inferirse si suma o resta: se conserva como legacy de transición.
+            return { tipoMovimiento: 'ajuste', esIngreso: false };
+        default:
+            console.warn(`Migración V9: tipo de movimiento '${tipoLegacy}' sin mapeo canónico, se conserva.`);
+            return { tipoMovimiento: tipoLegacy || 'consumo', esIngreso: false };
+    }
+}
+
+// ============ MIGRACIÓN V10: SEED DEL CATÁLOGO DE TIPOS DE MOVIMIENTO ============
+// Seed IDEMPOTENTE de los 6 tipos canónicos con su 'naturaleza' (semántica de stock que
+// heredan). Los tipos personalizados que cree el Admin se agregan al mismo store y nunca
+// llegan crudos a ajustarStockV9: siempre se resuelve su naturaleza canónica primero.
+const SEED_TIPOS_MOVIMIENTO_V10 = [
+    { valor: 'ingreso', label: 'Ingreso', naturaleza: 'ingreso' },
+    { valor: 'consumo', label: 'Consumo / Salida', naturaleza: 'consumo' },
+    { valor: 'transferencia_interna', label: 'Transferencia interna', naturaleza: 'transferencia_interna' },
+    { valor: 'devolucion', label: 'Devolución', naturaleza: 'devolucion' },
+    { valor: 'baja', label: 'Baja', naturaleza: 'baja' },
+    { valor: 'ajuste', label: 'Ajuste', naturaleza: 'ajuste' }
+];
+
+async function migrarTiposMovimientoV10() {
+    try {
+        const existentes = await getTodos('tiposMovimiento', { soloLocal: true });
+        const valoresExistentes = new Set((existentes || []).map(t => String(t.valor)));
+        let agregados = 0;
+        for (const seed of SEED_TIPOS_MOVIMIENTO_V10) {
+            if (valoresExistentes.has(seed.valor)) continue;
+            await guardar('tiposMovimiento', { ...seed, activo: true });
+            agregados++;
+        }
+        invalidarCache('tiposMovimiento');
+        if (agregados > 0) {
+            console.log(`Migración V10 OK: catálogo de tipos de movimiento sembrado (${agregados} agregados, ${SEED_TIPOS_MOVIMIENTO_V10.length} canónicos garantizados).`);
+        }
+    } catch (e) {
+        console.warn('Migración V10 no pudo completarse (se reintentará en el próximo arranque):', e);
+    }
+}
+
+// Migración idempotente: se ejecuta una sola vez tras abrir la base de datos.
+async function migrarInventarioV9() {
+    try {
+        if (localStorage.getItem(DB_MIGRACION_V9_FLAG) === '1') return;
+    } catch (e) { /* localStorage no disponible: se reintenta en cada arranque */ }
+
+    console.group('Migración V9 (inventario por ubicación)');
+    try {
+        await openDB();
+
+        // 1) Reunir todos los nombres de ubicación existentes para sembrar el catálogo.
+        const [articulos, articuloTalles, movimientos] = await Promise.all([
+            getTodos('articulos', { soloLocal: true }),
+            getTodos('articuloTalles', { soloLocal: true }),
+            getTodos('movimientosInventario', { soloLocal: true })
+        ]);
+
+        const nombresCandidatos = new Set(UBICACIONES_DEFAULT_ORDER);
+        try {
+            const rawSectores = localStorage.getItem('cda_sectores');
+            if (rawSectores) {
+                const arr = JSON.parse(rawSectores);
+                if (Array.isArray(arr)) {
+                    arr.forEach(n => {
+                        const limpio = String(n).trim();
+                        if (limpio) nombresCandidatos.add(limpio);
+                    });
+                }
+            }
+        } catch (e) { /* se usan solo los valores por defecto */ }
+
+        articulos.forEach(a => { if (a && a.sector) nombresCandidatos.add(String(a.sector).trim()); });
+        movimientos.forEach(m => {
+            if (m && m.sector) nombresCandidatos.add(String(m.sector).trim());
+            if (m && m.sectorDestino) nombresCandidatos.add(String(m.sectorDestino).trim());
+        });
+
+        // 2) Sembrar el catálogo 'ubicacionesInventario' (mapa nombre canónico -> id).
+        const catalogoExistente = await getTodos('ubicacionesInventario', { soloLocal: true });
+        const mapaNombreAI = {};
+        catalogoExistente.forEach(u => {
+            if (u && u.nombre) mapaNombreAI[String(u.nombre).trim()] = Number(u.id);
+        });
+
+        const nombresNormalizados = [...nombresCandidatos]
+            .map(normalizarNombreUbicacionV9)
+            .filter((n, i, arr) => n && arr.findIndex(x => x.toLowerCase() === n.toLowerCase()) === i)
+            .sort((a, b) => {
+                const ia = UBICACIONES_DEFAULT_ORDER.indexOf(a) === -1 ? Infinity : UBICACIONES_DEFAULT_ORDER.indexOf(a);
+                const ib = UBICACIONES_DEFAULT_ORDER.indexOf(b) === -1 ? Infinity : UBICACIONES_DEFAULT_ORDER.indexOf(b);
+                return ia - ib;
+            });
+
+        let ubicacionesCreadas = 0;
+        for (const nombre of nombresNormalizados) {
+            if (!mapaNombreAI[nombre]) {
+                const u = { nombre, tipo: inferirTipoUbicacionV9(nombre), activo: true };
+                await guardar('ubicacionesInventario', u);
+                mapaNombreAI[nombre] = Number(u.id);
+                ubicacionesCreadas++;
+            }
+        }
+        // Garantía: 'Depósito Central' siempre existe como ubicación canónica.
+        if (!mapaNombreAI['Depósito Central']) {
+            const u = { nombre: 'Depósito Central', tipo: 'fija', activo: true };
+            await guardar('ubicacionesInventario', u);
+            mapaNombreAI['Depósito Central'] = Number(u.id);
+            ubicacionesCreadas++;
+        }
+
+    // 3) Backfill de 'articulos.ubicaciones[]' + recalculo de totales derivados.
+        let articulosMigrados = 0;
+        let filasCreadas = 0;
+        let tallesRecalculados = 0;
+        const baseIdFila = Date.now();
+
+        for (const art of articulos) {
+            if (!art || typeof art !== 'object') continue;
+            if (Array.isArray(art.ubicaciones) && art.ubicaciones.length > 0) continue; // ya migrado
+
+            const sectorNombre = normalizarNombreUbicacionV9(art.sector) || 'Depósito Central';
+            const ubicacionId = mapaNombreAI[sectorNombre];
+            if (!ubicacionId) {
+                console.warn(`Migración V9: artículo ${art.id} sin ubicación válida; se omite.`);
+                continue;
+            }
+
+            const filas = [];
+            const rowsDeTalle = art.controlaTalles
+                ? articuloTalles.filter(t => Number(t.articuloId) === Number(art.id))
+                : [];
+
+            if (art.controlaTalles) {
+                rowsDeTalle.forEach((row, idx) => {
+                    filas.push({
+                        id: baseIdFila + idx,
+                        ubicacionId,
+                        talleId: Number(row.talleId),
+                        cantidad: Number(row.stock || 0)
+                    });
+                });
+                if (rowsDeTalle.length === 0) {
+                    filas.push({ id: baseIdFila, ubicacionId, talleId: null, cantidad: 0 });
+                }
+            } else {
+                filas.push({ id: baseIdFila, ubicacionId, talleId: null, cantidad: Number(art.stockUnico || 0) });
+            }
+
+            art.ubicaciones = filas;
+            filasCreadas += filas.length;
+            articulosMigrados++;
+
+            // Recalcular totales agregados desde la nueva fuente (retro-compatibilidad exacta).
+            if (art.controlaTalles) {
+                for (const row of rowsDeTalle) {
+                    const nuevoStock = filas
+                        .filter(f => Number(f.talleId) === Number(row.talleId))
+                        .reduce((s, f) => s + Number(f.cantidad || 0), 0);
+                    if (Number(row.stock || 0) !== nuevoStock) {
+                        row.stock = nuevoStock;
+                        await guardar('articuloTalles', row);
+                        tallesRecalculados++;
+                    }
+                }
+            } else {
+                art.stockUnico = filas.reduce((s, f) => s + Number(f.cantidad || 0), 0);
+            }
+
+            await guardar('articulos', art);
+        }
+
+        // 4) Normalización semántica del histórico de movimientos.
+        let movimientosMigrados = 0;
+        for (const mov of movimientos) {
+            if (!mov || typeof mov !== 'object') continue;
+            if (mov.migradoV9 === true) continue; // ya migrado
+
+            let art = null;
+            if (mov.articuloId) {
+                art = await obtenerPorId('articulos', Number(mov.articuloId));
+            }
+            const tipoBien = mov.tipoBien || (art && art.tipoBien) || 'consumible';
+
+            const mapeo = mapearTipoMovimientoV9(mov.tipoMovimiento, tipoBien);
+            mov.tipoMovimiento = mapeo.tipoMovimiento;
+            mov.esIngreso = mapeo.esIngreso;
+            if (!mov.tipoBien) mov.tipoBien = tipoBien;
+
+            mov.ubicacionOrigen = normalizarNombreUbicacionV9(mov.sector) || normalizarNombreUbicacionV9(art && art.sector) || 'Depósito Central';
+            if (mov.sectorDestino) {
+                mov.ubicacionDestino = normalizarNombreUbicacionV9(mov.sectorDestino);
+            } else if (mov.tipoMovimiento === 'devolucion') {
+                // Las devoluciones retornan a la ubicación base del artículo (o al depósito).
+                mov.ubicacionDestino = normalizarNombreUbicacionV9(art && art.sector) || 'Depósito Central';
+            }
+
+            mov.migradoV9 = true;
+            await guardar('movimientosInventario', mov);
+            movimientosMigrados++;
+        }
+
+        try {
+            localStorage.setItem(DB_MIGRACION_V9_FLAG, '1');
+        } catch (e) { /* ignorar */ }
+
+        if (ubicacionesCreadas > 0 || articulosMigrados > 0 || movimientosMigrados > 0) {
+            ['ubicacionesInventario', 'articulos', 'articuloTalles', 'movimientosInventario'].forEach(invalidarCache);
+        }
+
+        console.log(`Migración V9 OK → ${ubicacionesCreadas} ubicaciones, ${articulosMigrados} artículos (${filasCreadas} filas), ${tallesRecalculados} talles recalculados, ${movimientosMigrados} movimientos normalizados.`);
+    } catch (err) {
+        // No se marca el flag: la migración se reintentará en el próximo arranque.
+        console.error('Migración V9 no completada:', err);
+    } finally {
+        console.groupEnd();
+    }
+}
+
+// ==================== FASE 2: CAPA DE ESCRITURA DE STOCK (helpers unificados) ====================
+// Todo ajuste de existencias debe pasar por 'ajustarStockV9()'. Estos helpers centralizan
+// la mutación del array embebido 'articulos.ubicaciones[]' y recalculan los totales
+// derivados ('stockUnico' y 'articuloTalles[].stock') en una sola secuencia.
+
+let seqFilaV9 = 0;
+
+// Devuelve el stock de un artículo en una ubicación concreta (lectura, sin mutar).
+function obtenerStockUbicacionV9(art, talleId, ubicacionId) {
+    if (!art || !Array.isArray(art.ubicaciones)) return 0;
+    const talle = talleId ? Number(talleId) : null;
+    return art.ubicaciones
+        .filter(f => Number(f.ubicacionId) === Number(ubicacionId) && String(f.talleId || '') === String(talle || ''))
+        .reduce((s, f) => s + Number(f.cantidad || 0), 0);
+}
+
+// Resuelve (o crea si falta) una ubicación del catálogo a partir de un id o un nombre.
+// Devuelve siempre el id numérico de la ubicación en 'ubicacionesInventario'.
+async function resolverUbicacionV9(nombreOId) {
+    const catalogo = await getTodos('ubicacionesInventario', { soloLocal: true });
+    const esNumero = (typeof nombreOId === 'number') ||
+        (typeof nombreOId === 'string' && /^\d+$/.test(String(nombreOId).trim()));
+    if (esNumero) {
+        const id = Number(nombreOId);
+        const existente = catalogo.find(u => Number(u.id) === id);
+        if (existente) return id;
+        throw new Error(`Ubicación con id ${id} no existe en el catálogo.`);
+    }
+    const nombre = normalizarNombreUbicacionV9(nombreOId);
+    if (!nombre) throw new Error('Ubicación inválida: ' + nombreOId);
+    const existente = catalogo.find(u => String(u.nombre).toLowerCase() === nombre.toLowerCase());
+    if (existente) return Number(existente.id);
+    const nueva = { nombre, tipo: inferirTipoUbicacionV9(nombre), activo: true };
+    await guardar('ubicacionesInventario', nueva);
+    invalidarCache('ubicacionesInventario');
+    return Number(nueva.id);
+}
+// FASE 2: AJUSTE ATÓMICO DE STOCK. Firma: ajustarStockV9(articuloId, talleId, opciones).
+// ingreso/devolucion: +cant en destino | consumo/baja: -cant en origen | transferencia: -origen +destino | ajuste: signo.
+async function ajustarStockV9(articuloId, talleId, opciones) {
+    const { tipoMovimiento, cantidad, ubicacionOrigenId, ubicacionDestinoId, permitirNegativo } = opciones || {};
+    const tipo = String(tipoMovimiento || '').toLowerCase();
+    if (!['ingreso', 'consumo', 'transferencia_interna', 'devolucion', 'baja', 'ajuste'].includes(tipo)) {
+        throw new Error(`Tipo de movimiento inválido para ajuste de stock: '${tipoMovimiento}'.`);
+    }
+    const cant = Number(cantidad);
+    if (!Number.isFinite(cant) || cant === 0) throw new Error('Cantidad inválida para el ajuste de stock.');
+    const idArt = Number(articuloId);
+    if (!Number.isFinite(idArt)) throw new Error('Artículo inválido.');
+    const art = await obtenerPorId('articulos', idArt);
+    if (!art) throw new Error(`Artículo ${idArt} no encontrado.`);
+    const talle = talleId ? Number(talleId) : null;
+    if (art.controlaTalles && !talle) throw new Error('Para artículos que controlan talles debe indicarse el talle.');
+    const esIngreso = tipo === 'ingreso' || tipo === 'devolucion';
+    const esEgreso = tipo === 'consumo' || tipo === 'baja';
+    // Resolver ubicaciones (id o nombre; crea el catálogo si faltan)
+    let idOrigen = null, idDestino = null;
+    if (tipo === 'ajuste') {
+        idDestino = ubicacionDestinoId != null ? await resolverUbicacionV9(ubicacionDestinoId)
+            : (ubicacionOrigenId != null ? await resolverUbicacionV9(ubicacionOrigenId) : await resolverUbicacionV9('Depósito Central'));
+        idOrigen = ubicacionOrigenId != null ? await resolverUbicacionV9(ubicacionOrigenId) : idDestino;
+    } else if (esIngreso) {
+        idDestino = ubicacionDestinoId != null ? await resolverUbicacionV9(ubicacionDestinoId) : await resolverUbicacionV9('Depósito Central');
+    } else if (esEgreso) {
+        idOrigen = ubicacionOrigenId != null ? await resolverUbicacionV9(ubicacionOrigenId) : await resolverUbicacionV9('Depósito Central');
+    } else {
+        idOrigen = await resolverUbicacionV9(ubicacionOrigenId != null ? ubicacionOrigenId : 'Depósito Central');
+        idDestino = await resolverUbicacionV9(ubicacionDestinoId != null ? ubicacionDestinoId : 'Depósito Central');
+        if (idOrigen === idDestino) throw new Error('La transferencia debe usar ubicaciones de origen y destino distintas.');
+    }
+    // Backfill de articulos.ubicaciones[] si el documento es legacy (pre-migración)
+    if (!Array.isArray(art.ubicaciones) || art.ubicaciones.length === 0) {
+        const locBase = await resolverUbicacionV9(art.sector || 'Depósito Central');
+        art.ubicaciones = [];
+        if (art.controlaTalles) {
+            const tallesArt = await getTodos('articuloTalles');
+            const filasT = tallesArt.filter(t => Number(t.articuloId) === idArt);
+            filasT.forEach((f, i) => art.ubicaciones.push({ id: Date.now() + i, ubicacionId: locBase, talleId: Number(f.talleId), cantidad: Number(f.stock || 0) }));
+            if (filasT.length === 0) art.ubicaciones.push({ id: Date.now(), ubicacionId: locBase, talleId: null, cantidad: 0 });
+        } else {
+            art.ubicaciones.push({ id: Date.now(), ubicacionId: locBase, talleId: null, cantidad: Number(art.stockUnico || 0) });
+        }
+    }
+    // Clave por (ubicacion, talle) → deltas en seco (dry-run)
+    const talleFilas = art.controlaTalles ? talle : null;
+    const claveUbi = (idUbi) => `${Number(idUbi)}|${talleFilas ? Number(talleFilas) : 'null'}`;
+    const deltas = {};
+    const addDelta = (idUbi, delta) => { const k = claveUbi(idUbi); deltas[k] = (deltas[k] || 0) + delta; };
+    if (tipo === 'ajuste') { if (cant < 0) addDelta(idOrigen, cant); else addDelta(idDestino, cant); }
+    else if (esIngreso) addDelta(idDestino, cant);
+    else if (esEgreso) addDelta(idOrigen, -cant);
+    else { addDelta(idOrigen, -cant); addDelta(idDestino, cant); }
+    // Validación anti-negativos ANTES de mutar (se puede saltear con permitirNegativo:
+    // excepción reservada al Administrador desde la botonera de Impacto en Stock).
+    const catalogo = await getTodos('ubicacionesInventario', { soloLocal: true });
+    const nombreDe = (idUbi) => { const u = catalogo.find(x => Number(x.id) === Number(idUbi)); return u ? u.nombre : String(idUbi); };
+    if (!permitirNegativo) {
+        for (const k of Object.keys(deltas)) {
+            const idUbi = Number(k.split('|')[0]);
+            const fila = art.ubicaciones.find(f => claveUbi(f.ubicacionId) === k);
+            const disponible = fila ? Number(fila.cantidad || 0) : 0;
+            if (disponible + deltas[k] < 0) {
+                throw new Error(`Stock insuficiente en "${nombreDe(idUbi)}": disponible ${disponible}, solicitado ${Math.abs(deltas[k])}.`);
+            }
+        }
+    }
+    // Aplicar mutación (una sola escritura del documento + Firestore)
+    for (const k of Object.keys(deltas)) {
+        let fila = art.ubicaciones.find(f => claveUbi(f.ubicacionId) === k);
+        if (!fila) {
+            fila = { id: Date.now() + (++seqFilaV9), ubicacionId: Number(k.split('|')[0]), talleId: talleFilas, cantidad: 0 };
+            art.ubicaciones.push(fila);
+        }
+        fila.cantidad = Number(fila.cantidad || 0) + deltas[k];
+    }
+    // Recalculos derivados (regla de oro) y persistencia
+    if (art.controlaTalles) {
+        const stockTalle = art.ubicaciones.filter(f => Number(f.talleId) === talle).reduce((s, f) => s + Number(f.cantidad || 0), 0);
+        const tallesArt = await getTodos('articuloTalles');
+        const talleArt = tallesArt.find(t => Number(t.articuloId) === idArt && Number(t.talleId) === talle);
+        if (talleArt) { talleArt.stock = stockTalle; await guardar('articuloTalles', talleArt); }
+        else await guardar('articuloTalles', { articuloId: idArt, talleId: talle, stock: stockTalle });
+    }
+    // Invariante: stockUnico = SUMA DE TODAS las ubicaciones, incluidos los Bienes de Uso
+    // asignados a Camión/Carrera/etc. Una 'transferencia_interna' NO debe reducirlo: solo
+    // mueve unidades (resta en origen y suma en destino, neto cero sobre el total).
+    art.stockUnico = art.ubicaciones.reduce((s, f) => s + Number(f.cantidad || 0), 0);
+    await guardar('articulos', art);
+    invalidarCache('articulos');
+    invalidarCache('articuloTalles');
+    return { ok: true, tipoAplicado: tipo, cantidad: Math.abs(cant), stockNuevo: art.stockUnico };
+}
+
 // Generar contraseña temporal segura
 function generarPasswordTemporal() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
@@ -574,6 +1040,27 @@ function limpiarObjetoParaFirebase(value) {
     return value;
 }
 
+// ============================================================
+// CONTROL DEFENSIVO DE TRANSACCIONES (V11)
+// ============================================================
+// Si un object store falta físicamente en IndexedDB (esquema inconsistente tras una migración
+// a medio camino), db.transaction([storeName], ...) lanza "NotFoundError" NO capturado que
+// congela el hilo de ejecuciones y bloquea la UI. Este helper verifica que el store exista
+// ANTES de abrir la transacción; si no existe, registra un mensaje limpio y devuelve null para
+// que el llamador degrade con gracia (resultado vacío / aborto controlado) en vez de explotar.
+function abrirTransaccionDefensiva(db, storeName, modo) {
+    if (!db || typeof db.objectStoreNames === 'undefined' || typeof db.transaction !== 'function') {
+        console.warn(`[db] Sin conexión válida a IndexedDB. No se pudo abrir transacción sobre '${storeName}'.`);
+        return null;
+    }
+    if (!db.objectStoreNames.contains(storeName)) {
+        console.warn(`[db] El object store '${storeName}' NO existe en IndexedDB (esquema inconsistente). ` +
+            'Se omite la transacción. La migración V11 debería crearlo físicamente al reabrir.');
+        return null;
+    }
+    return db.transaction([storeName], modo);
+}
+
 // Helper genérico para guardar o actualizar un elemento
 async function guardar(storeName, item) {
     // Si la ID no existe, generamos un identificador numérico único basado en timestamp
@@ -586,7 +1073,8 @@ async function guardar(storeName, item) {
     // SIEMPRE guardar primero en IndexedDB (fuente primaria local)
     const result = await new Promise((resolve, reject) => {
         openDB().then(db => {
-            const transaction = db.transaction([storeName], 'readwrite');
+            const transaction = abrirTransaccionDefensiva(db, storeName, 'readwrite');
+            if (!transaction) { reject(`Object store '${storeName}' no disponible en IndexedDB.`); return; }
             const store = transaction.objectStore(storeName);
             const request = store.put(item);
 
@@ -641,7 +1129,10 @@ async function getTodos(storeName, opciones = {}) {
     // SIEMPRE leer desde IndexedDB como fuente primaria. Firebase es solo para escritura/sync.
     const dataLocal = await new Promise((resolve, reject) => {
         openDB().then(db => {
-            const transaction = db.transaction([storeName], 'readonly');
+            const transaction = abrirTransaccionDefensiva(db, storeName, 'readonly');
+            // Store faltante (esquema inconsistente): se degrada a lista vacía en lugar de
+            // lanzar el NotFoundError no capturado que congelaba el hilo de la interfaz.
+            if (!transaction) { resolve([]); return; }
             const store = transaction.objectStore(storeName);
             const request = store.getAll();
 
@@ -677,10 +1168,12 @@ async function getTodos(storeName, opciones = {}) {
             if (dataNube.length > 0) {
                 try {
                     const db = await openDB();
-                    const transaction = db.transaction([storeName], 'readwrite');
-                    const store = transaction.objectStore(storeName);
-                    for (const item of dataNube) {
-                        store.put(item);
+                    const transaction = abrirTransaccionDefensiva(db, storeName, 'readwrite');
+                    const store = transaction ? transaction.objectStore(storeName) : null;
+                    if (store) {
+                        for (const item of dataNube) {
+                            store.put(item);
+                        }
                     }
                 } catch (e) {
                     console.warn(`No se pudo guardar en IndexedDB la colección '${storeName}':`, e);
@@ -702,7 +1195,8 @@ async function eliminar(storeName, id) {
     // SIEMPRE eliminar primero de IndexedDB (fuente primaria local)
     await new Promise((resolve, reject) => {
         openDB().then(db => {
-            const transaction = db.transaction([storeName], 'readwrite');
+            const transaction = abrirTransaccionDefensiva(db, storeName, 'readwrite');
+            if (!transaction) { reject(`Object store '${storeName}' no disponible en IndexedDB.`); return; }
             const store = transaction.objectStore(storeName);
             const request = store.delete(Number(id));
 
@@ -741,7 +1235,8 @@ async function obtenerPorId(storeName, id) {
     // SIEMPRE leer desde IndexedDB como fuente primaria. Firebase es solo para escritura/sync.
     return new Promise((resolve, reject) => {
         openDB().then(db => {
-            const transaction = db.transaction([storeName], 'readonly');
+            const transaction = abrirTransaccionDefensiva(db, storeName, 'readonly');
+            if (!transaction) { resolve(null); return; }
             const store = transaction.objectStore(storeName);
             const request = store.get(Number(id));
 
@@ -792,7 +1287,7 @@ async function sincronizarLocalAFirebase() {
         console.log('Colecciones locales detectadas en IndexedDB:', stores);
     } catch (e) {
         console.warn('No se pudieron obtener las colecciones locales, usando lista por defecto:', e);
-        stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos'];
+        stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos', 'ubicacionesInventario', 'tiposMovimiento'];
     }
 
     let total = 0;
@@ -854,11 +1349,12 @@ async function sincronizarLocalAFirebase() {
 async function importarTodo(datos) {
     limpiarCacheCompleto(); // limpiar todo el caché antes de importar
     const db = await openDB();
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos', 'ubicacionesInventario', 'tiposMovimiento'];
     
     for (const storeName of stores) {
         if (datos[storeName]) {
-            const transaction = db.transaction([storeName], 'readwrite');
+            const transaction = abrirTransaccionDefensiva(db, storeName, 'readwrite');
+            if (!transaction) { continue; } // store faltante: se omite con un log limpio ya emitido
             const store = transaction.objectStore(storeName);
             
             await new Promise((res, rej) => {

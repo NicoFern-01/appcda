@@ -1543,6 +1543,150 @@ input[type="file"]:hover {
 .inv-table .stock-low { background: rgba(255, 159, 67, 0.15); color: #ff9f43; }
 .inv-table .stock-out { background: rgba(255, 71, 87, 0.15); color: var(--accent); }
 
+/* Fase 3: botones de edición/eliminación de movimientos en la timeline (solo admin) */
+.movement-item .mov-delete-btn, .movement-item .mov-edit-btn { margin-left: 10px; flex-shrink: 0; }
+
+/* ===== Gestión rápida en caliente (solo Admin): select + ruedita inline ===== */
+.input-con-gear {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+.input-con-gear select {
+    flex: 1;
+    min-width: 0;
+}
+.gear-btn {
+    flex-shrink: 0;
+}
+.impacto-stock-botones {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.impacto-opcion {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.45rem 0.8rem;
+    border-radius: 999px;
+    cursor: pointer;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 600;
+    user-select: none;
+    transition: border-color 0.15s ease, color 0.15s ease;
+}
+.impacto-opcion input {
+    accent-color: var(--accent-blue);
+    margin: 0;
+    cursor: pointer;
+}
+.impacto-opcion:hover {
+    color: var(--text-primary);
+}
+.impacto-opcion:has(input:checked) {
+    color: var(--text-primary);
+}
+.impacto-sumar:has(input:checked) {
+    border-color: var(--accent-green);
+    color: var(--accent-green);
+}
+.impacto-restar:has(input:checked) {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.impacto-registro:has(input:checked) {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+}
+#ajuste-stock-body {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 0.6rem;
+    max-height: 420px;
+    overflow-y: auto;
+    padding: 2px;
+}
+.ajuste-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 0.7rem 0.6rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+}
+.ajuste-card-nombre {
+    font-weight: 600;
+    font-size: 0.85rem;
+    line-height: 1.25;
+    text-align: center;
+    color: var(--text-primary);
+    width: 100%;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+.ajuste-card-nombre i {
+    color: var(--accent-blue);
+    margin-right: 0.35rem;
+}
+.ajuste-card-talle {
+    font-size: 0.7rem;
+}
+.ajuste-card .ajuste-input {
+    width: 100%;
+    text-align: center;
+    font-size: 1.05rem;
+    font-weight: 700;
+}
+@media (max-width: 768px) {
+    #ajuste-stock-body { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+}
+
+/* Fase 3 (corrección): estados visuales de Bienes de Uso en la celda de stock */
+.stock-estados-bu { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+.stock-estado { display: inline-flex; align-items: center; gap: 4px; font-size: 0.72rem; padding: 2px 8px; border-radius: 10px; font-weight: 600; white-space: nowrap; }
+.stock-estado-bodega { background: rgba(76, 175, 80, 0.15); color: #81c784; border: 1px solid rgba(76, 175, 80, 0.35); }
+.stock-estado-uso { background: rgba(33, 150, 243, 0.15); color: #64b5f6; border: 1px solid rgba(33, 150, 243, 0.35); }
+
+/* Fase 3: desglose de stock por ubicación (toggle sobre el badge de Stock) */
+.inv-table .stock-desglose-toggle { cursor: pointer; }
+
+.stock-desglose {
+    margin-top: 0.4rem;
+    padding: 0.5rem 0.6rem;
+    background: var(--bg-secondary, rgba(255, 255, 255, 0.03));
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    min-width: 180px;
+}
+
+.stock-desglose-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    padding: 0.15rem 0;
+}
+
+.stock-desglose-item b { color: inherit; }
+
+.stock-desglose-total {
+    border-top: 1px dashed var(--border-color);
+    margin-top: 0.25rem;
+    padding-top: 0.35rem;
+    font-weight: 600;
+}
+
 /* Inventory Filters Bar */
 .inv-filters {
     display: flex;
@@ -1713,6 +1857,7 @@ input[type="file"]:hover {
 .movement-item.mov-in .mov-icon { background: rgba(46, 213, 115, 0.15); color: var(--accent-green); }
 .movement-item.mov-out .mov-icon { background: rgba(255, 71, 87, 0.15); color: var(--accent); }
 .movement-item.mov-transfer .mov-icon { background: rgba(0, 210, 211, 0.15); color: var(--accent-blue); }
+.movement-item.mov-adjust .mov-icon { background: rgba(255, 159, 67, 0.15); color: #ff9f43; }
 
 .movement-item .mov-info {
     flex: 1;
@@ -1737,6 +1882,7 @@ input[type="file"]:hover {
 
 .movement-item.mov-in .mov-qty { color: var(--accent-green); }
 .movement-item.mov-out .mov-qty { color: var(--accent); }
+.movement-item.mov-adjust .mov-qty { color: #ff9f43; }
 
 /* Responsive Inventory */
 @media (max-width: 768px) {

@@ -354,15 +354,15 @@
                             <table>
                                 <thead>
                                     <tr>
-                                        <th>#</th>
-                                        <th>Competencia</th>
-                                        <th>Autódromo</th>
-                                        <th>Fecha</th>
-                                        <th>Responsable</th>
-                                        <th>Gastos</th>
-                                        <th>Total</th>
-                                        <th>Estado</th>
-                                        <th class="editor-only" style="text-align:right;">Acciones</th>
+                                    <th>#</th>
+                                    <th>Competencia</th>
+                                    <th>Autódromo</th>
+                                    <th>Fecha</th>
+                                    <th>Responsable</th>
+                                    <th>Gastos</th>
+                                    <th>Total</th>
+                                    <th>Estado</th>
+                                    <th class="editor-only" style="text-align:right;">Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody id="rendiciones-table-body"></tbody>
@@ -667,6 +667,7 @@
                                     <th>Marca</th>
                                     <th>Stock Total</th>
                                     <th>Estado</th>
+                                    <th>UBICACIÓN</th>
                                     <th class="editor-only" style="text-align:right;">Acciones</th>
                                 </tr>
                             </thead>
@@ -695,13 +696,11 @@
                             <select id="filtro-movimiento-tipo" onchange="listarMovimientosInventario()">
                                 <option value="todos">Todos</option>
                                 <option value="ingreso">Ingreso</option>
-                                <option value="egreso">Egreso</option>
-                                <option value="entrega">Entrega</option>
+                                <option value="consumo">Consumo</option>
+                                <option value="transferencia_interna">Transferencia interna</option>
                                 <option value="devolucion">Devolución</option>
+                                <option value="baja">Baja</option>
                                 <option value="ajuste">Ajuste</option>
-                                <option value="perdida">Pérdida</option>
-                                <option value="rotura">Rotura</option>
-                                <option value="transferencia">Transferencia</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -1768,15 +1767,20 @@
                     </div>
                     <div id="contenedor-sector" class="form-group" style="display:none;">
                         <label for="articulo-sector">Sector Asignado</label>
-                        <select id="articulo-sector">
-                            <option value="">Seleccione...</option>
-                            <option value="Depósito Central">Depósito Central</option>
-                            <option value="Taller">Taller</option>
-                            <option value="Oficinas">Oficinas</option>
-                            <option value="Carrera">Carrera</option>
-                            <option value="Stand / Box">Stand / Box</option>
-                            <option value="Otro">Otro</option>
-                        </select>
+                        <div style="display:flex;gap:0.5rem;align-items:flex-end;">
+                            <select id="articulo-sector" style="flex:1;">
+                                <option value="">Seleccione...</option>
+                                <option value="Depósito Central">Depósito Central</option>
+                                <option value="Taller">Taller</option>
+                                <option value="Oficinas">Oficinas</option>
+                                <option value="Carrera">Carrera</option>
+                                <option value="Stand / Box">Stand / Box</option>
+                                <option value="Otro">Otro</option>
+                            </select>
+                            <button type="button" class="btn btn-secondary sector-config-btn" style="padding:0.5rem 0.75rem;font-size:0.85rem;" onclick="abrirModalGestionarSectores()" title="Gestionar sectores">
+                                <i class="fa-solid fa-gear"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="form-group full-width">
                         <label for="articulo-observaciones">Observaciones</label>
@@ -1845,24 +1849,46 @@
                     </div>
                     <div class="form-group">
                         <label for="movimiento-tipo">Tipo de Movimiento</label>
-                        <select id="movimiento-tipo" required onchange="onCambioTipoMovimiento()">
-                            <option value="">Seleccione...</option>
-                            <option value="ingreso">Ingreso</option>
-                            <option value="egreso">Egreso</option>
-                            <option value="entrega">Entrega</option>
-                            <option value="devolucion">Devolución</option>
-                            <option value="compra">Compra</option>
-                            <option value="reposicion">Reposición</option>
-                            <option value="ajuste">Ajuste</option>
-                            <option value="perdida">Pérdida</option>
-                            <option value="rotura">Rotura</option>
-                            <option value="transferencia">Transferencia</option>
-                            <option value="inventario">Inventario</option>
-                        </select>
+                        <div class="input-con-gear">
+                            <select id="movimiento-tipo" required onchange="onCambioTipoMovimiento()">
+                                <option value="">Seleccione...</option>
+                                <option value="ingreso" data-naturaleza="ingreso">Ingreso</option>
+                                <option value="consumo" data-naturaleza="consumo">Consumo / Salida</option>
+                                <option value="transferencia_interna" data-naturaleza="transferencia_interna">Transferencia interna</option>
+                                <option value="devolucion" data-naturaleza="devolucion">Devolución</option>
+                                <option value="baja" data-naturaleza="baja">Baja</option>
+                                <option value="ajuste" data-naturaleza="ajuste">Ajuste</option>
+                            </select>
+                            <button type="button" class="action-btn gear-btn" id="btn-gestion-tipos" onclick="abrirGestionTiposMovimientoV10()" title="Gestionar tipos de movimiento (Admin)" style="display:none;"><i class="fa-solid fa-gear"></i></button>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="movimiento-cantidad">Cantidad</label>
                         <input type="number" id="movimiento-cantidad" min="1" required>
+                    </div>
+                    <!-- Botonera de control avanzado: visible EXCLUSIVAMENTE para Administradores.
+                         Separa el rótulo del movimiento de la operación real de stock. -->
+                    <div class="form-group full-width" id="movimiento-impacto-group" style="display:none;">
+                        <label>Impacto en Stock <span style="color:var(--accent-blue);font-size:0.7rem;font-weight:600;">⚠ CONTROL DE ADMINISTRADOR</span></label>
+                        <div class="impacto-stock-botones" role="radiogroup">
+                            <label class="impacto-opcion impacto-sumar"><input type="radio" name="movimiento-impacto" value="sumar">🟢 Sumar al Stock</label>
+                            <label class="impacto-opcion impacto-restar"><input type="radio" name="movimiento-impacto" value="restar">🔴 Restar del Stock</label>
+                            <label class="impacto-opcion impacto-registro"><input type="radio" name="movimiento-impacto" value="registro">🔵 Solo Registro</label>
+                        </div>
+                        <small id="movimiento-impacto-hint" style="color:var(--text-secondary);font-size:0.8rem;">Sin selección explícita se aplica el comportamiento canónico del tipo de movimiento.</small>
+                    </div>
+                    <!-- Sector / Ubicación: oculto por defecto, se muestra según la lógica del movimiento -->
+                    <div id="contenedor-sector-movimiento" style="display:none;">
+                        <div class="form-group">
+                            <label for="movimiento-sector-ubicacion">Sector / Ubicación</label>
+                            <div class="input-con-gear">
+                                <select id="movimiento-sector-ubicacion">
+                                    <option value="">Seleccione sector...</option>
+                                    <!-- Fase 3: opciones dinámicas desde el catálogo 'ubicacionesInventario' -->
+                                </select>
+                                <button type="button" class="action-btn gear-btn" id="btn-gestion-ubicaciones" onclick="abrirGestionUbicacionesParaMovimiento()" title="Gestionar ubicaciones (Admin)" style="display:none;"><i class="fa-solid fa-gear"></i></button>
+                            </div>
+                        </div>
                     </div>
                     <div class="form-group" id="movimiento-talle-group" style="display:none;">
                         <label for="movimiento-talle">Talle</label>
@@ -1874,11 +1900,7 @@
                         <label for="movimiento-sector-destino">Sector de Destino <span style="color:var(--accent);">*</span></label>
                         <select id="movimiento-sector-destino">
                             <option value="">Seleccione sector...</option>
-                            <option value="Depósito">Depósito</option>
-                            <option value="Carrera">Carrera</option>
-                            <option value="Oficina">Oficina</option>
-                            <option value="Taller">Taller</option>
-                            <option value="Otro">Otro</option>
+                            <!-- Fase 3: opciones dinámicas desde el catálogo 'ubicacionesInventario' -->
                         </select>
                         <small style="color:var(--text-secondary);font-size:0.8rem;">Transferencia interna: se resta de Depósito y se suma al sector seleccionado, sin dar de baja el bien del inventario global.</small>
                     </div>
@@ -2079,6 +2101,17 @@
         .blur-readonly:hover {
             filter: blur(0);
         }
+
+        /* Botón de configuración del Sector Asignado (modal Artículo) */
+        .sector-config-btn {
+            border-radius: 8px;
+            transition: background-color 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
+        }
+        .sector-config-btn:hover {
+            background-color: rgba(0, 210, 211, 0.15);
+            color: var(--accent);
+            box-shadow: 0 0 8px rgba(0, 210, 211, 0.25);
+        }
     </style>
 
     <!-- MODAL: AGREGAR GASTO EXTRAORDINARIO (NUEVO COMPONENTE) -->
@@ -2205,6 +2238,152 @@
             <div class="modal-footer" style="border-top: none; justify-content: center; gap: 0.75rem; padding-top: 0.5rem;">
                 <button id="alerta-btn-cancelar" class="btn btn-secondary" style="display: none;" onclick="cerrarAlerta(false)">Cancelar</button>
                 <button id="alerta-btn-confirmar" class="btn" onclick="cerrarAlerta(true)">Aceptar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: GESTIONAR SECTORES -->
+    <div id="modal-gestionar-sectores" class="modal-overlay">
+        <div class="modal" style="max-width: 480px;">
+            <div class="modal-header">
+                <h2 class="modal-title"><i class="fa-solid fa-location-dot"></i> Gestionar Sectores</h2>
+                <button class="modal-close" onclick="closeModal('modal-gestionar-sectores')">&times;</button>
+            </div>
+            <div class="modal-content">
+                <!-- Campo para agregar un nuevo sector -->
+                <form id="form-nuevo-sector" onsubmit="event.preventDefault(); agregarNuevoSector();" style="display: flex; gap: 0.5rem; align-items: flex-end; margin-bottom: 1rem;">
+                    <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                        <label for="nuevo-sector-nombre">Nombre del Sector</label>
+                        <input type="text" id="nuevo-sector-nombre" placeholder="Ej: Depósito Central, Taller...">
+                    </div>
+                    <button type="submit" class="btn" style="padding: 0.5rem 1rem;" title="Agregar sector">
+                        <i class="fa-solid fa-plus"></i>
+                    </button>
+                </form>
+
+                <!-- Lista de sectores actuales -->
+                <div class="form-title" style="font-size: 0.95rem; margin-bottom: 0.5rem;">
+                    <i class="fa-solid fa-list"></i> Sectores Actuales
+                </div>
+                <div id="lista-sectores" style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 300px; overflow-y: auto;">
+                    <!-- Los sectores se renderizan dinámicamente desde JavaScript -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="cerrarModalGestionarSectores()">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SUB-MODAL (V10): GESTIÓN RÁPIDA DE TIPOS DE MOVIMIENTO (SOLO ADMIN) -->
+    <div id="subModalGestionTiposMovimiento" class="modal-overlay">
+        <div class="modal" style="max-width: 520px;">
+            <div class="modal-header">
+                <h2 class="modal-title"><i class="fa-solid fa-gear"></i> Gestionar Tipos de Movimiento</h2>
+                <button class="modal-close" onclick="closeModal('subModalGestionTiposMovimiento')">&times;</button>
+            </div>
+            <div class="modal-content">
+                <form id="form-nuevo-tipo-movimiento" onsubmit="event.preventDefault(); agregarTipoMovimientoV10();" style="display:flex;gap:0.5rem;align-items:flex-end;margin-bottom:1rem;">
+                    <div class="form-group" style="flex:1;margin-bottom:0;">
+                        <label for="nuevo-tipo-nombre">Nombre del tipo</label>
+                        <input type="text" id="nuevo-tipo-nombre" placeholder="Ej: Reposición de equipos" maxlength="60">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label for="nuevo-tipo-naturaleza">Naturaleza</label>
+                        <select id="nuevo-tipo-naturaleza">
+                            <option value="ingreso">Ingreso</option>
+                            <option value="consumo">Consumo / Salida</option>
+                            <option value="transferencia_interna">Transferencia interna</option>
+                            <option value="devolucion">Devolución</option>
+                            <option value="baja">Baja</option>
+                            <option value="ajuste">Ajuste</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn" style="padding:0.5rem 1rem;" title="Agregar tipo"><i class="fa-solid fa-plus"></i></button>
+                </form>
+                <div class="form-title" style="font-size:0.95rem;margin-bottom:0.5rem;"><i class="fa-solid fa-list"></i> Tipos de Movimiento Actuales</div>
+                <div id="lista-tipos-movimiento" style="display:flex;flex-direction:column;gap:0.5rem;max-height:280px;overflow-y:auto;">
+                    <!-- Se renderiza dinámicamente desde renderizarListaTiposMovimiento() -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('subModalGestionTiposMovimiento'); poblarSelectTiposMovimientoV9();">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: AJUSTAR STOCK (SOLO ADMIN) -->
+    <div id="modalAjustarStockAdmin" class="modal-overlay">
+        <div class="modal" style="max-width: 640px;">
+            <div class="modal-header">
+                <h2 class="modal-title"><i class="fa-solid fa-sliders"></i> Ajustar Stock (Administrador)</h2>
+                <button class="modal-close" onclick="closeModal('modalAjustarStockAdmin')">&times;</button>
+            </div>
+            <div class="modal-content">
+                <div id="ajuste-stock-art-info" style="margin-bottom: 1rem; color: var(--text-secondary); font-size: 0.9rem;"></div>
+                <div id="ajuste-stock-body">
+                    <!-- Tarjetas (ubicación × talle) renderizadas dinámicamente por abrirAjusteStockAdmin() -->
+                </div>
+                <p style="margin-top: 0.75rem; font-size: 0.8rem; color: var(--text-secondary);">
+                    <i class="fa-solid fa-circle-info"></i> Cada fila registra un movimiento de tipo "Ajuste" con la diferencia (delta) respecto al valor actual, firmado por el Administrador.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modalAjustarStockAdmin')">Cancelar</button>
+                <button type="button" class="btn" onclick="guardarAjusteStockAdmin()"><i class="fa-solid fa-check"></i> Confirmar Ajuste</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: EDITAR MOVIMIENTO (SOLO ADMIN) -->
+    <div id="modalEditarMovimiento" class="modal-overlay">
+        <div class="modal" style="max-width: 560px;">
+            <div class="modal-header">
+                <h2 class="modal-title"><i class="fa-solid fa-gear"></i> Editar Movimiento</h2>
+                <button class="modal-close" onclick="closeModal('modalEditarMovimiento')">&times;</button>
+            </div>
+            <div class="modal-content">
+                <div id="editar-mov-art-info" style="margin-bottom:1rem;color:var(--text-secondary);font-size:0.9rem;"></div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="editar-mov-tipo">Tipo de Movimiento</label>
+                        <select id="editar-mov-tipo" onchange="onEditarMovTipoChange()">
+                            <option value="ingreso">Ingreso</option>
+                            <option value="consumo">Consumo/Salida</option>
+                            <option value="transferencia_interna">Transferencia interna</option>
+                            <option value="devolucion">Devolución</option>
+                            <option value="baja">Baja</option>
+                            <option value="ajuste">Ajuste</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-mov-cantidad">Cantidad</label>
+                        <input type="number" id="editar-mov-cantidad" min="1" required>
+                    </div>
+                    <div class="form-group" id="editar-mov-talle-group" style="display:none;">
+                        <label for="editar-mov-talle">Talle</label>
+                        <select id="editar-mov-talle"></select>
+                    </div>
+                    <div class="form-group" id="editar-mov-origen-group">
+                        <label for="editar-mov-origen">Ubicación Origen</label>
+                        <select id="editar-mov-origen"></select>
+                    </div>
+                    <div class="form-group" id="editar-mov-destino-group">
+                        <label for="editar-mov-destino">Ubicación Destino</label>
+                        <select id="editar-mov-destino"></select>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="editar-mov-observaciones">Observaciones</label>
+                        <textarea id="editar-mov-observaciones" rows="2"></textarea>
+                    </div>
+                </div>
+                <p style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.5rem;">
+                    <i class="fa-solid fa-triangle-exclamation"></i> Se revertirá el efecto original del movimiento y se aplicará el nuevo valor (con simulación anti-negativos previa). El artículo no puede cambiarse: para eso, eliminá el movimiento y registrá uno nuevo.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modalEditarMovimiento')">Cancelar</button>
+                <button type="button" class="btn" onclick="guardarEdicionMovimientoInventario()"><i class="fa-solid fa-check"></i> Guardar Cambios</button>
             </div>
         </div>
     </div>
