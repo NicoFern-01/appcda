@@ -87,6 +87,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         username: sessionData.username,
                         nombre: sessionData.nombre || 'Usuario',
                         rol: sessionData.rol || 'viewer',
+                        permisos: sessionData.permisos || null, // BUGFIX: restaurar granulares
                         activo: true
                     };
                     currentUser = usuario;
@@ -148,6 +149,9 @@ async function obtenerRolUsuarioDesdeFirestore(uid) {
                 return {
                     rol: data.rol || 'viewer',
                     nombre: data.nombre || 'Usuario',
+                    // BUGFIX: incluir permisos granulares guardados (si existen)
+                    permisos: (data.permisos && typeof data.permisos === 'object')
+                        ? JSON.parse(JSON.stringify(data.permisos)) : null,
                     activo: data.activo !== false
                 };
             }
@@ -160,7 +164,14 @@ async function obtenerRolUsuarioDesdeFirestore(uid) {
         const usuarios = await getTodos('usuarios');
         const usuario = usuarios.find(u => u.uid === uid || u.username === mapearEmailAUsuario(uid));
         if (usuario) {
-            return { rol: usuario.rol || 'viewer', nombre: usuario.nombre || 'Usuario', activo: usuario.activo !== false };
+            return {
+                rol: usuario.rol || 'viewer',
+                nombre: usuario.nombre || 'Usuario',
+                // BUGFIX: incluir permisos granulares guardados (si existen)
+                permisos: (usuario.permisos && typeof usuario.permisos === 'object')
+                    ? JSON.parse(JSON.stringify(usuario.permisos)) : null,
+                activo: usuario.activo !== false
+            };
         }
     } catch (e) {
         console.warn('No se pudo obtener el rol desde IndexedDB:', e);
@@ -265,20 +276,29 @@ async function handleLogin(event) {
                 // 5) LOGIN EXITOSO Y PERSISTENCIA
                 console.log("✅ CONTRASEÑA VÁLIDA para el documento: " + docSnap.id);
 
+                // BUGFIX: el usuario DEBE incluir los permisos granulares guardados en
+                // Firestore. Sin esta línea, obtenerPermisosEfectivos() no ve datos
+                // granulares y aplicaba el preset del rol (ej: 'editor'), ignorando los
+                // módulos desmarcados a mano (caso gastos/inventario de Chris).
                 const usuario = {
                     id: Number(usuarioId) || usuarioId,
                     username: usuarioData.username,
                     nombre: usuarioData.nombre || 'Usuario',
                     rol: usuarioData.rol || 'viewer',
+                    permisos: (usuarioData.permisos && typeof usuarioData.permisos === 'object')
+                        ? JSON.parse(JSON.stringify(usuarioData.permisos)) // copia profunda limpia
+                        : null,
                     activo: true
                 };
 
-                // Guardar sesión en localStorage para persistencia
+                // Guardar sesión en localStorage para persistencia (incluye permisos,
+                // para que restaurar la sesión no vuelva a caer en el preset del rol)
                 localStorage.setItem('cda_session', JSON.stringify({
                     id: usuario.id,
                     username: usuario.username,
                     nombre: usuario.nombre,
                     rol: usuario.rol,
+                    permisos: usuario.permisos,
                     loginTime: new Date().toISOString()
                 }));
 
@@ -307,6 +327,154 @@ async function handleLogin(event) {
     }
 }
 
+// ==================== PERMISOS: RESOLUCIÓN DE PERMISOS EFECTIVOS ====================
+// El catálogo de roles vive en permisosUtil.js (DICCIONARIO_ROLES): agregar un rol
+// nuevo allí es suficiente para que aparezca en el combo del modal y tenga su preset.
+
+/**
+ * Devuelve el objeto de permisos SANEADO y listo para usar en la sesión:
+ *   1. rol con accesoTotal (admin) → todos los módulos (incluye 'configuracion').
+ *   2. permisos granulares persistidos → se respetan (pasando por Capa 2).
+ *   3. fallback → preset del rol según DICCIONARIO_ROLES (migración legacy).
+ */
+function obtenerPermisosEfectivos(usuario) {
+    if (!usuario) return {};
+    const defRol = (typeof DICCIONARIO_ROLES !== 'undefined') ? DICCIONARIO_ROLES[usuario.rol] : null;
+
+    // Admin (o rol con accesoTotal): acceso total garantizado por diseño.
+    if (defRol?.accesoTotal) return normalizarPermisos(usuario.rol);
+
+    const tieneGranulares = usuario.permisos && typeof usuario.permisos === 'object'
+        && Object.keys(usuario.permisos).length > 0;
+
+    // BUGFIX: los permisos guardados a mano mandan SIEMPRE sobre el preset, incluso
+    // si dejan módulos completos en false (ej: gastos/inventario desmarcados para
+    // Chris). NO se aplica el fallback del preset solo porque el rol sea 'editor'.
+    // Se clona en profundidad para nunca mutar/aliar el objeto venido de la BD.
+    if (tieneGranulares) {
+        const granularesLimpios = JSON.parse(JSON.stringify(usuario.permisos));
+        return normalizarPermisos(usuario.rol, granularesLimpios);
+    }
+    return normalizarPermisos(usuario.rol, defRol?.preset || {});
+}
+
+/**
+ * true si los permisos persistidos del usuario difieren del preset de su rol
+ * (=> es un usuario con permisos "Personalizado" y el combo debe reflejarlo).
+ */
+function usuarioTienePermisosPersonalizados(usuario) {
+    if (!usuario || typeof DICCIONARIO_ROLES === 'undefined') return false;
+    const defRol = DICCIONARIO_ROLES[usuario.rol];
+    if (!defRol || !usuario.permisos) return false;
+    return JSON.stringify(normalizarPermisos(usuario.rol, usuario.permisos))
+        !== JSON.stringify(normalizarPermisos(usuario.rol, defRol.preset || {}));
+}
+
+
+// ==================== RENDERIZADO DINÁMICO DEL MENÚ LATERAL ====================
+// Grupos con submenú (Gastos e Inventario), replicando la estructura del HTML estático.
+const GRUPOS_MENU = [
+    { padreId: 'menu-gastos',      submenuId: 'submenu-gastos',      padre: 'gastos',     hijos: ['carga-detallada', 'personal-competencia'] },
+    { padreId: 'menu-inventario',  submenuId: 'submenu-inventario',  padre: 'inventario', hijos: ['articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario'] }
+];
+
+/**
+ * Renderiza el menú lateral según los permisos del usuario actual.
+ * - Recorre CATALOGO_MODULOS ordenado por 'orden'.
+ * - Solo agrega al DOM los módulos con verificarPermiso(usuario, id, 'ver') === true.
+ * - Los módulos sin permiso NO existen en el DOM (ni ocultos: no se crean).
+ * - Mantiene los ids 'menu-gastos'/'submenu-gastos' y 'menu-inventario'/'submenu-inventario'
+ *   porque toggleSubmenu() y abrirSubmenuDeVista() dependen de ellos.
+ */
+function renderizarMenuLateral(usuario) {
+    const menuList = document.getElementById('menu-list');
+    if (!menuList || !usuario) return;
+    // Fail-safe: si permisosUtil.js no se cargó, no dejar el menú vacío sin aviso.
+    if (typeof verificarPermiso !== 'function' || typeof CATALOGO_MODULOS === 'undefined') {
+        console.warn('renderizarMenuLateral: permisosUtil.js no está cargado.');
+        return;
+    }
+
+    menuList.innerHTML = '';
+
+    const modulosOrdenados = [...CATALOGO_MODULOS].sort((a, b) => a.orden - b.orden);
+    const gruposPorPadre = Object.fromEntries(GRUPOS_MENU.map(g => [g.padre, g]));
+    const idsHijos = new Set(GRUPOS_MENU.flatMap(g => g.hijos));
+
+    for (const modulo of modulosOrdenados) {
+        // Los hijos se renderizan dentro de su grupo, nunca como ítems sueltos.
+        if (idsHijos.has(modulo.id)) continue;
+
+        const grupo = gruposPorPadre[modulo.id];
+        if (grupo) {
+            const padreVisible = verificarPermiso(usuario, grupo.padre, 'ver');
+            const hijosVisibles = grupo.hijos.filter(id => verificarPermiso(usuario, id, 'ver'));
+            // El grupo aparece si el padre o al menos un hijo es accesible.
+            if (!padreVisible && hijosVisibles.length === 0) continue;
+            menuList.appendChild(_crearGrupoMenu(grupo, modulo, hijosVisibles, padreVisible));
+            continue;
+        }
+
+        // Módulo simple (dashboard, calendario, staff, ... configuracion).
+        if (!verificarPermiso(usuario, modulo.id, 'ver')) continue; // sin permiso → ni existe
+        menuList.appendChild(_crearMenuItemEl(modulo, false));
+    }
+}
+
+/** Crea un ítem simple del menú: <div class="menu-item" data-view="..."><i/><span/></div> */
+function _crearMenuItemEl(modulo, esSubmenu) {
+    const item = document.createElement('div');
+    item.className = esSubmenu ? 'menu-item submenu-item' : 'menu-item';
+    item.dataset.view = modulo.id; // clave para el toggle de 'active' y la red de seguridad
+
+    const icono = document.createElement('i');
+    icono.className = `fa-solid ${modulo.icono}`;
+    const texto = document.createElement('span');
+    texto.textContent = modulo.nombre; // textContent: inmune a XSS
+
+    item.append(icono, texto);
+    item.addEventListener('click', () => switchView(modulo.id));
+    return item;
+}
+
+/**
+ * Crea un grupo con submenú (Gastos / Inventario).
+ * Si el padre no tiene permiso 'ver' pero sí hay hijos visibles, el padre solo
+ * despliega el submenú (sin navegar) para que no salga "Acceso denegado".
+ */
+function _crearGrupoMenu(grupo, moduloPadre, hijosVisibles, padreVisible) {
+    const li = document.createElement('li');
+
+    const padre = document.createElement('div');
+    padre.id = grupo.padreId;
+    padre.className = 'menu-item menu-parent';
+    if (padreVisible) padre.dataset.view = moduloPadre.id;
+
+    const icono = document.createElement('i');
+    icono.className = `fa-solid ${moduloPadre.icono}`;
+    const texto = document.createElement('span');
+    texto.textContent = moduloPadre.nombre;
+    const chevron = document.createElement('i');
+    chevron.className = 'fa-solid fa-chevron-down submenu-chevron';
+    padre.append(icono, texto, chevron);
+
+    padre.addEventListener('click', () => {
+        toggleSubmenu(grupo.submenuId);
+        if (padreVisible) switchView(moduloPadre.id);
+    });
+
+    const submenu = document.createElement('div');
+    submenu.id = grupo.submenuId;
+    submenu.className = 'submenu collapsed';
+    hijosVisibles.forEach(id => {
+        const def = MODULOS_MAP[id];
+        if (def) submenu.appendChild(_crearMenuItemEl(def, true));
+    });
+
+    li.append(padre, submenu);
+    return li;
+}
+
 function iniciarSesion(usuario) {
     document.getElementById('login-screen').style.display = 'none';
     const appMain = document.getElementById('app-main');
@@ -317,6 +485,25 @@ function iniciarSesion(usuario) {
 
     const rolesNombres = { admin: 'Administrador', editor: 'Editor', viewer: 'Visualizador', supervisor: 'Supervisor' };
     document.getElementById('sidebar-user-role').textContent = rolesNombres[usuario.rol] || usuario.rol;
+
+    // Normaliza/sanea los permisos de la sesión (usa granulares persistidos;
+    // si no existen, aplica el preset legacy del rol — Capa 2).
+    usuario.permisos = obtenerPermisosEfectivos(usuario);
+
+    // BUGFIX: refresca el registro de sesión local con los permisos efectivos, para
+    // que una restauración posterior (F5 / reapertura) no vuelva a caer en el preset.
+    try {
+        const sesion = JSON.parse(localStorage.getItem('cda_session') || 'null');
+        if (sesion) {
+            sesion.permisos = usuario.permisos;
+            localStorage.setItem('cda_session', JSON.stringify(sesion));
+        }
+    } catch (e) {
+        console.warn('No se pudo actualizar la sesión con los permisos:', e);
+    }
+
+    // Menú lateral dinámico según permisos: los módulos sin 'ver' no existen en el DOM.
+    renderizarMenuLateral(usuario);
 
     aplicarControlDeAcceso(usuario.rol);
     switchView('dashboard');
@@ -348,12 +535,13 @@ function aplicarControlDeAcceso(rol) {
         el.style.display = esAdmin ? '' : 'none';
     });
 
-    document.querySelectorAll('.menu-item').forEach((item, idx) => {
-        if (esSupervisor && idx !== 0) {
-            item.style.display = 'none';
-        } else {
-            item.style.display = '';
-        }
+    // Menú lateral: los ítems se crean/eliminan según permisos en renderizarMenuLateral().
+    // Este barrido es una red de seguridad por si la sesión se restauró con datos viejos.
+    // (Antes se ocultaba por índice; ahora por permiso 'ver' vía data-view.)
+    document.querySelectorAll('.menu-item[data-view]').forEach(item => {
+        const permitido = typeof verificarPermiso === 'function'
+            && verificarPermiso(currentUser, item.dataset.view, 'ver');
+        item.style.display = permitido ? '' : 'none';
     });
 
     document.body.classList.toggle('viewer-mode', esViewer);
@@ -415,6 +603,18 @@ function abrirSubmenuDeVista(viewId) {
 }
 
 function switchView(viewId) {
+    // ===== INTERCEPTOR DE PERMISOS (Capa 3) =====
+    // Toda navegación entre las 15 vistas pasa por acá (menú, dashboard, atajos).
+    // Si el usuario no tiene 'ver' sobre la vista destino: bloquear + avisar + dashboard.
+    if (typeof verificarPermiso === 'function' && !verificarPermiso(currentUser, viewId, 'ver')) {
+        mostrarToast('Acceso denegado: no tenés permisos para acceder a este módulo.', 'error');
+        if (viewId !== 'dashboard') {
+            // Redirección de seguridad (el dashboard es accesible para todo rol activo).
+            _ejecutarSwitchView('dashboard');
+        }
+        return;
+    }
+
     // Si se está editando una rendición con cambios sin guardar y se intenta navegar
     // a otra vista, pedir confirmación para no perder el trabajo realizado.
     const rendEditor = document.getElementById('rendicion-editor');
@@ -446,8 +646,10 @@ function switchView(viewId) {
 }
 
 function _ejecutarSwitchView(viewId) {
-    document.querySelectorAll('.menu-item').forEach((item, idx) => {
-        item.classList.toggle('active', views[idx] === viewId);
+    // Toggle de 'active' por data-view (antes era por índice: incompatible con el menú
+    // dinámico, donde los ítems permitidos varían por usuario).
+    document.querySelectorAll('.menu-item[data-view]').forEach(item => {
+        item.classList.toggle('active', item.dataset.view === viewId);
     });
 
     views.forEach(v => {
@@ -2638,6 +2840,244 @@ async function listarUsuarios() {
     });
 }
 
+// ==================== MATRIZ DE PERMISOS (MODAL NUEVO/EDITAR USUARIO) ====================
+
+/**
+ * Renderiza la matriz (grid) de permisos por módulo en el modal de usuario.
+ * - Recorre CATALOGO_MODULOS ordenado por 'orden'.
+ * - rol !== 'admin': el módulo 'configuracion' NO se renderiza (regla estricta).
+ * - rol === 'admin': todos los módulos con todos los checkboxes marcados y
+ *   deshabilitados (readonly), reflejando el acceso total garantizado por diseño.
+ * - permisosIniciales: estado a reflejar (permisos granulares del usuario o preset
+ *   de su rol). Si se omite, preserva las selecciones actuales de la matriz
+ *   (útil al cambiar el rol en el desplegable).
+ */
+function renderizarMatrizPermisos(permisosIniciales) {
+    const container = document.getElementById('usuario-permisos-container');
+    if (!container) return;
+    if (typeof CATALOGO_MODULOS === 'undefined') {
+        console.warn('renderizarMatrizPermisos: permisosUtil.js no está cargado.');
+        return;
+    }
+
+    // Sin argumento explícito → conservar lo que el admin ya tildó (cambio de rol en vivo).
+    if (permisosIniciales === undefined) permisosIniciales = recolectarPermisosDelModal();
+
+    const rol = document.getElementById('usuario-rol')?.value || 'viewer';
+    const esRolAdmin = rol === 'admin';
+
+    container.innerHTML = '';
+
+    const titulo = document.createElement('label');
+    titulo.style.cssText = 'display:block;font-weight:600;margin-bottom:0.5rem;';
+    titulo.textContent = 'Permisos por módulo';
+    container.appendChild(titulo);
+
+    const nota = document.createElement('small');
+    nota.style.cssText = 'display:block;color:var(--text-secondary);font-size:0.8rem;margin-bottom:0.75rem;';
+    nota.textContent = esRolAdmin
+        ? 'Como Administrador tiene control total de todos los módulos, incluida la Configuración.'
+        : 'Definí qué módulos y funciones puede usar este usuario. La Configuración es exclusiva del Administrador.';
+    container.appendChild(nota);
+
+    const grid = document.createElement('div');
+    grid.className = 'permisos-grid';
+    // Se renderizan TODOS los módulos; la fila de 'configuracion' se crea oculta para
+    // no-admins, de modo que aplicarPresetACheckboxes() pueda mostrarla/ocultarla
+    // en vivo cuando cambie el rol en el combo (sin re-render completo).
+    for (const modulo of [...CATALOGO_MODULOS].sort((a, b) => a.orden - b.orden)) {
+        grid.appendChild(_crearFilaPermisosModulo(modulo, permisosIniciales, esRolAdmin));
+    }
+    container.appendChild(grid);
+}
+
+/** Crea la fila de un módulo: nombre + checkbox por cada función admitida. */
+function _crearFilaPermisosModulo(modulo, permisosIniciales, esRolAdmin) {
+    const fila = document.createElement('div');
+    fila.className = 'permisos-modulo';
+    fila.dataset.modulo = modulo.id;
+
+    const nombre = document.createElement('span');
+    nombre.className = 'permisos-modulo-nombre';
+    nombre.innerHTML = `<i class="fa-solid ${modulo.icono}"></i> ${escapeHtml(modulo.nombre)}`;
+    fila.appendChild(nombre);
+
+    const acciones = document.createElement('div');
+    acciones.className = 'permisos-acciones';
+    for (const funcion of modulo.funciones) {
+        const label = document.createElement('label');
+        label.className = 'permisos-check';
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.dataset.modulo = modulo.id;
+        cb.dataset.funcion = funcion;
+        cb.checked = esRolAdmin || permisosIniciales?.[modulo.id]?.[funcion] === true;
+        if (esRolAdmin) cb.disabled = true; // readonly: el admin no se puede "recortar"
+
+        if (!esRolAdmin) {
+            cb.addEventListener('change', () => {
+                // 'ver' es el interruptor maestro del módulo...
+                if (funcion === 'ver') _sincronizarAccionesModulo(fila, cb.checked);
+                // ...y cualquier cambio manual convierte al usuario en "Personalizado".
+                marcarRolPersonalizado();
+            });
+        }
+
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(funcion));
+        acciones.appendChild(label);
+    }
+    fila.appendChild(acciones);
+
+    // Regla estricta en la UI: la fila de Configuración está oculta para no-admins.
+    if (modulo.soloAdmin && !esRolAdmin) {
+        fila.style.display = 'none';
+    } else if (!esRolAdmin) {
+        _sincronizarAccionesModulo(fila, permisosIniciales?.[modulo.id]?.ver === true);
+    }
+    return fila;
+}
+
+/** Habilita/deshabilita las acciones de un módulo según el estado del checkbox 'ver'. */
+function _sincronizarAccionesModulo(fila, verActivo) {
+    fila.querySelectorAll('input[data-funcion]').forEach(cb => {
+        if (cb.dataset.funcion === 'ver') return;
+        cb.disabled = !verActivo;
+        if (!verActivo) cb.checked = false;
+    });
+}
+
+/**
+ * Recorre la matriz del modal y construye el objeto estructurado `permisos`:
+ * { moduloId: { ver: true, crear: true, ... }, ... } — solo con los flags en true.
+ */
+function recolectarPermisosDelModal() {
+    const permisos = {};
+    const container = document.getElementById('usuario-permisos-container');
+    if (!container) return permisos;
+    container.querySelectorAll('input[data-modulo][data-funcion]:checked').forEach(cb => {
+        const fila = _filaDeCheckbox(cb);
+        if (fila && fila.style.display === 'none') return; // fila oculta (configuracion no-admin)
+        (permisos[cb.dataset.modulo] ||= {})[cb.dataset.funcion] = true;
+    });
+    return permisos;
+}
+
+/** Devuelve la fila (.permisos-modulo) a la que pertenece un checkbox. */
+function _filaDeCheckbox(cb) {
+    if (typeof cb.closest === 'function') return cb.closest('.permisos-modulo');
+    let nodo = cb.parentElement;
+    while (nodo) {
+        if (String(nodo.className).split(' ').includes('permisos-modulo')) return nodo;
+        nodo = nodo.parentElement;
+    }
+    return null;
+}
+
+// ==================== SELECTOR DE ROLES DINÁMICO (DICCIONARIO_ROLES) ====================
+
+/**
+ * Repuebla el <select> de roles recorriendo DICCIONARIO_ROLES (id + label) y agrega
+ * siempre al final la opción fija "Personalizado", deshabilitada por defecto: solo
+ * se activa si el admin altera manualmente la cuadrícula de checkboxes.
+ */
+function poblarSelectorRoles(rolPorDefecto) {
+    const sel = document.getElementById('usuario-rol');
+    if (!sel || typeof DICCIONARIO_ROLES === 'undefined') return;
+
+    sel.innerHTML = '';
+    Object.entries(DICCIONARIO_ROLES).forEach(([id, def]) => {
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = def.label;
+        sel.appendChild(opt);
+    });
+
+    const personalizado = document.createElement('option');
+    personalizado.value = 'personalizado';
+    personalizado.textContent = 'Personalizado (permisos a medida)';
+    personalizado.disabled = true;
+    sel.appendChild(personalizado);
+
+    // Rol base: el rol "real" del usuario mientras personalice sus permisos.
+    sel.dataset.rolBase = rolPorDefecto || Object.keys(DICCIONARIO_ROLES)[0];
+    sel.value = sel.dataset.rolBase;
+}
+
+/**
+ * Aplica en vivo el preset de un rol sobre los checkboxes existentes (sin re-render):
+ *   - admin → TODO en true + disabled (incluye 'configuracion', fila visible).
+ *   - otros → habilita los checkboxes y marca según el preset del diccionario;
+ *             la fila de 'configuracion' queda oculta por completo.
+ * Guarda el rol como rolBase en el <select> para el guardado.
+ */
+function aplicarPresetACheckboxes(rol) {
+    const container = document.getElementById('usuario-permisos-container');
+    const sel = document.getElementById('usuario-rol');
+    if (!container) return;
+    if (typeof DICCIONARIO_ROLES === 'undefined') return;
+
+    const defRol = DICCIONARIO_ROLES[rol];
+    const esRolAdmin = Boolean(defRol?.accesoTotal);
+    const preset = esRolAdmin ? null : (defRol?.preset || {});
+
+    container.querySelectorAll('input[data-modulo][data-funcion]').forEach(cb => {
+        const fila = _filaDeCheckbox(cb);
+        const esFilaSoloAdmin = Boolean(MODULOS_MAP[cb.dataset.modulo]?.soloAdmin);
+
+        // Regla estricta visible: la fila solo se muestra para roles con acceso total.
+        if (fila) fila.style.display = (esFilaSoloAdmin && !esRolAdmin) ? 'none' : '';
+
+        if (esRolAdmin) {
+            cb.checked = true;
+            cb.disabled = true;
+            return;
+        }
+        cb.disabled = false;
+        cb.checked = preset?.[cb.dataset.modulo]?.[cb.dataset.funcion] === true;
+    });
+
+    // Re-sincroniza el interruptor maestro 'ver' de cada fila visible no-admin.
+    if (!esRolAdmin) {
+        container.querySelectorAll('.permisos-modulo').forEach(fila => {
+            if (fila.style.display === 'none') return;
+            const verCb = fila.querySelector('input[data-funcion="ver"]');
+            if (verCb) _sincronizarAccionesModulo(fila, verCb.checked);
+        });
+    }
+
+    if (sel) sel.dataset.rolBase = rol;
+}
+
+/**
+ * Activa la opción "Personalizado" del combo y la selecciona. Se dispara ante
+ * cualquier cambio manual en la cuadrícula: comunica visualmente que el usuario
+ * ya no rige por un preset estándar sino por permisos a medida.
+ */
+function marcarRolPersonalizado() {
+    const sel = document.getElementById('usuario-rol');
+    if (!sel || sel.value === 'personalizado') return;
+    const opt = sel.querySelector('option[value="personalizado"]');
+    if (!opt) return;
+    opt.disabled = false;
+    sel.value = 'personalizado';
+}
+
+/**
+ * Handler del 'change' del <select> de roles: sincroniza la cuadrícula con el
+ * preset del rol elegido y refresca el resumen del modal.
+ */
+function onRolUsuarioChange() {
+    const sel = document.getElementById('usuario-rol');
+    if (!sel) return;
+    // La opción 'Personalizado' no es seleccionable por el usuario (está disabled);
+    // si llegara a dispararse con ese valor, se cae al rol base del usuario.
+    const rol = sel.value === 'personalizado' ? (sel.dataset.rolBase || 'viewer') : sel.value;
+    aplicarPresetACheckboxes(rol);
+    actualizarResumenUsuarioModal();
+}
+
 function openModalUsuario() {
     if (!esAdmin()) return;
     document.getElementById('form-usuario').reset();
@@ -2648,6 +3088,10 @@ function openModalUsuario() {
     // limpiar campo de hash mostrado para nuevo usuario
     const passwordToggle = document.getElementById('usuario-password-show');
     if (passwordToggle) passwordToggle.checked = false;
+    // Selector de roles dinámico (DICCIONARIO_ROLES) + matriz con el preset del
+    // rol por defecto (viewer, que es la primera opción tras el reset del form).
+    poblarSelectorRoles('viewer');
+    renderizarMatrizPermisos(DICCIONARIO_ROLES.viewer.preset);
     actualizarResumenUsuarioModal();
     openModal('modal-usuario');
 }
@@ -2659,8 +3103,13 @@ async function editarUsuario(id) {
     document.getElementById('usuario-id').value = u.id;
     document.getElementById('usuario-nombre').value = u.nombre;
     document.getElementById('usuario-username').value = u.username;
-    document.getElementById('usuario-rol').value = u.rol;
     document.getElementById('usuario-activo').value = String(u.activo);
+    // Selector dinámico: repuebla opciones, selecciona el rol del usuario y marca
+    // 'Personalizado' si sus permisos difieren del preset de su rol.
+    poblarSelectorRoles(DICCIONARIO_ROLES[u.rol] ? u.rol : undefined);
+    if (usuarioTienePermisosPersonalizados(u) || !DICCIONARIO_ROLES[u.rol]) marcarRolPersonalizado();
+    // Refleja en los checkboxes el estado actual (permisos granulares o preset legacy).
+    renderizarMatrizPermisos(obtenerPermisosEfectivos(u));
     document.getElementById('usuario-password').value = '';
     document.getElementById('usuario-password').required = false;
     document.getElementById('password-hint').style.display = 'block';
@@ -2677,7 +3126,12 @@ async function guardarUsuarioForm(e) {
     const id = document.getElementById('usuario-id').value;
     const username = document.getElementById('usuario-username').value.trim();
     const nombre = document.getElementById('usuario-nombre').value.trim();
-    const rol = document.getElementById('usuario-rol').value;
+    const selRol = document.getElementById('usuario-rol');
+    // 'Personalizado' no es un rol persistible: se guarda el rol base sobre el que se
+    // hicieron los ajustes; los permisos finos viajan en usuario.permisos (Capa 2).
+    const rol = selRol.value === 'personalizado'
+        ? (selRol.dataset.rolBase || 'editor')
+        : selRol.value;
     const activo = document.getElementById('usuario-activo').value === 'true';
     const password = document.getElementById('usuario-password').value;
 
@@ -2690,6 +3144,17 @@ async function guardarUsuarioForm(e) {
     }
 
     const usuario = { username, nombre, rol, activo };
+
+    // ===== Permisos granulares — Capa 2 OBLIGATORIA antes de persistir =====
+    // (1) Limpieza total: se descarta cualquier estado previo y se mapea la grilla
+    //     desde cero sobre un objeto nuevo (sin copias superficiales ni mutaciones).
+    // (2) El resultado pasa SIEMPRE por normalizarPermisos(): elimina 'configuracion'
+    //     si el rol no es admin, descarta claves desconocidas y completa con false.
+    const permisosRecolectados = JSON.parse(JSON.stringify(recolectarPermisosDelModal() || {}));
+    usuario.permisos = (typeof normalizarPermisos === 'function')
+        ? normalizarPermisos(rol, permisosRecolectados)
+        : obtenerPermisosEfectivos({ rol });
+
     if (id) {
         usuario.id = Number(id);
         if (password) {
@@ -2709,6 +3174,9 @@ async function guardarUsuarioForm(e) {
         currentUser = { ...currentUser, ...usuario };
         document.getElementById('sidebar-user-name').textContent = usuario.nombre;
         document.getElementById('sidebar-avatar').textContent = usuario.nombre.charAt(0).toUpperCase();
+        // Re-sanea permisos y refresca el menú lateral con los permisos actualizados.
+        currentUser.permisos = obtenerPermisosEfectivos(currentUser);
+        renderizarMenuLateral(currentUser);
     }
 
     mostrarToast(`Usuario guardado correctamente. Usuario: ${escapeHtml(usuario.username)}${password ? ' | Contraseña actualizada' : ' | Contraseña sin cambios'}`, 'success');
@@ -3545,8 +4013,17 @@ function actualizarResumenUsuarioModal() {
 
     resumen.push(`<strong>Usuario:</strong> ${escapeHtml(username)}`);
     resumen.push(`<strong>Nombre:</strong> ${escapeHtml(nombre)}`);
-    resumen.push(`<strong>Rol:</strong> ${escapeHtml(rol)}`);
+    const rolLabel = rol === 'personalizado'
+        ? `Personalizado (base: ${DICCIONARIO_ROLES[document.getElementById('usuario-rol')?.dataset.rolBase]?.label || 'n/d'})`
+        : (DICCIONARIO_ROLES[rol]?.label || rol);
+    resumen.push(`<strong>Rol:</strong> ${escapeHtml(rolLabel)}`);
     resumen.push(`<strong>Estado:</strong> ${escapeHtml(activo)}`);
+    // Módulos visibles según la matriz de permisos actual del modal
+    if (typeof recolectarPermisosDelModal === 'function') {
+        const permsModal = recolectarPermisosDelModal();
+        const modsVisibles = Object.keys(permsModal).filter(m => permsModal[m].ver).length;
+        resumen.push(`<strong>Módulos visibles:</strong> ${modsVisibles}`);
+    }
     resumen.push(`<strong>Contraseña:</strong> ${password ? escapeHtml(password) : (document.getElementById('usuario-id').value ? 'Sin cambios' : 'No ingresada')}`);
 
     const cont = document.getElementById('usuario-modal-resumen');

@@ -1063,6 +1063,15 @@ function abrirTransaccionDefensiva(db, storeName, modo) {
 
 // Helper genérico para guardar o actualizar un elemento
 async function guardar(storeName, item) {
+    // Regla de escritura para objetos anidados (ej: usuario.permisos): se clonan en
+    // profundidad ANTES de escribir para (a) que el documento jamás comparta referencias
+    // con la caché de IndexedDB o con objetos de la sesión, y (b) que Firestore reciba
+    // el objeto ENTERO reemplazado vía setDoc (más abajo) — nunca un merge parcial
+    // estilo updateDoc que dejaría propiedades viejas mezcladas con las nuevas.
+    if (item && typeof item === 'object' && item.permisos && typeof item.permisos === 'object') {
+        item.permisos = limpiarObjetoParaFirebase(item.permisos);
+    }
+
     // Si la ID no existe, generamos un identificador numérico único basado en timestamp
     if (!item.id) {
         item.id = Date.now() + Math.floor(Math.random() * 1000);

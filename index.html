@@ -65,91 +65,10 @@
                 <img src="logo_cda.png" alt="Logo CDA" class="sidebar-logo-img">
                 <span class="brand-name">Control CDA</span>
             </div>
-            <ul class="menu-list">
-                <li>
-                    <div class="menu-item active" onclick="switchView('dashboard')">
-                        <i class="fa-solid fa-chart-line"></i>
-                        <span>Dashboard</span>
-                    </div>
-                </li>
-                <li>
-                    <div class="menu-item" onclick="switchView('calendario')">
-                        <i class="fa-solid fa-calendar-days"></i>
-                        <span>Calendario</span>
-                    </div>
-                </li>
-                <li>
-                    <div id="menu-gastos" class="menu-item menu-parent" onclick="toggleSubmenu('submenu-gastos'); switchView('gastos')">
-                        <i class="fa-solid fa-receipt"></i>
-                        <span>Gastos</span>
-                        <i class="fa-solid fa-chevron-down submenu-chevron"></i>
-                    </div>
-                    <div id="submenu-gastos" class="submenu collapsed">
-                        <div class="menu-item submenu-item" onclick="switchView('carga-detallada')">
-                            <i class="fa-solid fa-file-invoice"></i>
-                            <span>Carga Detallada</span>
-                        </div>
-                        <div class="menu-item submenu-item" onclick="switchView('personal-competencia')">
-                            <i class="fa-solid fa-user-tie"></i>
-                            <span>Personal por Competencia</span>
-                        </div>
-                    </div>
-                </li>
-                <li>
-                    <div id="menu-inventario" class="menu-item menu-parent" onclick="toggleSubmenu('submenu-inventario'); switchView('inventario')">
-                        <i class="fa-solid fa-warehouse"></i>
-                        <span>Inventario</span>
-                        <i class="fa-solid fa-chevron-down submenu-chevron"></i>
-                    </div>
-                    <div id="submenu-inventario" class="submenu collapsed">
-                        <div class="menu-item submenu-item" onclick="switchView('articulos')">
-                            <i class="fa-solid fa-box"></i>
-                            <span>Artículos</span>
-                        </div>
-                        <div class="menu-item submenu-item" onclick="switchView('movimientos-inventario')">
-                            <i class="fa-solid fa-arrows-spin"></i>
-                            <span>Movimientos</span>
-                        </div>
-                        <div class="menu-item submenu-item" onclick="switchView('categorias-inventario')">
-                            <i class="fa-solid fa-tags"></i>
-                            <span>Categorías</span>
-                        </div>
-                        <div class="menu-item submenu-item" onclick="switchView('entregas-inventario')">
-                            <i class="fa-solid fa-shirt"></i>
-                            <span>Entregas</span>
-                        </div>
-                    </div>
-                </li>
-                <li>
-                    <div class="menu-item" onclick="switchView('staff')">
-                        <i class="fa-solid fa-users"></i>
-                        <span>Staff</span>
-                    </div>
-                </li>
-                <li>
-                    <div class="menu-item" onclick="switchView('estadisticas-personal')">
-                        <i class="fa-solid fa-chart-column"></i>
-                        <span>Estadísticas de Personal</span>
-                    </div>
-                </li>
-                <li>
-                    <div class="menu-item" onclick="switchView('alojamiento')">
-                        <i class="fa-solid fa-hotel"></i>
-                        <span>Alojamiento</span>
-                    </div>
-                </li>
-                <li>
-                    <div class="menu-item" onclick="switchView('categorias-circuitos')">
-                        <i class="fa-solid fa-road"></i>
-                        <span>Categorías y Circuitos</span>
-                    </div>
-                </li>
-                <li>
-                    <div class="menu-item" onclick="switchView('configuracion')">
-                        <i class="fa-solid fa-sliders"></i>
-                        <span>Configuración</span>
-                    </div>
-                </li>
+            <ul class="menu-list" id="menu-list">
+                <!-- El menú se renderiza dinámicamente según los permisos del usuario.
+                     Ver renderizarMenuLateral(usuario) en app.js (usa CATALOGO_MODULOS
+                     de permisosUtil.js). 'configuracion' nunca aparece para no-admins. -->
             </ul>
 
             <!-- Info del usuario logueado + logout -->
@@ -1604,11 +1523,10 @@
                     </div>
                     <div class="form-group">
                         <label for="usuario-rol">Rol / Nivel de acceso</label>
-                        <select id="usuario-rol" required onchange="actualizarResumenUsuarioModal()">
-                            <option value="viewer">Visualizador (Solo Lectura)</option>
-                            <option value="supervisor">Supervisor (Dashboard Solo)</option>
-                            <option value="editor">Editor (Carga y edición de datos)</option>
-                            <option value="admin">Administrador (Acceso total)</option>
+                        <select id="usuario-rol" required onchange="onRolUsuarioChange()">
+                            <!-- Opciones pobladas dinámicamente desde DICCIONARIO_ROLES
+                                 (permisosUtil.js) por poblarSelectorRoles() en app.js.
+                                 Incluye la opción fija 'Personalizado' al final. -->
                         </select>
                     </div>
                     <div class="form-group" id="password-field-group">
@@ -1628,6 +1546,9 @@
                         </select>
                     </div>
                 </div>
+                <!-- Permisos por módulo: matriz dinámica generada por renderizarMatrizPermisos() (app.js).
+                     'configuracion' solo aparece si el rol seleccionado es admin. -->
+                <div id="usuario-permisos-container" class="form-group full-width" style="margin-top: 1rem;"></div>
                 <div id="usuario-modal-resumen" class="modal-info" style="margin-top: 1rem; padding: 1rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 10px; color: var(--text-primary); font-size: 0.95rem;"></div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('modal-usuario')">Cancelar</button>
@@ -2410,6 +2331,7 @@
     <div id="reporte-impresion-estadisticas"></div>
 
     <!-- Scripts -->
+    <script src="permisosUtil.js"></script>
     <script src="db.js"></script>
     <script src="app.js"></script>
 </body>
