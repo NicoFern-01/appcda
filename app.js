@@ -359,6 +359,12 @@ function aplicarControlDeAcceso(rol) {
     document.body.classList.toggle('viewer-mode', esViewer);
     document.body.classList.toggle('admin-mode', esAdmin);
     document.body.classList.toggle('supervisor-mode', esSupervisor);
+
+    document.querySelectorAll('.dashboard-link-card').forEach(card => {
+        card.classList.toggle('dashboard-link-disabled', esSupervisor);
+        card.setAttribute('aria-disabled', String(esSupervisor));
+        card.tabIndex = esSupervisor ? -1 : 0;
+    });
 }
 
 function puedeEditar() {
@@ -371,6 +377,13 @@ function esAdmin() {
 
 function esSupervisor() {
     return currentUser && currentUser.rol === 'supervisor';
+}
+
+function navegarDesdeDashboard(viewId) {
+    // El supervisor solo tiene acceso al dashboard; los demás roles pueden
+    // navegar a los módulos que ya tienen visibles en el menú.
+    if (!currentUser || esSupervisor()) return;
+    switchView(viewId);
 }
 
 // ==================== NAVEGACIÓN SPA ====================

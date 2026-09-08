@@ -220,6 +220,25 @@ header {
     transition: var(--transition);
 }
 
+.dashboard-link-card {
+    cursor: pointer;
+}
+
+.dashboard-link-card.dashboard-link-disabled {
+    cursor: default;
+}
+
+.dashboard-link-card.dashboard-link-disabled:hover {
+    transform: none;
+    border-color: var(--border-color);
+    box-shadow: none;
+}
+
+.dashboard-link-card:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 3px;
+}
+
 .stat-card:hover {
     transform: translateY(-2px);
     border-color: var(--border-hover);
