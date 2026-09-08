@@ -19,7 +19,7 @@ let chartConceptoInstance = null;
 // Flag para evitar re-renderizar el dashboard si no cambiaron los datos
 let dashboardDirty = true;
 
-const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal', 'alojamiento', 'configuracion'];
+const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal', 'alojamiento', 'categorias-circuitos', 'configuracion'];
 
 // ==================== RENDERIZADO ASÍNCRONO DE LA INTERFAZ ====================
 // Escucha el evento disparado por db.js cuando la sincronización con Firestore
@@ -375,7 +375,64 @@ function esSupervisor() {
 
 // ==================== NAVEGACIÓN SPA ====================
 
+function toggleSubmenu(submenuId) {
+    const submenu = document.getElementById(submenuId);
+    if (!submenu) return;
+    submenu.classList.toggle('collapsed');
+
+    const parent = submenu.previousElementSibling;
+    if (parent) parent.classList.toggle('expanded', !submenu.classList.contains('collapsed'));
+}
+
+function abrirSubmenuDeVista(viewId) {
+    const grupos = {
+        'carga-detallada': ['submenu-gastos', 'menu-gastos'],
+        'personal-competencia': ['submenu-gastos', 'menu-gastos'],
+        'articulos': ['submenu-inventario', 'menu-inventario'],
+        'movimientos-inventario': ['submenu-inventario', 'menu-inventario'],
+        'categorias-inventario': ['submenu-inventario', 'menu-inventario'],
+        'entregas-inventario': ['submenu-inventario', 'menu-inventario']
+    };
+    const grupo = grupos[viewId];
+    if (!grupo) return;
+    const submenu = document.getElementById(grupo[0]);
+    const parent = document.getElementById(grupo[1]);
+    if (submenu) submenu.classList.remove('collapsed');
+    if (parent) parent.classList.add('expanded');
+}
+
 function switchView(viewId) {
+    // Si se está editando una rendición con cambios sin guardar y se intenta navegar
+    // a otra vista, pedir confirmación para no perder el trabajo realizado.
+    const rendEditor = document.getElementById('rendicion-editor');
+    if (rendEditor && rendEditor.style.display === 'block' && detallesModificados) {
+        let vistaActual = null;
+        views.forEach(v => {
+            const el = document.getElementById(`view-${v}`);
+            if (el && el.classList.contains('active')) vistaActual = v;
+        });
+        if (vistaActual && vistaActual !== viewId) {
+            _vistaPendiente = viewId;
+            mostrarConfirmacion(
+                'Salir sin guardar',
+                'Hay cambios sin guardar en la rendición. ¿Deseas salir y perder los cambios?',
+                'warning'
+            ).then(ok => {
+                if (ok && _vistaPendiente === viewId) {
+                    _vistaPendiente = null;
+                    _finalizarSalidaEditorRendicion();
+                    _ejecutarSwitchView(viewId);
+                } else {
+                    _vistaPendiente = null;
+                }
+            });
+            return; // no cambiar de vista hasta confirmar
+        }
+    }
+    _ejecutarSwitchView(viewId);
+}
+
+function _ejecutarSwitchView(viewId) {
     document.querySelectorAll('.menu-item').forEach((item, idx) => {
         item.classList.toggle('active', views[idx] === viewId);
     });
@@ -385,7 +442,23 @@ function switchView(viewId) {
         viewEl.classList.toggle('active', v === viewId);
     });
 
+    abrirSubmenuDeVista(viewId);
+
     cargarDatosVista(viewId);
+}
+
+// Limpia el estado del editor de rendición y vuelve al listado (sin confirmación previa).
+function _finalizarSalidaEditorRendicion() {
+    detallesActuales = [];
+    adjuntosTemporales['modal'] = [];
+    detallesModificados = false;
+    rendicionActual = null;
+    const list = document.getElementById('rendiciones-list-container');
+    const editor = document.getElementById('rendicion-editor');
+    const aviso = document.getElementById('cambios-sin-guardar');
+    if (list) list.style.display = 'block';
+    if (editor) editor.style.display = 'none';
+    if (aviso) aviso.style.display = 'none';
 }
 
 // ==================== DASHBOARD & GRÁFICOS ====================
@@ -689,14 +762,16 @@ function actualizarCodigoCompetenciaPorCategoria() {
 
 async function listarCompetencias() {
     await actualizarSelectoresFormularios();
-    const [competencias, circuitos, categorias, gastos, rendiciones, detalleGastos] = await Promise.all([
-        getTodos('competencias'),
-        getTodos('circuitos'),
-        getTodos('categorias'),
-        getTodos('gastos'),
-        getTodos('rendiciones'),
-        getTodos('detalleGastos')
-    ]);
+        const [competencias, circuitos, categorias, gastos, rendiciones, detalleGastos] = await Promise.all([
+            getTodos('competencias'),
+            getTodos('circuitos'),
+            getTodos('categorias'),
+            getTodos('gastos'),
+            getTodos('rendiciones'),
+            getTodos('detalleGastos')
+        ]);
+        const categoriasDeduplicadas = deduplicarCategorias(categorias);
+        const circuitosDeduplicados = deduplicarCircuitos(circuitos);
     const listContainer = document.getElementById('calendario-list');
     listContainer.innerHTML = '';
 
@@ -1469,29 +1544,26 @@ async function listarGastos() {
     }
 }
 
+// Abre el formulario de gastos simples desde la vista Control de Gastos.
+// El botón del HTML mantiene este nombre como punto de entrada público.
 async function openModalGasto() {
     if (!puedeEditar()) return;
 
-    const competencias = await getTodos('competencias');
-    const compFiltro = document.getElementById('filtro-competencia-gastos').value;
-    const selectComp = document.getElementById('age-competencia');
-    selectComp.innerHTML = '<option value="">Seleccione la competencia...</option>';
-    competencias
-        .sort((a, b) => new Date(b.fechaInicio) - new Date(a.fechaInicio))
-        .forEach(c => {
-            const label = c.codigo ? `${c.codigo} - ${c.nombre}` : c.nombre;
-            selectComp.innerHTML += `<option value="${c.id}">${escapeHtml(label)}</option>`;
-        });
-    selectComp.value = competencias.some(c => String(c.id) === String(compFiltro)) ? compFiltro : '';
+    const form = document.getElementById('form-gasto');
+    if (form) form.reset();
 
-    await actualizarDatosCompetenciaGastoExtraordinario();
+    document.getElementById('gasto-id').value = '';
+    document.getElementById('gasto-modal-title').textContent = 'Cargar Gasto';
+    document.getElementById('gasto-fecha').value = new Date().toISOString().split('T')[0];
 
-    // Limpiar campos del formulario
-    document.getElementById('age-concepto').value = '';
-    document.getElementById('age-monto').value = '';
-    document.getElementById('age-detalle').value = '';
+    await actualizarSelectoresFormularios();
 
-    openModal('modal-agregar-gasto-extraordinario');
+    // Dejar explícita la categoría predeterminada para evitar un gasto sin clasificación.
+    const categoria = document.getElementById('gasto-categoria');
+    if (categoria) categoria.value = 'general';
+
+    _fotoModalGasto = _fotoCampos(_IDS_MODAL_GASTO);
+    openModal('modal-gasto');
 }
 
 async function actualizarDatosCompetenciaGastoExtraordinario() {
@@ -1505,6 +1577,65 @@ async function actualizarDatosCompetenciaGastoExtraordinario() {
     document.getElementById('age-nombre').textContent = comp ? comp.nombre : '-';
     document.getElementById('age-fecha-inicio').textContent = comp ? formatearFechaVisual(comp.fechaInicio) : '-';
     document.getElementById('age-fecha-fin').textContent = comp ? formatearFechaVisual(comp.fechaFin) : '-';
+}
+
+// ==================== GESTIÓN DE MODALES ====================
+function openModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) modal.classList.add('active');
+}
+function closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) modal.classList.remove('active');
+}
+
+// ============ PROTECCIÓN DE CAMBIOS SIN GUARDAR (MÓDULO GASTOS) ============
+// Al abrir un formulario de gasto manual se guarda una "foto" de sus campos para
+// detectar ediciones posteriores y evitar salir sin guardar de forma accidental.
+
+let _vistaPendiente = null;
+
+function _fotoCampos(ids) {
+    return ids.map(id => {
+        const el = document.getElementById(id);
+        return el ? el.value : '';
+    });
+}
+
+function _camposCambiaron(ids, foto) {
+    return ids.some((id, i) => {
+        const el = document.getElementById(id);
+        return el ? el.value !== foto[i] : false;
+    });
+}
+
+const _IDS_MODAL_GASTO = ['gasto-competencia', 'gasto-concepto', 'gasto-categoria', 'gasto-monto', 'gasto-fecha', 'gasto-notas'];
+const _IDS_MODAL_GASTO_EXTRA = ['age-competencia', 'age-concepto', 'age-monto', 'age-detalle'];
+let _fotoModalGasto = [];
+let _fotoModalGastoExtra = [];
+
+async function cerrarModalGasto() {
+    if (_camposCambiaron(_IDS_MODAL_GASTO, _fotoModalGasto)) {
+        const ok = await mostrarConfirmacion(
+            'Salir sin guardar',
+            'Hay cambios sin guardar en este gasto. ¿Estás seguro de que deseas salir sin guardar?',
+            'warning'
+        );
+        if (!ok) return;
+    }
+    closeModal('modal-gasto');
+}
+
+async function cerrarModalGastoExtraordinario() {
+    if (_camposCambiaron(_IDS_MODAL_GASTO_EXTRA, _fotoModalGastoExtra)) {
+        const ok = await mostrarConfirmacion(
+            'Salir sin guardar',
+            'Hay cambios sin guardar en este gasto. ¿Estás seguro de que deseas salir sin guardar?',
+            'warning'
+        );
+        if (!ok) return;
+    }
+    closeModal('modal-agregar-gasto-extraordinario');
 }
 
 // Guarda un nuevo Gasto Extraordinario vinculado a la competencia seleccionada
@@ -1567,6 +1698,7 @@ async function editarGasto(id) {
     document.getElementById('gasto-fecha').value = g.fecha;
     document.getElementById('gasto-notas').value = g.observaciones || '';
     document.getElementById('gasto-modal-title').innerText = 'Editar Gasto';
+    _fotoModalGasto = _fotoCampos(_IDS_MODAL_GASTO);
     openModal('modal-gasto');
 }
 
@@ -2339,46 +2471,52 @@ async function imprimirReporteAsistencia() {
 // ==================== CONFIGURACIÓN: CATEGORÍAS & CIRCUITOS ====================
 
 async function listarConfiguraciones() {
-    const categorias = await getTodos('categorias');
-    const catBody = document.getElementById('config-categorias-body');
-    catBody.innerHTML = '';
-    categorias.forEach(c => {
-        const acciones = puedeEditar() ? `
-            <td style="text-align:right;">
-                <button class="action-btn" onclick="editarCategoria(${c.id})"><i class="fa-solid fa-pen-to-square"></i></button>
-                <button class="action-btn delete" onclick="eliminarCategoria(${c.id})"><i class="fa-solid fa-trash"></i></button>
-            </td>
-        ` : '';
-        catBody.innerHTML += `
-            <tr>
-                <td style="font-weight:600;">${escapeHtml(c.nombre)}</td>
-                <td style="color:var(--text-secondary);max-width:200px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;">${escapeHtml(c.descripcion)}</td>
-                ${acciones}
-            </tr>`;
-    });
-
-    const circuitos = await getTodos('circuitos');
-    const circBody = document.getElementById('config-circuitos-body');
-    circBody.innerHTML = '';
-    circuitos.forEach(c => {
-        const acciones = puedeEditar() ? `
-            <td style="text-align:right;">
-                <button class="action-btn" onclick="editarCircuito(${c.id})"><i class="fa-solid fa-pen-to-square"></i></button>
-                <button class="action-btn delete" onclick="eliminarCircuito(${c.id})"><i class="fa-solid fa-trash"></i></button>
-            </td>
-        ` : '';
-        circBody.innerHTML += `
-            <tr>
-                <td style="font-weight:600;">${escapeHtml(c.nombre)}</td>
-                <td>${escapeHtml(c.ubicacion)}</td>
-                ${acciones}
-            </tr>`;
-    });
-
     actualizarEstadoFirebaseUI();
 
     if (esAdmin()) {
         await listarUsuarios();
+    }
+}
+
+async function listarCategoriasCircuitos() {
+    const categorias = deduplicarCategorias(await getTodos('categorias'));
+    const catBody = document.getElementById('config-categorias-body');
+    if (catBody) {
+        catBody.innerHTML = '';
+        categorias.forEach(c => {
+            const acciones = puedeEditar() ? `
+                <td style="text-align:right;">
+                    <button class="action-btn" onclick="editarCategoria(${c.id})"><i class="fa-solid fa-pen-to-square"></i></button>
+                    <button class="action-btn delete" onclick="eliminarCategoria(${c.id})"><i class="fa-solid fa-trash"></i></button>
+                </td>
+            ` : '';
+            catBody.innerHTML += `
+                <tr>
+                    <td style="font-weight:600;">${escapeHtml(c.nombre)}</td>
+                    <td style="color:var(--text-secondary);max-width:200px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;">${escapeHtml(c.descripcion)}</td>
+                    ${acciones}
+                </tr>`;
+        });
+    }
+
+    const circuitos = deduplicarCircuitos(await getTodos('circuitos'));
+    const circBody = document.getElementById('config-circuitos-body');
+    if (circBody) {
+        circBody.innerHTML = '';
+        circuitos.forEach(c => {
+            const acciones = puedeEditar() ? `
+                <td style="text-align:right;">
+                    <button class="action-btn" onclick="editarCircuito(${c.id})"><i class="fa-solid fa-pen-to-square"></i></button>
+                    <button class="action-btn delete" onclick="eliminarCircuito(${c.id})"><i class="fa-solid fa-trash"></i></button>
+                </td>
+            ` : '';
+            circBody.innerHTML += `
+                <tr>
+                    <td style="font-weight:600;">${escapeHtml(c.nombre)}</td>
+                    <td>${escapeHtml(c.ubicacion)}</td>
+                    ${acciones}
+                </tr>`;
+        });
     }
 }
 
@@ -2409,14 +2547,14 @@ async function guardarCategoriaForm(e) {
     if (id) cat.id = Number(id);
     await guardar('categorias', cat);
     closeModal('modal-categoria');
-    listarConfiguraciones();
+    listarCategoriasCircuitos();
 }
 
 async function eliminarCategoria(id) {
     if (!puedeEditar()) return;
     if (!confirm('¿Eliminar esta categoría?')) return;
     await eliminar('categorias', id);
-    listarConfiguraciones();
+    listarCategoriasCircuitos();
 }
 
 function openModalCircuito() {
@@ -2446,14 +2584,14 @@ async function guardarCircuitoForm(e) {
     if (id) circ.id = Number(id);
     await guardar('circuitos', circ);
     closeModal('modal-circuito');
-    listarConfiguraciones();
+    listarCategoriasCircuitos();
 }
 
 async function eliminarCircuito(id) {
     if (!puedeEditar()) return;
     if (!confirm('¿Eliminar este autódromo?')) return;
     await eliminar('circuitos', id);
-    listarConfiguraciones();
+    listarCategoriasCircuitos();
 }
 
 // ==================== GESTIÓN DE USUARIOS (SOLO ADMIN) ====================
@@ -2758,8 +2896,8 @@ async function importarDatos(e) {
 // ==================== SELECTORES Y HELPERS DE FORMULARIOS ====================
 
 async function actualizarSelectoresFormularios() {
-    const categorias = await getTodos('categorias');
-    const circuitos = await getTodos('circuitos');
+    const categorias = deduplicarCategorias(await getTodos('categorias'));
+    const circuitos = deduplicarCircuitos(await getTodos('circuitos'));
     const competencias = await getTodos('competencias');
     const staff = await getTodos('staff');
 
@@ -2863,44 +3001,101 @@ async function actualizarSelectoresFormularios() {
     }
 }
 
-async function actualizarStaffGastoPorCompetencia() {
-    const competencias = await getTodos('competencias');
-    const staff = await getTodos('staff');
-    const selectGastoComp = document.getElementById('gasto-competencia');
-    const selectGastoStaff = document.getElementById('gasto-staff');
-    if (!selectGastoStaff) return;
-
-    const selectedCompId = Number(selectGastoComp.value);
-    selectGastoStaff.innerHTML = '<option value="">Sin personal asignado</option>';
-
-    if (!selectedCompId) {
-        selectGastoStaff.innerHTML = '<option value="">Seleccioná primero una competencia</option>';
-        return;
-    }
-
-    const competencia = competencias.find(c => c.id === selectedCompId);
-    if (!competencia || !competencia.staffIds || competencia.staffIds.length === 0) {
-        selectGastoStaff.innerHTML = '<option value="">No hay personal asignado a esta competencia</option>';
-        return;
-    }
-
-    const selectedStaffIds = new Set(competencia.staffIds.map(id => Number(id)));
-    const assignedStaff = staff.filter(s => selectedStaffIds.has(Number(s.id)));
-    if (assignedStaff.length === 0) {
-        selectGastoStaff.innerHTML = '<option value="">No hay personal asignado a esta competencia</option>';
-        return;
-    }
-
-    selectGastoStaff.innerHTML = '<option value="">Sin personal asignado</option>';
-    assignedStaff.forEach(persona => {
-        selectGastoStaff.innerHTML += `<option value="${persona.id}">${persona.nombre} ${persona.apellido} (${persona.funcion})</option>`;
-    });
+function normalizarNombreCatalogo(nombre) {
+    return String(nombre || '')
+        .trim()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
 }
 
-// Gestión de Modales
-function openModal(modalId) { document.getElementById(modalId).classList.add('active'); }
-function closeModal(modalId) { document.getElementById(modalId).classList.remove('active'); }
+function deduplicarCategorias(categorias) {
+    return Array.from(new Map(
+        (categorias || [])
+            .filter(c => c && normalizarNombreCatalogo(c.nombre))
+            .map(c => [normalizarNombreCatalogo(c.nombre), c])
+    ).values());
+}
 
+function deduplicarCircuitos(circuitos) {
+    return Array.from(new Map(
+        (circuitos || [])
+            .filter(c => c && normalizarNombreCatalogo(c.nombre))
+            .map(c => [
+                `${normalizarNombreCatalogo(c.nombre)}|${normalizarNombreCatalogo(c.ubicacion)}`,
+                c
+            ])
+    ).values());
+}
+
+async function actualizarResponsablePorCompetencia(valorPrecargado, nombreLibrePrecargado = '') {
+    const selectComp = document.getElementById('rendicion-competencia');
+    const selectResp = document.getElementById('rendicion-responsable');
+    if (!selectComp || !selectResp) return;
+
+    // ¿Es una precarga (edición de rendición existente) o un cambio manual del usuario?
+    const esPrecarga = valorPrecargado !== undefined && valorPrecargado !== null && valorPrecargado !== '';
+    const previo = esPrecarga ? String(valorPrecargado) : selectResp.value;
+    const compId = Number(selectComp.value);
+
+    if (!compId) {
+        selectResp.disabled = true;
+        selectResp.innerHTML = '<option value="">Seleccione primero una competencia...</option>';
+        toggleResponsableLibre();
+        return;
+    }
+
+    // Cargar competencia y catálogo de personal (desde caché/IndexedDB/Firebase).
+    const [competencias, staff] = await Promise.all([getTodos('competencias'), getTodos('staff')]);
+    const competencia = competencias.find(c => Number(c.id) === compId);
+    const asignados = new Set((competencia?.staffIds || []).map(id => Number(id)));
+    // Filtrado estricto: solo el personal cuyo ID está en staffIds de la competencia..
+    const asignadosStaff = staff.filter(s => asignados.has(Number(s.id)));
+    let opciones = '<option value="">Seleccione responsable...</option>';
+    asignadosStaff.forEach(s => {
+        opciones += `<option value="${s.id}">${escapeHtml(s.nombre)} ${escapeHtml(s.apellido)}</option>`;
+    });
+    opciones += '<option value="__OTRO__">Otro responsable...</option>';
+
+    // En edición existente: si el responsable original ya no está asignado a la competencia,
+    // se conserva como opción adicional marcada para no perder el dato precargado..
+    let originalFueraDeLista = false;
+    if (esPrecarga && previo && !asignados.has(Number(previo))) {
+        originalFueraDeLista = true;
+        const personaOriginal = staff.find(s => String(s.id) === previo);
+        const etiqueta = personaOriginal
+            ? `${escapeHtml(personaOriginal.nombre)} ${escapeHtml(personaOriginal.apellido)} (responsable original)`
+            : `Responsable #${previo} (responsable original)`;
+        opciones += `<option value="${previo}">${etiqueta}</option>`;
+    }
+
+    selectResp.innerHTML = opciones;
+    // Habilitar solo si hay personal asignado o se conserva un responsable original precargado..
+    selectResp.disabled = (asignadosStaff.length === 0 && !originalFueraDeLista);
+
+    // Restaurar el valor solo si la opción sigue existiendo (el filtro dinámico se respeta.)
+    const previoDisponible = Array.from(selectResp.options).some(o => o.value === previo);
+    if (previo && previoDisponible) {
+        selectResp.value = previo;
+    } else {
+        // Cambio manual de competencia: si el responsable no pertenece a la nueva selección, se limpia..
+        selectResp.value = '';
+    }
+    const responsableLibre = document.getElementById('rendicion-responsable-libre');
+    if (responsableLibre && nombreLibrePrecargado) responsableLibre.value = nombreLibrePrecargado;
+    toggleResponsableLibre();
+}
+
+function toggleResponsableLibre() {
+    const selectResp = document.getElementById('rendicion-responsable');
+    const inputLibre = document.getElementById('rendicion-responsable-libre');
+    if (!selectResp || !inputLibre) return;
+    const esOtro = selectResp.value === '__OTRO__';
+    inputLibre.style.display = esOtro ? 'block' : 'none';
+    inputLibre.required = esOtro;
+    if (!esOtro) inputLibre.value = '';
+}
 // ==================== ALERTA / CONFIRMACIÓN PERSONALIZADA ====================
 let _alertaResolve = null;
 
@@ -3372,7 +3567,8 @@ async function listarRendiciones() {
             const resp = staff.find(s => s.id === Number(r.responsableId));
             const compMatch = comp ? comp.nombre.toLowerCase().includes(buscador) : false;
             const compCodigoMatch = comp ? (comp.codigo || '').toLowerCase().includes(buscador) : false;
-            const respMatch = resp ? `${resp.nombre} ${resp.apellido}`.toLowerCase().includes(buscador) : false;
+            const respNombre = resp ? `${resp.nombre} ${resp.apellido}` : (r.responsableNombre || '');
+            const respMatch = respNombre.toLowerCase().includes(buscador);
             const obsMatch = (r.observaciones || '').toLowerCase().includes(buscador);
             const queryNumber = Number(buscador);
             const idMatch = !Number.isNaN(queryNumber) && (queryNumber === Number(r.id) || queryNumber === Number(r.competenciaId));
@@ -3418,7 +3614,7 @@ async function listarRendiciones() {
             <td>${comp ? escapeHtml(comp.nombre) : '-'}</td>
             <td>${circ ? escapeHtml(circ.nombre) : '-'}</td>
             <td>${formatearFechaVisual(r.fecha)}</td>
-            <td>${resp ? `${escapeHtml(resp.nombre)} ${escapeHtml(resp.apellido)}` : '-'}</td>
+            <td>${resp ? `${escapeHtml(resp.nombre)} ${escapeHtml(resp.apellido)}` : escapeHtml(r.responsableNombre || '-')}</td>
             <td style="text-align:center;">${cantGastos}</td>
             <td style="color:var(--accent);font-weight:700;">${formatearMoneda(totalGastos)}</td>
             <td><span class="badge ${estadoBadge}">${estadoText}</span></td>
@@ -3533,7 +3729,7 @@ async function verRendicion(id) {
         <div class="stat-card" style="padding:1rem;">
             <div class="stat-info">
                 <h3 style="font-size:0.85rem;">Responsable</h3>
-                <p style="font-size:1rem;">${resp ? `${resp.nombre} ${resp.apellido}` : '-'}</p>
+                <p style="font-size:1rem;">${resp ? `${resp.nombre} ${resp.apellido}` : (rendicion.responsableNombre || '-')}</p>
             </div>
             <div class="stat-icon"><i class="fa-solid fa-user"></i></div>
         </div>
@@ -3565,7 +3761,7 @@ async function verRendicion(id) {
     const estadoText = rendicion.estado === 'completo' ? 'Completo' : 'Borrador';
     document.getElementById('ver-rendicion-info').innerHTML = `
         <div><strong>Estado:</strong> <span class="badge ${estadoBadge}">${estadoText}</span></div>
-        <div><strong>Responsable:</strong> ${resp ? `${resp.nombre} ${resp.apellido}` : '-'}</div>
+        <div><strong>Responsable:</strong> ${resp ? `${resp.nombre} ${resp.apellido}` : (rendicion.responsableNombre || '-')}</div>
         <div><strong>Autódromo:</strong> ${circ ? circ.nombre : '-'}</div>
         <div><strong>Competencia:</strong> ${comp ? comp.nombre : '-'}</div>
         <div><strong>Código:</strong> <span class="blur-readonly" style="font-family:monospace;">${comp && comp.codigo ? comp.codigo : 'SIN CÓDIGO'}</span></div>
@@ -3675,9 +3871,9 @@ async function nuevaRendicion() {
     };
     detallesActuales = [];
     detallesModificados = false;
-    adjuntosTemporales = {};
+    adjuntosTemporales['modal'] = [];
 
-    llenarFormularioRendicion(rendicionActual);
+    await llenarFormularioRendicion(rendicionActual);
     document.getElementById('rendiciones-list-container').style.display = 'none';
     document.getElementById('rendicion-editor').style.display = 'block';
     document.getElementById('rendicion-estado-badge').textContent = 'Nueva - Borrador';
@@ -3709,17 +3905,20 @@ async function cargarSelectoresRendicion() {
     circuitos.forEach(c => selAuto.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
     selAuto.value = savedAuto;
 
-    const selResp = document.getElementById('rendicion-responsable');
-    const savedResp = selResp.value;
-    selResp.innerHTML = '<option value="">Seleccione responsable...</option>';
-    staff.forEach(s => selResp.innerHTML += `<option value="${s.id}">${s.nombre} ${s.apellido}</option>`);
-    selResp.value = savedResp;
+    // El selector de responsable se puebla dinámicamente según el personal asignado a la competencia elegida.
+    await actualizarResponsablePorCompetencia();
 
     const selConc = document.getElementById('detalle-concepto');
     if (selConc) {
         const savedConc = selConc.value;
         selConc.innerHTML = '<option value="">Seleccione concepto...</option>';
-        conceptos.forEach(c => selConc.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
+        const conceptosUnicos = Array.from(new Map(
+            conceptos
+                .filter(c => c && String(c.nombre || '').trim())
+                .map(c => [normalizarNombreCatalogo(c.nombre), c])
+        ).values());
+        const conceptosOrdenados = conceptosUnicos.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+        conceptosOrdenados.forEach(c => selConc.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
         selConc.value = savedConc;
     }
 
@@ -3727,7 +3926,8 @@ async function cargarSelectoresRendicion() {
     if (selProv) {
         const savedProv = selProv.value;
         selProv.innerHTML = '<option value="">Seleccione proveedor...</option>';
-        proveedores.forEach(p => selProv.innerHTML += `<option value="${p.id}">${p.nombre}</option>`);
+        const proveedoresOrdenados = proveedores.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+        proveedoresOrdenados.forEach(p => selProv.innerHTML += `<option value="${p.id}">${p.nombre}</option>`);
         selProv.value = savedProv;
     }
 }
@@ -3737,7 +3937,7 @@ async function llenarFormularioRendicion(r) {
     document.getElementById('rendicion-competencia').value = r.competenciaId || '';
     document.getElementById('rendicion-autodromo').value = r.autodromoId || '';
     document.getElementById('rendicion-fecha').value = r.fecha || '';
-    document.getElementById('rendicion-responsable').value = r.responsableId || '';
+    await actualizarResponsablePorCompetencia(r.responsableId || (r.responsableNombre ? '__OTRO__' : ''), r.responsableNombre || '');
     document.getElementById('rendicion-observaciones').value = r.observaciones || '';
 
     try {
@@ -3752,11 +3952,14 @@ async function llenarFormularioRendicion(r) {
 }
 
 function obtenerDatosFormularioRendicion() {
+    const responsableSelect = document.getElementById('rendicion-responsable');
+    const esResponsableLibre = responsableSelect.value === '__OTRO__';
     return {
         id: document.getElementById('rendicion-id').value ? Number(document.getElementById('rendicion-id').value) : null,
         competenciaId: Number(document.getElementById('rendicion-competencia').value),
         autodromoId: Number(document.getElementById('rendicion-autodromo').value),
-        responsableId: Number(document.getElementById('rendicion-responsable').value),
+        responsableId: esResponsableLibre ? null : Number(responsableSelect.value),
+        responsableNombre: esResponsableLibre ? document.getElementById('rendicion-responsable-libre').value.trim() : '',
         fecha: document.getElementById('rendicion-fecha').value,
         observaciones: document.getElementById('rendicion-observaciones').value,
         estado: 'completo'
@@ -3768,7 +3971,7 @@ function validarRendicion() {
     if (!datos.competenciaId) { mostrarToast('Debe seleccionar una competencia.', 'error'); return false; }
     if (!datos.autodromoId) { mostrarToast('Debe seleccionar un autódromo.', 'error'); return false; }
     if (!datos.fecha) { mostrarToast('Debe ingresar una fecha.', 'error'); return false; }
-    if (!datos.responsableId) { mostrarToast('Debe seleccionar un responsable.', 'error'); return false; }
+    if (!datos.responsableId && !datos.responsableNombre) { mostrarToast('Debe seleccionar o ingresar un responsable.', 'error'); return false; }
     if (detallesActuales.length === 0) { mostrarToast('Debe agregar al menos un gasto.', 'error'); return false; }
 
     for (let i = 0; i < detallesActuales.length; i++) {
@@ -3832,7 +4035,7 @@ async function ejecutarGuardadoRendicion(estado, volverAlListado = false) {
             const detalleId = await guardar('detalleGastos', detalle);
             detalle.id = Number(detalleId);
 
-            const adjuntosFila = adjuntosTemporales[i] || [];
+                const adjuntosFila = Array.isArray(detalle.adjuntos) ? detalle.adjuntos : [];
             for (const adj of adjuntosFila) {
                 adj.detalleGastoId = detalle.id;
                 adj.usuarioCarga = currentUser ? currentUser.id : null;
@@ -3841,7 +4044,6 @@ async function ejecutarGuardadoRendicion(estado, volverAlListado = false) {
             }
         }
 
-        adjuntosTemporales = {};
         detallesModificados = false;
         document.getElementById('cambios-sin-guardar').style.display = 'none';
 
@@ -3878,16 +4080,16 @@ async function editarRendicion(id) {
     detallesActuales = detalles.filter(d => Number(d.rendicionId) === Number(id)).sort((a, b) => (a.orden || 0) - (b.orden || 0));
 
     const todosAdjuntos = await getTodos('adjuntos');
-    adjuntosTemporales = {};
+    adjuntosTemporales['modal'] = [];
     for (let i = 0; i < detallesActuales.length; i++) {
         const detId = detallesActuales[i].id;
-        adjuntosTemporales[i] = todosAdjuntos.filter(a => Number(a.detalleGastoId) === Number(detId));
+        detallesActuales[i].adjuntos = todosAdjuntos.filter(a => Number(a.detalleGastoId) === Number(detId));
     }
 
     rendicionActual = rendicion;
     detallesModificados = false;
 
-    llenarFormularioRendicion(rendicion);
+    await llenarFormularioRendicion(rendicion);
     document.getElementById('rendiciones-list-container').style.display = 'none';
     document.getElementById('rendicion-editor').style.display = 'block';
 
@@ -3902,14 +4104,18 @@ async function editarRendicion(id) {
 
 function cancelarEdicionRendicion() {
     if (detallesModificados) {
-        if (!confirm('Hay cambios sin guardar. ¿Estás seguro de que deseas salir?')) return;
+                mostrarConfirmacion(
+            'Salir sin guardar',
+            'Hay cambios sin guardar en esta rendición. ¿Estás seguro de que deseas salir sin guardar?',
+            'warning'
+        ).then(ok => {
+            if (!ok) return;
+            _finalizarSalidaEditorRendicion();
+            listarRendiciones();
+        });
+        return;
     }
-    detallesActuales = [];
-    adjuntosTemporales = {};
-    detallesModificados = false;
-    rendicionActual = null;
-    document.getElementById('rendiciones-list-container').style.display = 'block';
-    document.getElementById('rendicion-editor').style.display = 'none';
+    _finalizarSalidaEditorRendicion();
     listarRendiciones();
 }
 
@@ -4010,7 +4216,7 @@ async function renderizarDetalleGastos() {
         const proveedor = await obtenerNombreProveedor(detalle.proveedorId);
         const concepto = await obtenerNombreConcepto(detalle.conceptoId);
         const total = calcularTotalFila(detalle);
-        const cantAdj = (adjuntosTemporales[index] || []).length;
+        const cantAdj = (detalle.adjuntos && detalle.adjuntos.length) ? detalle.adjuntos.length : 0;
 
         tr.innerHTML = `
             <td style="font-weight:600;text-align:center;">${index + 1}</td>
@@ -4096,79 +4302,131 @@ function recalcularTodosLosTotales() {
 }
 
 let filaEditandoIndex = -1;
+const _IDS_MODAL_DETALLE_GASTO = [
+    'detalle-proveedor', 'detalle-tipo-comprobante', 'detalle-numero-comprobante',
+    'detalle-fecha', 'detalle-concepto', 'detalle-descripcion', 'detalle-basico',
+    'detalle-iva-porcentaje', 'detalle-iva', 'detalle-impuestos-internos',
+    'detalle-percepcion-iibb', 'detalle-percepcion-iva', 'detalle-otros-impuestos',
+    'detalle-cantidad-km', 'detalle-valor-km', 'detalle-monto-facturar'
+];
+let _fotoModalDetalleGasto = null;
+
+function capturarFotoModalDetalleGasto() {
+    return {
+        campos: _fotoCampos(_IDS_MODAL_DETALLE_GASTO),
+        adjuntos: (adjuntosTemporales['modal'] || []).map(adj => ({
+            nombre: adj.nombre,
+            tipoArchivo: adj.tipoArchivo,
+            archivo: adj.archivo
+        }))
+    };
+}
+
+function modalDetalleGastoTieneCambios() {
+    if (!_fotoModalDetalleGasto) return false;
+    const actual = capturarFotoModalDetalleGasto();
+    return JSON.stringify(actual) !== JSON.stringify(_fotoModalDetalleGasto);
+}
 
 async function agregarFilaGasto() {
-    await cargarSelectoresRendicion();
-    filaEditandoIndex = -1;
-    document.getElementById('detalle-gasto-id').value = '';
-    document.getElementById('detalle-gasto-rendicion-id').value = rendicionActual ? (rendicionActual.id || '') : '';
-    document.getElementById('detalle-gasto-orden').value = detallesActuales.length + 1;
-    document.getElementById('detalle-gasto-modal-title').textContent = 'Agregar Gasto';
+    try {
+        // PASO A: Poblar selects con listas ordenadas A-Z (await para garantizar que estén en el DOM)
+        await cargarSelectoresRendicion();
 
-    document.getElementById('detalle-proveedor').value = '';
-    document.getElementById('detalle-tipo-comprobante').value = '';
-    document.getElementById('detalle-numero-comprobante').value = '';
-    document.getElementById('detalle-fecha').value = new Date().toISOString().split('T')[0];
-    document.getElementById('detalle-concepto').value = '';
-    document.getElementById('detalle-descripcion').value = '';
-    document.getElementById('detalle-basico').value = '';
-    document.getElementById('detalle-iva-porcentaje').value = '21';
-    document.getElementById('detalle-iva').value = '';
-    document.getElementById('detalle-impuestos-internos').value = '';
-    document.getElementById('detalle-percepcion-iibb').value = '';
-    document.getElementById('detalle-percepcion-iva').value = '';
-    document.getElementById('detalle-otros-impuestos').value = '';
-    document.getElementById('detalle-cantidad-km').value = '';
-    document.getElementById('detalle-valor-km').value = '';
-    document.getElementById('detalle-monto-facturar').value = '';
-    document.getElementById('campos-kilometros').style.display = 'none';
-    document.getElementById('detalle-total').textContent = '$0.00';
-    document.getElementById('detalle-adjuntos-list').innerHTML = '';
+        filaEditandoIndex = -1;
+        document.getElementById('detalle-gasto-id').value = '';
+        document.getElementById('detalle-gasto-rendicion-id').value = rendicionActual ? (rendicionActual.id || '') : '';
+        document.getElementById('detalle-gasto-orden').value = detallesActuales.length + 1;
+        document.getElementById('detalle-gasto-modal-title').textContent = 'Agregar Gasto';
 
-    adjuntosTemporales['modal'] = [];
+        // PASO B: Asignar valores por defecto (las opciones ya existen en el DOM)
+        document.getElementById('detalle-proveedor').value = '';
+        document.getElementById('detalle-tipo-comprobante').value = '';
+        document.getElementById('detalle-numero-comprobante').value = '';
+        document.getElementById('detalle-fecha').value = new Date().toISOString().split('T')[0];
+        document.getElementById('detalle-concepto').value = '';
+        document.getElementById('detalle-descripcion').value = '';
+        document.getElementById('detalle-basico').value = '';
+        document.getElementById('detalle-iva-porcentaje').value = '21';
+        document.getElementById('detalle-iva').value = '';
+        document.getElementById('detalle-impuestos-internos').value = '';
+        document.getElementById('detalle-percepcion-iibb').value = '';
+        document.getElementById('detalle-percepcion-iva').value = '';
+        document.getElementById('detalle-otros-impuestos').value = '';
+        document.getElementById('detalle-cantidad-km').value = '';
+        document.getElementById('detalle-valor-km').value = '';
+        document.getElementById('detalle-monto-facturar').value = '';
+        document.getElementById('campos-kilometros').style.display = 'none';
+        document.getElementById('detalle-total').textContent = '$0.00';
+        document.getElementById('detalle-adjuntos-list').innerHTML = '';
 
-    openModal('modal-detalle-gasto');
+        adjuntosTemporales['modal'] = [];
+        _fotoModalDetalleGasto = capturarFotoModalDetalleGasto();
+
+        openModal('modal-detalle-gasto');
+    } catch (error) {
+        console.error('[agregarFilaGasto] Error crítico al intentar agregar gasto:', error);
+        mostrarToast('Error al abrir el formulario de gasto. Consola para detalles.', 'error');
+    }
 }
 
 async function editarFilaGasto(index) {
-    await cargarSelectoresRendicion();
-    const detalle = detallesActuales[index];
-    if (!detalle) return;
+    try {
+        // PASO A: Poblar selects con listas ordenadas A-Z (await para garantizar que estén en el DOM)
+        await cargarSelectoresRendicion();
 
-    filaEditandoIndex = index;
-    document.getElementById('detalle-gasto-id').value = detalle.id || '';
-    document.getElementById('detalle-gasto-rendicion-id').value = detalle.rendicionId || '';
-    document.getElementById('detalle-gasto-orden').value = detalle.orden || (index + 1);
-    document.getElementById('detalle-gasto-modal-title').textContent = 'Editar Gasto';
+        const detalle = detallesActuales[index];
+        if (!detalle) {
+            console.error(`[editarFilaGasto] No existe detalle en índice ${index}`);
+            return;
+        }
 
-    document.getElementById('detalle-proveedor').value = detalle.proveedorId || '';
-    document.getElementById('detalle-tipo-comprobante').value = detalle.tipoComprobante || '';
-    document.getElementById('detalle-numero-comprobante').value = detalle.numeroComprobante || '';
-    document.getElementById('detalle-fecha').value = detalle.fecha || '';
-    document.getElementById('detalle-concepto').value = detalle.conceptoId || '';
-    document.getElementById('detalle-descripcion').value = detalle.descripcion || '';
-    document.getElementById('detalle-basico').value = detalle.basico || '';
-    const ivaPorcentaje = detalle.ivaPorcentaje !== undefined
-        ? Number(detalle.ivaPorcentaje)
-        : (Number(detalle.basico) > 0 ? (Number(detalle.iva) / Number(detalle.basico)) * 100 : 21);
-    const ivaPorcentajeValido = [0, 10.5, 21].includes(ivaPorcentaje) ? ivaPorcentaje : 0;
-    document.getElementById('detalle-iva-porcentaje').value = String(ivaPorcentajeValido);
-    document.getElementById('detalle-iva').value = detalle.iva || '';
-    document.getElementById('detalle-impuestos-internos').value = detalle.impuestosInternos || '';
-    document.getElementById('detalle-percepcion-iibb').value = detalle.percepcionIIBB || '';
-    document.getElementById('detalle-percepcion-iva').value = detalle.percepcionIVA || '';
-    document.getElementById('detalle-otros-impuestos').value = detalle.otrosImpuestos || '';
-    document.getElementById('detalle-monto-facturar').value = detalle.montoFacturar || '';
-    document.getElementById('detalle-cantidad-km').value = detalle.cantidadKm || '';
-    document.getElementById('detalle-valor-km').value = detalle.valorKm || '';
+        filaEditandoIndex = index;
+        document.getElementById('detalle-gasto-id').value = detalle.id || '';
+        document.getElementById('detalle-gasto-rendicion-id').value = detalle.rendicionId || '';
+        document.getElementById('detalle-gasto-orden').value = detalle.orden || (index + 1);
+        document.getElementById('detalle-gasto-modal-title').textContent = 'Editar Gasto';
 
-    onCambioConceptoDetalle();
-    recalcularTotalFila();
+        // PASO B: Asignar valores precargados (las opciones ya existen en el DOM)
+        document.getElementById('detalle-proveedor').value = detalle.proveedorId || '';
+        document.getElementById('detalle-tipo-comprobante').value = detalle.tipoComprobante || '';
+        document.getElementById('detalle-numero-comprobante').value = detalle.numeroComprobante || '';
+        document.getElementById('detalle-fecha').value = detalle.fecha || '';
+        document.getElementById('detalle-concepto').value = detalle.conceptoId || '';
+        document.getElementById('detalle-descripcion').value = detalle.descripcion || '';
+        document.getElementById('detalle-basico').value = detalle.basico || '';
+        const ivaPorcentaje = detalle.ivaPorcentaje !== undefined
+            ? Number(detalle.ivaPorcentaje)
+            : (Number(detalle.basico) > 0 ? (Number(detalle.iva) / Number(detalle.basico)) * 100 : 21);
+        const ivaPorcentajeValido = [0, 10.5, 21].includes(ivaPorcentaje) ? ivaPorcentaje : 0;
+        document.getElementById('detalle-iva-porcentaje').value = String(ivaPorcentajeValido);
+        document.getElementById('detalle-iva').value = detalle.iva || '';
+        document.getElementById('detalle-impuestos-internos').value = detalle.impuestosInternos || '';
+        document.getElementById('detalle-percepcion-iibb').value = detalle.percepcionIIBB || '';
+        document.getElementById('detalle-percepcion-iva').value = detalle.percepcionIVA || '';
+        document.getElementById('detalle-otros-impuestos').value = detalle.otrosImpuestos || '';
+        document.getElementById('detalle-monto-facturar').value = detalle.montoFacturar || '';
+        document.getElementById('detalle-cantidad-km').value = detalle.cantidadKm || '';
+        document.getElementById('detalle-valor-km').value = detalle.valorKm || '';
 
-    adjuntosTemporales['modal'] = adjuntosTemporales[index] || [];
-    renderizarAdjuntosModal();
+        onCambioConceptoDetalle();
+        recalcularTotalFila();
 
-    openModal('modal-detalle-gasto');
+        // Adjuntos
+        adjuntosTemporales['modal'] = [];
+        if (detalle.adjuntos && detalle.adjuntos.length > 0) {
+            detalle.adjuntos.forEach(adj => {
+                adjuntosTemporales['modal'].push({ ...adj });
+            });
+        }
+        renderizarAdjuntosModal();
+        _fotoModalDetalleGasto = capturarFotoModalDetalleGasto();
+
+        openModal('modal-detalle-gasto');
+    } catch (error) {
+        console.error('[editarFilaGasto] Error crítico al intentar editar gasto:', error);
+        mostrarToast('Error al abrir el editor de gasto. Consola para detalles.', 'error');
+    }
 }
 
 async function onCambioConceptoDetalle() {
@@ -4242,38 +4500,51 @@ async function guardarDetalleGastoForm(e) {
     if (filaEditandoIndex >= 0 && filaEditandoIndex < detallesActuales.length) {
         if (idExistente) detalle.id = Number(idExistente);
         detalle.rendicionId = detallesActuales[filaEditandoIndex].rendicionId || (rendicionActual ? rendicionActual.id : null);
+        detalle.adjuntos = [...(adjuntosTemporales['modal'] || [])];
         detallesActuales[filaEditandoIndex] = detalle;
-        adjuntosTemporales[filaEditandoIndex] = adjuntosTemporales['modal'] || [];
     } else {
         detalle.rendicionId = rendicionActual ? rendicionActual.id : null;
+        detalle.adjuntos = [...(adjuntosTemporales['modal'] || [])];
         detallesActuales.push(detalle);
-        adjuntosTemporales[detallesActuales.length - 1] = adjuntosTemporales['modal'] || [];
     }
 
-    delete adjuntosTemporales['modal'];
     detallesModificados = true;
     document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
 
-    closeModalDetalleGasto();
+    closeModalDetalleGasto(true);
     renderizarDetalleGastos();
 }
 
-function closeModalDetalleGasto() {
+async function closeModalDetalleGasto(guardado = false) {
+    if (!guardado && modalDetalleGastoTieneCambios()) {
+        const confirmado = await mostrarConfirmacion(
+            'Salir sin guardar',
+            'Hay cambios sin guardar en este gasto. ¿Deseás salir y perderlos?',
+            'warning'
+        );
+        if (!confirmado) return;
+    }
+
     closeModal('modal-detalle-gasto');
-    delete adjuntosTemporales['modal'];
+    adjuntosTemporales['modal'] = [];
+    _fotoModalDetalleGasto = null;
 }
 
 function eliminarFilaGasto(index) {
     if (!confirm(`¿Eliminar el gasto #${index + 1}?`)) return;
     detallesActuales.splice(index, 1);
-    delete adjuntosTemporales[index];
+    adjuntosTemporales['modal'] = [];
     const newAdj = {};
-    Object.keys(adjuntosTemporales).forEach(k => {
+    for (const k in adjuntosTemporales) {
+        if (k === 'modal') continue;
         const ki = parseInt(k);
-        if (ki > index) newAdj[ki - 1] = adjuntosTemporales[k];
-        else if (ki < index) newAdj[ki] = adjuntosTemporales[k];
-    });
-    adjuntosTemporales = newAdj;
+        if (ki > index) {
+            newAdj[String(ki - 1)] = adjuntosTemporales[k];
+        } else if (ki < index) {
+            newAdj[k] = adjuntosTemporales[k];
+        }
+    }
+    adjuntosTemporales = { modal: [], ...newAdj };
     detallesModificados = true;
     document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
     renderizarDetalleGastos();
@@ -4285,7 +4556,7 @@ function duplicarFilaGasto(index) {
     const copia = { ...original };
     delete copia.id;
     detallesActuales.splice(index + 1, 0, copia);
-    adjuntosTemporales[index + 1] = [...(adjuntosTemporales[index] || [])].map(a => ({ ...a, id: undefined, detalleGastoId: undefined }));
+    adjuntosTemporales['modal'] = [];
     detallesModificados = true;
     document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
     renderizarDetalleGastos();
@@ -4294,9 +4565,9 @@ function duplicarFilaGasto(index) {
 function moverFilaArriba(index) {
     if (index <= 0) return;
     [detallesActuales[index], detallesActuales[index - 1]] = [detallesActuales[index - 1], detallesActuales[index]];
-    const tempAdj = adjuntosTemporales[index];
-    adjuntosTemporales[index] = adjuntosTemporales[index - 1];
-    adjuntosTemporales[index - 1] = tempAdj;
+    adjuntosTemporales['modal'] = [];
+    adjuntosTemporales['modal'] = [];
+    adjuntosTemporales['modal'] = [];
     detallesModificados = true;
     document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
     renderizarDetalleGastos();
@@ -4305,9 +4576,9 @@ function moverFilaArriba(index) {
 function moverFilaAbajo(index) {
     if (index >= detallesActuales.length - 1) return;
     [detallesActuales[index], detallesActuales[index + 1]] = [detallesActuales[index + 1], detallesActuales[index]];
-    const tempAdj = adjuntosTemporales[index];
-    adjuntosTemporales[index] = adjuntosTemporales[index + 1];
-    adjuntosTemporales[index + 1] = tempAdj;
+    adjuntosTemporales['modal'] = [];
+    adjuntosTemporales['modal'] = [];
+    adjuntosTemporales['modal'] = [];
     detallesModificados = true;
     document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
     renderizarDetalleGastos();
@@ -4318,16 +4589,15 @@ function agregarAdjuntoADetalle() {
     const files = fileInput.files;
     if (!files || files.length === 0) { mostrarToast('Seleccioná al menos un archivo.', 'warning'); return; }
 
-    if (!adjuntosTemporales['modal']) adjuntosTemporales['modal'] = [];
-
     for (const file of files) {
         const reader = new FileReader();
         reader.onload = function(e) {
-            adjuntosTemporales['modal'].push({
+            const adj = {
                 nombre: file.name,
                 archivo: e.target.result,
                 tipoArchivo: file.type
-            });
+            };
+            adjuntosTemporales['modal'].push(adj);
             renderizarAdjuntosModal();
         };
         reader.readAsDataURL(file);
@@ -4407,14 +4677,15 @@ function abrirArchivoAdjunto(nombre, archivoData) {
 }
 
 function eliminarAdjuntoModal(idx) {
-    if (adjuntosTemporales['modal']) {
+    if (adjuntosTemporales['modal'][idx]) {
         adjuntosTemporales['modal'].splice(idx, 1);
-        renderizarAdjuntosModal();
     }
+    renderizarAdjuntosModal();
 }
 
 function mostrarAdjuntosFila(index) {
-    const adjuntos = adjuntosTemporales[index] || [];
+    adjuntosTemporales['modal'] = [];
+    const adjuntos = detallesActuales[index]?.adjuntos || [];
     if (adjuntos.length === 0) { mostrarToast('Sin archivos adjuntos.', 'warning'); return; }
     let msg = 'Archivos adjuntos:\n\n';
     adjuntos.forEach((a, i) => {
@@ -4601,7 +4872,7 @@ async function imprimirRendicion() {
         .totals .value { font-size: 1.2rem; font-weight: bold; color: #ff4757; }
     </style></head><body>
     <h1>Rendición de Gastos ${rendicionActual.id ? '#'.concat(rendicionActual.id) : ''}</h1>
-    <p><strong>Competencia:</strong> ${comp ? escapeHtml(comp.nombre) : '-'} | <strong>Autódromo:</strong> ${circ ? escapeHtml(circ.nombre) : '-'} | <strong>Responsable:</strong> ${resp ? escapeHtml(resp.nombre + ' ' + resp.apellido) : '-'}</p>
+    <p><strong>Competencia:</strong> ${comp ? escapeHtml(comp.nombre) : '-'} | <strong>Autódromo:</strong> ${circ ? escapeHtml(circ.nombre) : '-'} | <strong>Responsable:</strong> ${resp ? escapeHtml(resp.nombre + ' ' + resp.apellido) : escapeHtml(datos.responsableNombre || '-')}</p>
     <p><strong>Fecha:</strong> ${escapeHtml(datos.fecha)} | <strong>Estado:</strong> ${escapeHtml(datos.estado)}</p>
     <p><strong>Observaciones:</strong> ${escapeHtml(datos.observaciones || '-')}</p>`;
 
@@ -4705,6 +4976,7 @@ async function cargarDatosVista(viewId) {
         case 'staff':        await listarStaff(); break;
         case 'estadisticas-personal': await listarEstadisticasPersonal(); break;
         case 'alojamiento':  await listarAlojamientos(); break;
+        case 'categorias-circuitos': await listarCategoriasCircuitos(); break;
         case 'configuracion':await listarConfiguraciones(); break;
     }
 }
@@ -7639,7 +7911,19 @@ function formatearInputMoneda(valor) {
 // Parsear un string formateado como moneda a número limpio
 function parsearMoneda(str) {
     if (!str) return 0;
-    const limpio = String(str).replace(/\./g, '').replace(/,/g, '.').replace(/[^0-9.-]/g, '');
+    let valor = String(str).trim().replace(/[^0-9,.-]/g, '');
+    const tieneComa = valor.includes(',');
+    const cantidadPuntos = (valor.match(/\./g) || []).length;
+
+    if (tieneComa) {
+        // Formato argentino: 1.234,56
+        valor = valor.replace(/\./g, '').replace(',', '.');
+    } else if (cantidadPuntos > 1) {
+        // Varios puntos representan separadores de miles: 1.234.567
+        valor = valor.replace(/\./g, '');
+    }
+
+    const limpio = valor.replace(/(?!^)-/g, '');
     return parseFloat(limpio) || 0;
 }
 
@@ -7749,7 +8033,7 @@ async function renderizarTablaPersonalCompetencia() {
                 <input type="number" class="personal-cantidad-input" data-index="${idx}" min="0" value="${cantidad}" style="width:70px;text-align:center;">
             </td>
             <td style="text-align:right;">
-                <input type="text" class="personal-bruto-input" data-index="${idx}" value="${formatearInputMoneda(bruto)}" style="width:130px;text-align:right;" placeholder="0,00">
+                <input type="text" class="personal-bruto-input" data-index="${idx}" value="${formatearInputMoneda(bruto)}" inputmode="decimal" autocomplete="off" style="width:150px;text-align:right;" placeholder="0,00">
             </td>
             <td style="text-align:right;color:var(--text-secondary);white-space:nowrap;" data-calc="aca" data-index="${idx}">${formatearMoneda(calc.participacionACA)}</td>
             <td style="text-align:right;color:var(--text-secondary);white-space:nowrap;" data-calc="sac" data-index="${idx}">${formatearMoneda(calc.sacMensualizado)}</td>
@@ -7767,6 +8051,7 @@ async function renderizarTablaPersonalCompetencia() {
 
     // Agregar eventos a los inputs
     document.querySelectorAll('.personal-bruto-input').forEach(input => {
+        input.addEventListener('focus', onPersonalBrutoFocus);
         input.addEventListener('input', onPersonalBrutoInput);
         input.addEventListener('blur', onPersonalBrutoBlur);
         input.addEventListener('keydown', onPersonalBrutoKeydown);
@@ -7777,21 +8062,28 @@ async function renderizarTablaPersonalCompetencia() {
     });
 }
 
-// Evento: formatear mientras escribe en el input de bruto
+// Evento: preparar el importe para editarlo sin separadores de miles.
+function onPersonalBrutoFocus(e) {
+    const raw = parsearMoneda(e.target.value);
+    e.target.value = raw > 0 ? String(raw).replace('.', ',') : '';
+    e.target.select();
+}
+
+// Evento: aceptar la escritura sin reformatear ni mover el cursor.
 function onPersonalBrutoInput(e) {
-    // Limpiar todo excepto dígitos y coma
-    let value = e.target.value;
-    if (value) {
-        // Remover puntos de miles, mantener solo dígitos y coma decimal
-        const soloNumeros = value.replace(/[^\d,]/g, '');
-        e.target.dataset.raw = parsearMoneda(soloNumeros);
-        // Formatear visualmente con puntos de miles y comas
-        e.target.value = formatearInputMoneda(parsearMoneda(soloNumeros));
+    // Permitir solo dígitos y un separador decimal, sin alterar la posición del cursor.
+    const valor = e.target.value.replace(/[^\d,.]/g, '');
+    const separador = valor.includes(',') ? ',' : (valor.includes('.') ? '.' : '');
+    if (separador) {
+        const partes = valor.split(separador);
+        e.target.value = partes[0] + separador + partes.slice(1).join('').slice(0, 2);
+    } else {
+        e.target.value = valor;
     }
     recalcularPersonalFila(e);
 }
 
-// Evento: al perder foco, mantener formato
+// Evento: al perder foco, mostrar el formato argentino de moneda.
 function onPersonalBrutoBlur(e) {
     const raw = parsearMoneda(e.target.value);
     e.target.value = raw > 0 ? formatearInputMoneda(raw) : '0,00';

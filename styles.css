@@ -117,10 +117,25 @@ aside {
     text-align: center;
 }
 
+.menu-parent .submenu-chevron {
+    width: auto;
+    margin-left: auto;
+    font-size: 0.75rem;
+    transition: transform 0.2s ease;
+}
+
+.menu-parent.expanded .submenu-chevron {
+    transform: rotate(180deg);
+}
+
 /* Submenu items */
 .submenu {
     padding-left: 2.5rem;
     margin-top: 0.25rem;
+}
+
+.submenu.collapsed {
+    display: none;
 }
 
 .submenu-item {
@@ -1966,13 +1981,15 @@ input[type="file"]:hover {
     table-layout: fixed;
 }
 
-/* Primera columna: protección contra desbordes de la tabla de Personal por Competencia */
+/* Los encabezados y roles deben poder leerse completos dentro del scroll horizontal. */
 .personal-comp-table th:first-child,
 .personal-comp-table td:first-child {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 200px;
+    width: 340px;
+    min-width: 340px !important;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: break-word;
 }
 
 .personal-comp-table th {
@@ -1982,7 +1999,11 @@ input[type="file"]:hover {
     font-weight: 600;
     color: var(--text-secondary);
     border-bottom: 1px solid var(--border-color);
-    white-space: nowrap;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: break-word;
+    vertical-align: middle;
 }
 
 .personal-comp-table td {
@@ -2040,11 +2061,17 @@ input[type="file"]:hover {
 }
 
 @media (max-width: 768px) {
+    .personal-comp-table th:first-child,
+    .personal-comp-table td:first-child {
+        width: 300px;
+        min-width: 300px !important;
+    }
+
     .personal-comp-table th,
     .personal-comp-table td {
         padding: 0.4rem 0.3rem;
         font-size: 0.75rem;
-        white-space: nowrap;
+        white-space: normal;
     }
     .personal-comp-table .personal-bruto-input {
         width: 90px !important;

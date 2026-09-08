@@ -1264,6 +1264,51 @@ async function obtenerNombresColeccionesLocales() {
     return Array.from(db.objectStoreNames);
 }
 
+// Descarga los registros que ya existen en Firestore y los incorpora a IndexedDB.
+// Se hace una unión por ID para no perder registros locales todavía no sincronizados.
+async function sincronizarFirebaseALocal(stores) {
+    if (!useFirebase || !dbFirebase || typeof getDocs !== 'function' || typeof collection !== 'function') return 0;
+
+    let total = 0;
+    for (const storeName of stores) {
+        try {
+            const snapNube = await getDocs(collection(dbFirebase, storeName));
+            if (snapNube.empty) continue;
+
+            invalidarCache(storeName);
+            const locales = await getTodos(storeName, { soloLocal: true });
+            const porId = new Map(locales.map(item => [String(item.id), item]));
+            const desdeNube = [];
+
+            snapNube.forEach(docSnap => {
+                const item = docSnap.data();
+                item.id = Number(docSnap.id) || docSnap.id;
+                porId.set(String(item.id), item);
+                desdeNube.push(item);
+            });
+
+            const db = await openDB();
+            const transaction = abrirTransaccionDefensiva(db, storeName, 'readwrite');
+            if (!transaction) continue;
+            const store = transaction.objectStore(storeName);
+            for (const item of desdeNube) store.put(item);
+
+            await new Promise((resolve, reject) => {
+                transaction.oncomplete = resolve;
+                transaction.onerror = () => reject(transaction.error);
+                transaction.onabort = () => reject(transaction.error || new Error('Transacción cancelada'));
+            });
+
+            _cache[storeName] = Array.from(porId.values());
+            total += desdeNube.length;
+            console.log(`Colección '${storeName}': ${desdeNube.length} registros descargados desde Firestore.`);
+        } catch (e) {
+            console.warn(`No se pudo descargar '${storeName}' desde Firestore:`, e);
+        }
+    }
+    return total;
+}
+
 // Sincronizar todos los datos locales (IndexedDB) a Firebase
 // Se ejecuta automáticamente cuando Firebase se conecta.
 // VERIFICACIÓN Y CREACIÓN DE COLECCIONES LOCALES -> NUBE:
@@ -1336,6 +1381,11 @@ async function sincronizarLocalAFirebase() {
     }
     console.log(`Sincronización local→Firebase completada: ${total} registros subidos.`);
     console.log('Detalle de sincronización:', detalle);
+
+    // Firestore puede contener datos cargados desde otro navegador. Incorporarlos
+    // también al almacenamiento local evita que Carga Detallada quede vacía.
+    const descargados = await sincronizarFirebaseALocal(stores);
+    console.log(`Sincronización Firebase→local completada: ${descargados} registros descargados.`);
 
     // RENDERIZADO ASÍNCRONO DE LA INTERFAZ:
     // Disparar evento para que la interfaz gráfica se recargue de inmediato
