@@ -4787,9 +4787,10 @@ async function obtenerNombreConcepto(id) {
 }
 
 function calcularTotalFila(detalle) {
-    // gastoKmDirecto: Gasto por Kilometraje Directo de la tarjeta de combustible;
-    // suma de forma independiente a favor del usuario en todos los totales.
-    return Number(detalle.basico || 0) + Number(detalle.gastoKmDirecto || 0) + Number(detalle.iva || 0) +
+    // REGLA ÚNICA: el total de la fila = Básico + IVA + impuestos, IDÉNTICO al campo
+    // TOTAL ($) del formulario. gastoKmDirecto se persiste solo como auditoría y NO suma
+    // (era el error conceptual: inflaba el total por encima del TOTAL cargado).
+    return Number(detalle.basico || 0) + Number(detalle.iva || 0) +
         Number(detalle.impuestosInternos || 0) + Number(detalle.percepcionIIBB || 0) +
         Number(detalle.percepcionIVA || 0) + Number(detalle.otrosImpuestos || 0);
 }
@@ -4915,6 +4916,7 @@ async function agregarFilaGasto() {
         document.getElementById('detalle-monto-facturar').value = '';
         setVisibilidadTarjetaKilometros(false);
         document.getElementById('detalle-total').textContent = '$0.00';
+        _totalFormularioActual = 0;
         document.getElementById('detalle-adjuntos-list').innerHTML = '';
 
         adjuntosTemporales['modal'] = [];
@@ -5007,6 +5009,10 @@ async function onCambioConceptoDetalle() {
     }
 }
 
+// TOTAL ($) vigente del formulario: FUENTE ÚNICA DE VERDAD para fila.total y el
+// Total General de la rendición. Lo mantiene recalcularTotalFila().
+let _totalFormularioActual = 0;
+
 function recalcularTotalFila() {
     const basico = Number(document.getElementById('detalle-basico').value) || 0;
     const ivaPorcentaje = Number(document.getElementById('detalle-iva-porcentaje').value) || 0;
@@ -5017,6 +5023,7 @@ function recalcularTotalFila() {
     const percIva = Number(document.getElementById('detalle-percepcion-iva').value) || 0;
     const otros = Number(document.getElementById('detalle-otros-impuestos').value) || 0;
     const total = basico + iva + impInt + iibb + percIva + otros;
+    _totalFormularioActual = Number(total.toFixed(2));
     document.getElementById('detalle-total').textContent = formatearMoneda(total);
 }
 
@@ -5050,26 +5057,28 @@ function calcularAjusteTopeCombustible(importeCargado, topeMaximo) {
 function _sincronizarFilaCombustibleActiva(info) {
     if (filaEditandoIndex < 0 || filaEditandoIndex >= detallesActuales.length) return;
     const fila = detallesActuales[filaEditandoIndex];
-    const ivaPorcentaje = Number(document.getElementById('detalle-iva-porcentaje').value) || 0;
-    // Caso B (importe <= tope u omisión): la fila conserva el importe REAL cargado por
-    // el usuario. El Tope Máximo NUNCA se usa como valor de la fila; solo se recorta
-    // el Básico cuando el importe ingresado supera el tope (Caso A).
-    if (info.ajustado) {
-        fila.basico = Number(info.gastoAPagar.toFixed(2));
-    } else {
-        fila.basico = Number(info.importeCargado.toFixed(2));
-    }
-    fila.ivaPorcentaje = ivaPorcentaje;
-    fila.iva = Number((fila.basico * ivaPorcentaje / 100).toFixed(2));
+    const num = id => Number(document.getElementById(id).value) || 0;
+    // REGLA ÚNICA: la fila ESPEJA EXACTAMENTE el formulario. Caso A (importe > tope):
+    // recalcularTarjetaCombustible ya recortó el Básico en el formulario antes de llegar
+    // acá; Caso B: los valores del usuario pasan intactos. El Tope NUNCA reemplaza,
+    // pisa ni promedia el gasto real del usuario.
+    fila.basico = num('detalle-basico');
+    fila.ivaPorcentaje = num('detalle-iva-porcentaje');
+    fila.iva = num('detalle-iva');
+    fila.impuestosInternos = num('detalle-impuestos-internos');
+    fila.percepcionIIBB = num('detalle-percepcion-iibb');
+    fila.percepcionIVA = num('detalle-percepcion-iva');
+    fila.otrosImpuestos = num('detalle-otros-impuestos');
     fila.kilometrosTotales = info.kmTotales;
     fila.valorKm = info.valorKm;
     fila.cilindrada = info.cilindrada || null;
     fila.precioPromedio = info.precioPromedio || null;
-    fila.gastoKmDirecto = info.gastoKmDirecto || 0;
-    fila.importeCargado = info.importeCargado;
+    fila.gastoKmDirecto = info.gastoKmDirecto || 0; // solo auditoría, NO suma al total
+    fila.importeCargado = fila.basico;
     fila.topeCalculado = info.topeCalculado;
     fila.excesoTope = info.excesoTope;
-    fila.total = calcularTotalFila(fila);
+    // El TOTAL ($) del formulario manda: valor EXACTO que ve el usuario (ej. $69.980,00).
+    fila.total = Number(_totalFormularioActual) || calcularTotalFila(fila);
     detallesModificados = true;
     const aviso = document.getElementById('cambios-sin-guardar');
     if (aviso) aviso.style.display = 'inline-flex';
@@ -5252,9 +5261,12 @@ async function guardarDetalleGastoForm(e) {
             : { gastoAPagar: importeCargado, excesoTope: 0, ajustado: false };
 
         if (ajuste.ajustado) {
-            // Recorte: el Básico queda fijado exactamente en el Tope Máximo de combustible.
+            // Recorte (Caso A): el Básico queda fijado exactamente en el Tope Máximo.
             detalle.basico = ajuste.gastoAPagar;
             detalle.iva = Number((ajuste.gastoAPagar * detalle.ivaPorcentaje / 100).toFixed(2));
+            // Reflejar el recorte en el formulario y recalcular el TOTAL ($) mostrado.
+            document.getElementById('detalle-basico').value = detalle.basico.toFixed(2);
+            document.getElementById('detalle-iva').value = detalle.iva.toFixed(2);
         }
 
         detalle.importeCargado = Number(Number(importeCargado || 0).toFixed(2));
@@ -5271,16 +5283,23 @@ async function guardarDetalleGastoForm(e) {
         detalle.topeCalculado = calc.topeMaximo;
         detalle.excesoTope = ajuste.excesoTope;
 
-        // El Gasto por Kilometraje Directo suma a favor del usuario vía calcularTotalFila().
+        // El Gasto por Kilometraje Directo queda REGISTRADO en la fila (auditoría),
+        // pero NO suma al total: el único valor que suma es el TOTAL ($) del formulario.
         if (calc.gastoKmDirecto > 0) {
-            mostrarToast(`Gasto por Kilometraje Directo: ${formatearMoneda(calc.gastoKmDirecto)} (${tarjetaComb.kmTotales} km × ${formatearMoneda(tarjetaComb.valorKm)}/km) sumado al total de la fila.`, 'success');
+            mostrarToast(`Gasto por Kilometraje Directo registrado: ${formatearMoneda(calc.gastoKmDirecto)} (${tarjetaComb.kmTotales} km × ${formatearMoneda(tarjetaComb.valorKm)}/km). No suma al total.`, 'success');
         }
         if (ajuste.ajustado) {
             mostrarToast(`Básico recortado al Tope Máximo de combustible (${formatearMoneda(calc.topeMaximo)}). Exceso de ${formatearMoneda(ajuste.excesoTope)} guardado como excesoTope, no suma al total.`, 'warning');
         }
     }
 
-    detalle.total = calcularTotalFila(detalle);
+    // ==================== PERSISTENCIA DEL TOTAL: EL TOTAL ($) DEL FORMULARIO MANDA ====================
+    // Se recalcula el TOTAL ($) del formulario (Básico + IVA + impuestos, exactamente el
+    // valor que ve el usuario, ej. $69.980,00) y ese ES el valor que se guarda en la fila,
+    // va a la tabla y suma al Total General de la rendición. El Tope Máximo del modal es
+    // solo un techo técnico (Caso A) y jamás reemplaza el total real.
+    recalcularTotalFila();
+    detalle.total = Number(_totalFormularioActual) || calcularTotalFila(detalle);
 
     const idExistente = document.getElementById('detalle-gasto-id').value;
 
