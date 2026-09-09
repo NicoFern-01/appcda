@@ -4409,7 +4409,12 @@ async function cargarSelectoresRendicion() {
         ).values());
         const conceptosOrdenados = conceptosUnicos.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
         conceptosOrdenados.forEach(c => selConc.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
+        // Red de seguridad: re-vincula el disparador de visibilidad (idempotente; cubre el caso
+        // de que el onchange inline se perdiera) y, como asignar .value programáticamente NO
+        // dispara el evento 'change', resincroniza la tarjeta con el valor restaurado.
+        selConc.addEventListener('change', onCambioConceptoDetalle);
         selConc.value = savedConc;
+        if (savedConc) onCambioConceptoDetalle();
     }
 
     const selProv = document.getElementById('detalle-proveedor');
@@ -4611,7 +4616,12 @@ function cancelarEdicionRendicion() {
 
 async function eliminarRendicion(id) {
     if (!puedeEditar()) return;
-    if (!confirm('¿Eliminar esta rendición y todos sus gastos asociados? Esta acción no se puede deshacer.')) return;
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar rendición',
+        '¿Eliminar esta rendición y todos sus gastos asociados? Esta acción no se puede deshacer.',
+        'warning'
+    );
+    if (!confirmado) return;
 
     try {
         const detalles = await getTodos('detalleGastos');
@@ -4690,55 +4700,69 @@ async function duplicarRendicion() {
     await duplicarRendicionId(rendicionActual.id);
 }
 
+// Token anti-carrera: renderizarDetalleGastos es async (await por fila) y ahora se
+// dispara en vivo desde la tarjeta de combustible. Si dos renders se solapan, cada
+// `await` puede entrelazar appends y DUPLICAR filas. Con el token, solo la
+// renderización MÁS RECIENTE puede escribir en la tabla.
+let _renderDetalleToken = 0;
+
 async function renderizarDetalleGastos() {
     const tbody = document.getElementById('detalle-gastos-body');
+    if (!tbody) return;
+    const token = ++_renderDetalleToken;
+    // 1) Limpieza TOTAL del cuerpo de la tabla antes de cualquier renderizado.
     tbody.innerHTML = '';
 
     if (detallesActuales.length === 0) {
+        if (token !== _renderDetalleToken) return;
         tbody.innerHTML = '<tr><td colspan="16" style="text-align:center;color:var(--text-secondary);padding:2rem;">No hay gastos cargados. Hacé clic en "Agregar Gasto" para comenzar.</td></tr>';
         recalcularTodosLosTotales();
         return;
     }
 
+    const filas = [];
     for (let index = 0; index < detallesActuales.length; index++) {
         const detalle = detallesActuales[index];
-        const tr = document.createElement('tr');
         const proveedor = await obtenerNombreProveedor(detalle.proveedorId);
         const concepto = await obtenerNombreConcepto(detalle.conceptoId);
+        if (token !== _renderDetalleToken) return; // render obsoleto: abortar sin escribir
         const total = calcularTotalFila(detalle);
         const cantAdj = (detalle.adjuntos && detalle.adjuntos.length) ? detalle.adjuntos.length : 0;
 
-        tr.innerHTML = `
-            <td style="font-weight:600;text-align:center;">${index + 1}</td>
-            <td>${escapeHtml(proveedor)}</td>
-            <td>${escapeHtml(detalle.tipoComprobante || '-')}</td>
-            <td>${escapeHtml(detalle.numeroComprobante || '-')}</td>
-            <td>${formatearFechaVisual(detalle.fecha)}</td>
-            <td>${escapeHtml(concepto)}</td>
-            <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(detalle.descripcion || '')}">${escapeHtml(detalle.descripcion || '-')}</td>
-            <td style="text-align:right;font-weight:500;">${formatearMoneda(Number(detalle.basico || 0))}</td>
-            <td style="text-align:right;">${formatearMoneda(Number(detalle.iva || 0))}</td>
-            <td style="text-align:right;">${formatearMoneda(Number(detalle.impuestosInternos || 0))}</td>
-            <td style="text-align:right;">${formatearMoneda(Number(detalle.percepcionIIBB || 0))}</td>
-            <td style="text-align:right;">${formatearMoneda(Number(detalle.percepcionIVA || 0))}</td>
-            <td style="text-align:right;">${formatearMoneda(Number(detalle.otrosImpuestos || 0))}</td>
-            <td style="text-align:right;color:var(--accent);font-weight:700;">${formatearMoneda(total)}</td>
-            <td style="text-align:center;">
-                ${cantAdj > 0 ? `<span style="color:var(--accent-green);cursor:pointer;" onclick="mostrarAdjuntosFila(${index})" title="${cantAdj} archivo(s)"><i class="fa-solid fa-paperclip"></i> ${cantAdj}</span>` : '<span style="color:var(--text-secondary);"><i class="fa-regular fa-paperclip"></i></span>'}
-            </td>
-            <td>
-                <div class="fila-acciones">
-                    <button class="action-btn" onclick="editarFilaGasto(${index})" title="Editar"><i class="fa-solid fa-pen"></i></button>
-                    <button class="action-btn" onclick="duplicarFilaGasto(${index})" title="Duplicar"><i class="fa-solid fa-copy"></i></button>
-                    <button class="action-btn" onclick="moverFilaArriba(${index})" title="Mover arriba"><i class="fa-solid fa-chevron-up"></i></button>
-                    <button class="action-btn" onclick="moverFilaAbajo(${index})" title="Mover abajo"><i class="fa-solid fa-chevron-down"></i></button>
-                    <button class="action-btn delete" onclick="eliminarFilaGasto(${index})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
-                </div>
-            </td>
-        `;
-        tbody.appendChild(tr);
+        filas.push(`
+            <tr>
+                <td style="font-weight:600;text-align:center;">${index + 1}</td>
+                <td>${escapeHtml(proveedor)}</td>
+                <td>${escapeHtml(detalle.tipoComprobante || '-')}</td>
+                <td>${escapeHtml(detalle.numeroComprobante || '-')}</td>
+                <td>${formatearFechaVisual(detalle.fecha)}</td>
+                <td>${escapeHtml(concepto)}${detalle.excesoTope > 0 ? ` <span title="Supera el tope de combustible por ${formatearMoneda(detalle.excesoTope)}" style="color:#ff9f43;font-size:0.85rem;cursor:help;"><i class="fa-solid fa-triangle-exclamation"></i></span>` : ''}</td>
+                <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(detalle.descripcion || '')}">${escapeHtml(detalle.descripcion || '-')}</td>
+                <td style="text-align:right;font-weight:500;">${formatearMoneda(Number(detalle.basico || 0))}</td>
+                <td style="text-align:right;">${formatearMoneda(Number(detalle.iva || 0))}</td>
+                <td style="text-align:right;">${formatearMoneda(Number(detalle.impuestosInternos || 0))}</td>
+                <td style="text-align:right;">${formatearMoneda(Number(detalle.percepcionIIBB || 0))}</td>
+                <td style="text-align:right;">${formatearMoneda(Number(detalle.percepcionIVA || 0))}</td>
+                <td style="text-align:right;">${formatearMoneda(Number(detalle.otrosImpuestos || 0))}</td>
+                <td style="text-align:right;color:var(--accent);font-weight:700;">${formatearMoneda(total)}</td>
+                <td style="text-align:center;">
+                    ${cantAdj > 0 ? `<span style="color:var(--accent-green);cursor:pointer;" onclick="mostrarAdjuntosFila(${index})" title="${cantAdj} archivo(s)"><i class="fa-solid fa-paperclip"></i> ${cantAdj}</span>` : '<span style="color:var(--text-secondary);"><i class="fa-regular fa-paperclip"></i></span>'}
+                </td>
+                <td>
+                    <div class="fila-acciones">
+                        <button class="action-btn" onclick="editarFilaGasto(${index})" title="Editar"><i class="fa-solid fa-pen"></i></button>
+                        <button class="action-btn" onclick="duplicarFilaGasto(${index})" title="Duplicar"><i class="fa-solid fa-copy"></i></button>
+                        <button class="action-btn" onclick="moverFilaArriba(${index})" title="Mover arriba"><i class="fa-solid fa-chevron-up"></i></button>
+                        <button class="action-btn" onclick="moverFilaAbajo(${index})" title="Mover abajo"><i class="fa-solid fa-chevron-down"></i></button>
+                        <button class="action-btn delete" onclick="eliminarFilaGasto(${index})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                </td>
+            </tr>`);
     }
 
+    // 2) Escritura ATÓMICA: un único innerHTML, nunca appends intercalados con awaits.
+    if (token !== _renderDetalleToken) return;
+    tbody.innerHTML = filas.join('');
     recalcularTodosLosTotales();
 }
 
@@ -4763,7 +4787,9 @@ async function obtenerNombreConcepto(id) {
 }
 
 function calcularTotalFila(detalle) {
-    return Number(detalle.basico || 0) + Number(detalle.iva || 0) +
+    // gastoKmDirecto: Gasto por Kilometraje Directo de la tarjeta de combustible;
+    // suma de forma independiente a favor del usuario en todos los totales.
+    return Number(detalle.basico || 0) + Number(detalle.gastoKmDirecto || 0) + Number(detalle.iva || 0) +
         Number(detalle.impuestosInternos || 0) + Number(detalle.percepcionIIBB || 0) +
         Number(detalle.percepcionIVA || 0) + Number(detalle.otrosImpuestos || 0);
 }
@@ -4791,13 +4817,48 @@ function recalcularTodosLosTotales() {
     document.getElementById('total-general').textContent = formatearMoneda(totalGeneral);
 }
 
+// ==================== TOPE DE COMBUSTIBLE: COEFICIENTES FIJOS ====================
+// Valores tomados de la plantilla de rendiciones (Control de Automovilismo).
+// TopeCalculado = Kilometros * CoeficienteFijo * PrecioLitro
+const COEFICIENTES_CILINDRADA = {
+    "1000-1300": 0.09,
+    "1400-1700": 0.10,
+    "1800-1900": 0.12,
+    "2000-mas": 0.14
+};
+
+// Normaliza texto: minúsculas y sin acentos (kilómetros -> kilometros).
+function _normalizarTexto(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
+// La tarjeta se muestra ÚNICAMENTE cuando el concepto es exactamente "Combustible"
+// (comparación normalizada: sin acentos ni mayúsculas). Cualquier otro concepto la oculta.
+function _esConceptoCombustible(nombre) {
+    return _normalizarTexto(nombre) === 'combustible';
+}
+
+// ==================== DISPARADOR DE VISIBILIDAD DE LA TARJETA ====================
+// Única fuente de verdad para mostrar/ocultar el contenedor físico de los 4 inputs
+// (#campos-kilometros; acepta #card-kilometros como alias). Null-safe: si algún
+// elemento no existe, no rompe el flujo del modal.
+function setVisibilidadTarjetaKilometros(visible) {
+    const tarjeta = document.getElementById('campos-kilometros') || document.getElementById('card-kilometros');
+    const alerta = document.getElementById('alerta-tope-combustible');
+    if (tarjeta) tarjeta.style.display = visible ? 'block' : 'none';
+    if (alerta && !visible) alerta.style.display = 'none';
+    return visible;
+}
+
 let filaEditandoIndex = -1;
 const _IDS_MODAL_DETALLE_GASTO = [
     'detalle-proveedor', 'detalle-tipo-comprobante', 'detalle-numero-comprobante',
     'detalle-fecha', 'detalle-concepto', 'detalle-descripcion', 'detalle-basico',
     'detalle-iva-porcentaje', 'detalle-iva', 'detalle-impuestos-internos',
     'detalle-percepcion-iibb', 'detalle-percepcion-iva', 'detalle-otros-impuestos',
-    'detalle-cantidad-km', 'detalle-valor-km', 'detalle-monto-facturar'
+    'detalle-cantidad-km', 'detalle-valor-km', 'detalle-monto-facturar',
+    'detalle-cilindrada', 'detalle-km-tramo-1', 'detalle-precio-litro-1',
+    'detalle-km-tramo-2', 'detalle-precio-litro-2'
 ];
 let _fotoModalDetalleGasto = null;
 
@@ -4845,8 +4906,14 @@ async function agregarFilaGasto() {
         document.getElementById('detalle-otros-impuestos').value = '';
         document.getElementById('detalle-cantidad-km').value = '';
         document.getElementById('detalle-valor-km').value = '';
+        document.getElementById('detalle-cilindrada').value = '';
+        document.getElementById('detalle-km-tramo-1').value = '';
+        document.getElementById('detalle-precio-litro-1').value = '';
+        document.getElementById('detalle-km-tramo-2').value = '';
+        document.getElementById('detalle-precio-litro-2').value = '';
+        document.getElementById('resumen-tarjeta-combustible').style.display = 'none';
         document.getElementById('detalle-monto-facturar').value = '';
-        document.getElementById('campos-kilometros').style.display = 'none';
+        setVisibilidadTarjetaKilometros(false);
         document.getElementById('detalle-total').textContent = '$0.00';
         document.getElementById('detalle-adjuntos-list').innerHTML = '';
 
@@ -4898,8 +4965,13 @@ async function editarFilaGasto(index) {
         document.getElementById('detalle-monto-facturar').value = detalle.montoFacturar || '';
         document.getElementById('detalle-cantidad-km').value = detalle.cantidadKm || '';
         document.getElementById('detalle-valor-km').value = detalle.valorKm || '';
+        document.getElementById('detalle-cilindrada').value = detalle.cilindrada || '';
+        document.getElementById('detalle-km-tramo-1').value = (detalle.kmTramo1 !== undefined && detalle.kmTramo1 !== null) ? detalle.kmTramo1 : (detalle.kilometrosTotales || detalle.cantidadKm || '');
+        document.getElementById('detalle-precio-litro-1').value = (detalle.precioLitro1 !== undefined && detalle.precioLitro1 !== null) ? detalle.precioLitro1 : (detalle.precioLitro || '');
+        document.getElementById('detalle-km-tramo-2').value = detalle.kmTramo2 || '';
+        document.getElementById('detalle-precio-litro-2').value = detalle.precioLitro2 || '';
 
-        onCambioConceptoDetalle();
+        await onCambioConceptoDetalle();
         recalcularTotalFila();
 
         // Adjuntos
@@ -4921,22 +4993,18 @@ async function editarFilaGasto(index) {
 
 async function onCambioConceptoDetalle() {
     const concId = document.getElementById('detalle-concepto').value;
-    if (!concId) { document.getElementById('campos-kilometros').style.display = 'none'; return; }
+    if (!concId) { setVisibilidadTarjetaKilometros(false); return; }
     try {
         const conc = await obtenerPorId('conceptos', Number(concId));
-        const esKm = conc && conc.nombre.toLowerCase() === 'kilómetros';
-        document.getElementById('campos-kilometros').style.display = esKm ? 'block' : 'none';
+        // SOLO el concepto exacto "Combustible" muestra la tarjeta; cualquier otro
+        // (ej. "Comidas" o "Kilometraje") la vuelve a ocultar.
+        const esKm = conc && _esConceptoCombustible(conc.nombre);
+        setVisibilidadTarjetaKilometros(esKm);
+        if (esKm) recalcularTarjetaCombustible();
     } catch(e) {
-        document.getElementById('campos-kilometros').style.display = 'none';
+        console.error('[onCambioConceptoDetalle] Error al evaluar el concepto:', e);
+        setVisibilidadTarjetaKilometros(false);
     }
-}
-
-function recalcularKilometros() {
-    const km = Number(document.getElementById('detalle-cantidad-km').value) || 0;
-    const valorKm = Number(document.getElementById('detalle-valor-km').value) || 0;
-    const basico = km * valorKm;
-    document.getElementById('detalle-basico').value = basico > 0 ? basico.toFixed(2) : '';
-    recalcularTotalFila();
 }
 
 function recalcularTotalFila() {
@@ -4950,6 +5018,191 @@ function recalcularTotalFila() {
     const otros = Number(document.getElementById('detalle-otros-impuestos').value) || 0;
     const total = basico + iva + impInt + iibb + percIva + otros;
     document.getElementById('detalle-total').textContent = formatearMoneda(total);
+}
+
+// ==================== VALIDACIÓN DE TOPE DE COMBUSTIBLE ====================
+// Estado temporal del cálculo del tope para la fila que se está editando en el modal.
+let _topeCombustibleActual = null;
+// NOTA: la referencia del importe cargado es SIEMPRE el valor del input "Básico ($)".
+// No existe importe original interno (el Math.max con _importeCargadoCombustible fue
+// eliminado por introducir referencias stale que violaban el Caso B).
+
+// ==================== LÓGICA DE AJUSTE AUTOMÁTICO POR TOPE (CASOS A/B) ====================
+// Caso A: ImporteCargado > TopeMaximo  ->  gasto a pagar = TopeMaximo; excesoTope = diferencia
+//         (se guarda solo para auditoría, NO suma al total de la rendición).
+// Caso B: ImporteCargado <= TopeMaximo ->  se respeta el ImporteCargado al 100%; excesoTope = 0.
+function calcularAjusteTopeCombustible(importeCargado, topeMaximo) {
+    importeCargado = Number(importeCargado) || 0;
+    topeMaximo = Number(topeMaximo) || 0;
+    if (topeMaximo <= 0 || importeCargado <= topeMaximo) {
+        return { gastoAPagar: importeCargado, excesoTope: 0, ajustado: false };
+    }
+    return {
+        gastoAPagar: Number(topeMaximo.toFixed(2)),
+        excesoTope: Number((importeCargado - topeMaximo).toFixed(2)),
+        ajustado: true
+    };
+}
+
+// Interacción en vivo: aplica el ajuste a la fila activa de la tabla y recalcula los
+// totales globales de la carga detallada en tiempo real
+// (renderizarDetalleGastos -> recalcularTodosLosTotales).
+function _sincronizarFilaCombustibleActiva(info) {
+    if (filaEditandoIndex < 0 || filaEditandoIndex >= detallesActuales.length) return;
+    const fila = detallesActuales[filaEditandoIndex];
+    const ivaPorcentaje = Number(document.getElementById('detalle-iva-porcentaje').value) || 0;
+    // Caso B (importe <= tope u omisión): la fila conserva el importe REAL cargado por
+    // el usuario. El Tope Máximo NUNCA se usa como valor de la fila; solo se recorta
+    // el Básico cuando el importe ingresado supera el tope (Caso A).
+    if (info.ajustado) {
+        fila.basico = Number(info.gastoAPagar.toFixed(2));
+    } else {
+        fila.basico = Number(info.importeCargado.toFixed(2));
+    }
+    fila.ivaPorcentaje = ivaPorcentaje;
+    fila.iva = Number((fila.basico * ivaPorcentaje / 100).toFixed(2));
+    fila.kilometrosTotales = info.kmTotales;
+    fila.valorKm = info.valorKm;
+    fila.cilindrada = info.cilindrada || null;
+    fila.precioPromedio = info.precioPromedio || null;
+    fila.gastoKmDirecto = info.gastoKmDirecto || 0;
+    fila.importeCargado = info.importeCargado;
+    fila.topeCalculado = info.topeCalculado;
+    fila.excesoTope = info.excesoTope;
+    fila.total = calcularTotalFila(fila);
+    detallesModificados = true;
+    const aviso = document.getElementById('cambios-sin-guardar');
+    if (aviso) aviso.style.display = 'inline-flex';
+    renderizarDetalleGastos();
+}
+
+// Listener del campo Importe (Básico): registra el importe cargado, muestra la
+// previsualización del ajuste sin pisar el valor mientras el usuario tipea, y
+// sincroniza la fila activa en vivo (evita que la tabla muestre un total desactualizado).
+function onInputImporteCargado() {
+    recalcularTotalFila();
+    recalcularTarjetaCombustible({ ajustarBasico: false, sincronizarFila: true });
+}
+
+// ==================== TARJETA COMBUSTIBLE: FÓRMULAS DEL EXCEL ====================
+// Lee los 7 campos de la tarjeta #campos-kilometros.
+function _leerTarjetaCombustible() {
+    const val = id => (document.getElementById(id) ? document.getElementById(id).value : '');
+    return {
+        kmTotales: Number(val('detalle-cantidad-km')) || 0,
+        valorKm: Number(val('detalle-valor-km')) || 0,
+        cilindrada: val('detalle-cilindrada'),
+        km1: Number(val('detalle-km-tramo-1')) || 0,
+        p1: Number(val('detalle-precio-litro-1')) || 0,
+        km2: Number(val('detalle-km-tramo-2')) || 0,
+        p2: Number(val('detalle-precio-litro-2')) || 0
+    };
+}
+
+// REGLA DE OMISIÓN: con la tarjeta completamente vacía, el Básico se toma al 100%,
+// sin recortes ni validaciones.
+function _tarjetaCombustibleVacia(t) {
+    return !t.kmTotales && !t.valorKm && !t.cilindrada && !t.km1 && !t.p1 && !t.km2 && !t.p2;
+}
+
+// Función pura con las fórmulas del Excel (testeable sin DOM):
+//   GastoKmDirecto = KmTotales * ValorKm                  (suma independiente al total)
+//   PrecioPromedio = ((Km1*P1)+(Km2*P2))/(Km1+Km2) si hay Tramo 2; si no, Precio1
+//   TopeMaximo     = KmTotales * Coeficiente * PrecioPromedio
+function calcularTopeCombustible(t) {
+    const coeficiente = COEFICIENTES_CILINDRADA[t.cilindrada] || 0;
+    const gastoKmDirecto = Number((t.kmTotales * t.valorKm).toFixed(2));
+    let precioPromedio = 0;
+    if (t.km1 > 0 && t.p1 > 0) {
+        precioPromedio = (t.km2 > 0 && t.p2 > 0)
+            ? ((t.km1 * t.p1) + (t.km2 * t.p2)) / (t.km1 + t.km2)
+            : t.p1;
+        precioPromedio = Number(precioPromedio.toFixed(2));
+    }
+    const topeMaximo = (t.kmTotales > 0 && coeficiente > 0 && precioPromedio > 0)
+        ? Number((t.kmTotales * coeficiente * precioPromedio).toFixed(2))
+        : null;
+    return { coeficiente, gastoKmDirecto, precioPromedio, topeMaximo };
+}
+
+// Orquestador en vivo: recalcula resumen + alerta ante cualquier cambio en la tarjeta,
+// aplica el recorte del Básico (Caso A) y sincroniza la fila activa de la tabla.
+// opciones.ajustarBasico: false = solo previsualizar (no pisa el input mientras se tipea).
+// opciones.sincronizarFila: false = no propagar a la tabla todavía.
+function recalcularTarjetaCombustible(opciones = {}) {
+    const { ajustarBasico = true, sincronizarFila = true } = opciones;
+    const resumen = document.getElementById('resumen-tarjeta-combustible');
+    const alerta = document.getElementById('alerta-tope-combustible');
+    if (!resumen || !alerta) return null;
+    _topeCombustibleActual = null;
+
+    const t = _leerTarjetaCombustible();
+
+    // REGLA DE OMISIÓN: tarjeta sin completar -> sin resumen, sin alerta, Básico al 100%.
+    if (_tarjetaCombustibleVacia(t)) {
+        resumen.style.display = 'none';
+        alerta.style.display = 'none';
+        return null;
+    }
+
+    const calc = calcularTopeCombustible(t);
+    const inputBasico = document.getElementById('detalle-basico');
+    // Referencia EXACTAMENTE el valor real del input "Básico ($)" cargado por el usuario.
+    // Math.max ELIMINADO (usaba una referencia stale del importe original y podía subir
+    // la fila al valor del tope). El Tope Máximo JAMÁS es valor por defecto: solo es un
+    // límite que recorta cuando el importe ingresado lo supera (Caso A).
+    const importeCargado = Number(inputBasico.value) || 0;
+
+    // El tope solo aplica si es computable; con datos faltantes rige la omisión (sin recorte).
+    const ajuste = calc.topeMaximo !== null
+        ? calcularAjusteTopeCombustible(importeCargado, calc.topeMaximo)
+        : { gastoAPagar: importeCargado, excesoTope: 0, ajustado: false };
+
+    // Caso A: fija el Básico exactamente en el Tope Máximo (no mientras el usuario tipea).
+    if (ajuste.ajustado && ajustarBasico) {
+        inputBasico.value = ajuste.gastoAPagar.toFixed(2);
+        recalcularTotalFila();
+    }
+
+    // Resumen en vivo.
+    document.getElementById('res-precio-promedio').textContent = formatearMoneda(calc.precioPromedio);
+    document.getElementById('res-gasto-km').textContent = formatearMoneda(calc.gastoKmDirecto);
+    document.getElementById('res-tope-combustible').textContent = calc.topeMaximo !== null ? formatearMoneda(calc.topeMaximo) : '—';
+    resumen.style.display = 'block';
+
+    if (calc.topeMaximo === null) {
+        alerta.style.background = 'rgba(0,0,0,0.2)';
+        alerta.style.borderColor = 'var(--accent)';
+        alerta.style.color = 'var(--text-secondary)';
+        alerta.innerHTML = `<i class="fa-solid fa-circle-info"></i> Faltan datos para el tope (Km totales + Cilindrada + Precio Litro 1). El Básico se toma al 100% (regla de omisión).`;
+    } else if (ajuste.ajustado) {
+        alerta.style.background = 'rgba(255,159,67,0.12)';
+        alerta.style.borderColor = '#ff9f43';
+        alerta.style.color = '#ff9f43';
+        alerta.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> <strong>Tope excedido:</strong> el Básico se recorta a ${formatearMoneda(ajuste.gastoAPagar)} (Tope Máximo = ${formatearMoneda(calc.topeMaximo)}). Exceso de <strong>${formatearMoneda(ajuste.excesoTope)}</strong> guardado como excesoTope (no suma al total).`;
+    } else {
+        alerta.style.background = 'rgba(46,213,115,0.12)';
+        alerta.style.borderColor = 'var(--accent-green)';
+        alerta.style.color = 'var(--accent-green)';
+        alerta.innerHTML = `<i class="fa-solid fa-circle-check"></i> Básico dentro del tope (${formatearMoneda(calc.topeMaximo)}): se respeta al 100%.`;
+    }
+    alerta.style.display = 'block';
+
+    _topeCombustibleActual = {
+        kmTotales: t.kmTotales,
+        valorKm: t.valorKm,
+        cilindrada: t.cilindrada,
+        coeficiente: calc.coeficiente,
+        precioPromedio: calc.precioPromedio,
+        gastoKmDirecto: calc.gastoKmDirecto,
+        topeCalculado: calc.topeMaximo,
+        importeCargado,
+        gastoAPagar: ajuste.gastoAPagar,
+        excesoTope: ajuste.excesoTope,
+        ajustado: ajuste.ajustado
+    };
+    if (sincronizarFila) _sincronizarFilaCombustibleActiva(_topeCombustibleActual);
+    return _topeCombustibleActual;
 }
 
 async function guardarDetalleGastoForm(e) {
@@ -4983,6 +5236,50 @@ async function guardarDetalleGastoForm(e) {
         montoFacturar: document.getElementById('detalle-monto-facturar').value ? Number(document.getElementById('detalle-monto-facturar').value) : null,
         total: 0
     };
+
+    // ==================== TOPE + GASTO KM DIRECTO (Fórmulas del Excel) ====================
+    const tarjetaComb = _leerTarjetaCombustible();
+    if (!_tarjetaCombustibleVacia(tarjetaComb)) {
+        const calc = calcularTopeCombustible(tarjetaComb);
+        // La referencia es EXACTAMENTE el valor del input "Básico ($)" que el usuario
+        // cargó. Sin Math.max ni máximos internos: el Tope Máximo solo es un límite que
+        // recorta cuando el importe ingresado lo supera (Caso A); si es menor o igual
+        // (Caso B), .basico conserva EXACTAMENTE el importe ingresado (ej. $45.980,00).
+        const importeCargado = Number(document.getElementById('detalle-basico').value) || 0;
+        // Sin tope computable (datos incompletos) rige la REGLA DE OMISIÓN: Básico al 100%.
+        const ajuste = calc.topeMaximo !== null
+            ? calcularAjusteTopeCombustible(importeCargado, calc.topeMaximo)
+            : { gastoAPagar: importeCargado, excesoTope: 0, ajustado: false };
+
+        if (ajuste.ajustado) {
+            // Recorte: el Básico queda fijado exactamente en el Tope Máximo de combustible.
+            detalle.basico = ajuste.gastoAPagar;
+            detalle.iva = Number((ajuste.gastoAPagar * detalle.ivaPorcentaje / 100).toFixed(2));
+        }
+
+        detalle.importeCargado = Number(Number(importeCargado || 0).toFixed(2));
+        detalle.kilometrosTotales = tarjetaComb.kmTotales;
+        detalle.valorKm = tarjetaComb.valorKm;
+        detalle.cilindrada = tarjetaComb.cilindrada || null;
+        detalle.coeficienteConsumo = calc.coeficiente || null;
+        detalle.precioPromedio = calc.precioPromedio || null;
+        detalle.kmTramo1 = tarjetaComb.km1;
+        detalle.precioLitro1 = tarjetaComb.p1;
+        detalle.kmTramo2 = tarjetaComb.km2;
+        detalle.precioLitro2 = tarjetaComb.p2;
+        detalle.gastoKmDirecto = calc.gastoKmDirecto;
+        detalle.topeCalculado = calc.topeMaximo;
+        detalle.excesoTope = ajuste.excesoTope;
+
+        // El Gasto por Kilometraje Directo suma a favor del usuario vía calcularTotalFila().
+        if (calc.gastoKmDirecto > 0) {
+            mostrarToast(`Gasto por Kilometraje Directo: ${formatearMoneda(calc.gastoKmDirecto)} (${tarjetaComb.kmTotales} km × ${formatearMoneda(tarjetaComb.valorKm)}/km) sumado al total de la fila.`, 'success');
+        }
+        if (ajuste.ajustado) {
+            mostrarToast(`Básico recortado al Tope Máximo de combustible (${formatearMoneda(calc.topeMaximo)}). Exceso de ${formatearMoneda(ajuste.excesoTope)} guardado como excesoTope, no suma al total.`, 'warning');
+        }
+    }
+
     detalle.total = calcularTotalFila(detalle);
 
     const idExistente = document.getElementById('detalle-gasto-id').value;
@@ -5020,8 +5317,13 @@ async function closeModalDetalleGasto(guardado = false) {
     _fotoModalDetalleGasto = null;
 }
 
-function eliminarFilaGasto(index) {
-    if (!confirm(`¿Eliminar el gasto #${index + 1}?`)) return;
+async function eliminarFilaGasto(index) {
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar gasto',
+        `¿Eliminar el gasto #${index + 1}?`,
+        'warning'
+    );
+    if (!confirmado) return;
     detallesActuales.splice(index, 1);
     adjuntosTemporales['modal'] = [];
     const newAdj = {};

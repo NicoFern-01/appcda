@@ -1235,7 +1235,7 @@
                 <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;">
                     <div class="form-group">
                         <label for="detalle-basico">Básico ($)</label>
-                        <input type="number" id="detalle-basico" step="0.01" min="0" oninput="recalcularTotalFila()">
+                        <input type="number" id="detalle-basico" step="0.01" min="0" oninput="onInputImporteCargado()">
                     </div>
                     <div class="form-group">
                         <label for="detalle-iva-porcentaje">IVA (%)</label>
@@ -1267,19 +1267,68 @@
                     <label for="detalle-monto-facturar">Monto a Facturar ($)</label>
                     <input type="number" id="detalle-monto-facturar" step="0.01" min="0">
                 </div>
-                <!-- Campos Kilómetros (ocultos por defecto) -->
+                <!-- Tarjeta Kilómetros y Tope de Combustible (solo concepto "Combustible") -->
                 <div id="campos-kilometros" style="display:none;border:1px solid var(--accent);border-radius:8px;padding:1rem;margin-top:0.5rem;background:rgba(255,71,87,0.05);">
-                    <div class="form-title" style="margin-bottom:0.5rem;font-size:1rem;"><i class="fa-solid fa-road"></i> Kilómetros</div>
+                    <div class="form-title" style="margin-bottom:0.5rem;font-size:1rem;"><i class="fa-solid fa-road"></i> Kilómetros y Tope de Combustible</div>
                     <div class="form-grid" style="grid-template-columns:1fr 1fr;">
                         <div class="form-group">
-                            <label for="detalle-cantidad-km">Cantidad de Kilómetros</label>
-                            <input type="number" id="detalle-cantidad-km" step="0.1" min="0" oninput="recalcularKilometros()">
+                            <label for="detalle-cantidad-km">Kilómetros Recorridos Totales</label>
+                            <input type="number" id="detalle-cantidad-km" step="0.1" min="0" placeholder="0" oninput="recalcularTarjetaCombustible()">
                         </div>
                         <div class="form-group">
                             <label for="detalle-valor-km">Valor por Kilómetro ($)</label>
-                            <input type="number" id="detalle-valor-km" step="0.01" min="0" oninput="recalcularKilometros()">
+                            <input type="number" id="detalle-valor-km" step="0.01" min="0" placeholder="0.00" oninput="recalcularTarjetaCombustible()">
+                        </div>
+                        <div class="form-group">
+                            <label for="detalle-cilindrada">Cilindrada</label>
+                            <select id="detalle-cilindrada" onchange="recalcularTarjetaCombustible()">
+                                <option value="">Seleccione cilindrada...</option>
+                                <option value="1000-1300">1000 - 1300 cc (0.09 L/km)</option>
+                                <option value="1400-1700">1400 - 1700 cc (0.10 L/km)</option>
+                                <option value="1800-1900">1800 - 1900 cc (0.12 L/km)</option>
+                                <option value="2000-mas">2000 cc o más (0.14 L/km)</option>
+                            </select>
                         </div>
                     </div>
+                    <div style="border:1px dashed var(--accent);border-radius:6px;padding:0.75rem;margin-top:0.75rem;background:rgba(0,0,0,0.2);">
+                        <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;color:var(--accent);"><i class="fa-solid fa-gas-pump"></i> Cargas de Combustible (Para Promedio Ponderado)</div>
+                        <div class="form-grid" style="grid-template-columns:1fr 1fr;">
+                            <div class="form-group">
+                                <label for="detalle-km-tramo-1">Kilómetros Tramo 1</label>
+                                <input type="number" id="detalle-km-tramo-1" step="0.1" min="0" placeholder="0" oninput="recalcularTarjetaCombustible()">
+                            </div>
+                            <div class="form-group">
+                                <label for="detalle-precio-litro-1">Precio Litro 1 ($)</label>
+                                <input type="number" id="detalle-precio-litro-1" step="0.01" min="0" placeholder="0.00" oninput="recalcularTarjetaCombustible()">
+                            </div>
+                            <div class="form-group">
+                                <label for="detalle-km-tramo-2">Kilómetros Tramo 2 (opcional)</label>
+                                <input type="number" id="detalle-km-tramo-2" step="0.1" min="0" placeholder="0" oninput="recalcularTarjetaCombustible()">
+                            </div>
+                            <div class="form-group">
+                                <label for="detalle-precio-litro-2">Precio Litro 2 ($, opcional)</label>
+                                <input type="number" id="detalle-precio-litro-2" step="0.01" min="0" placeholder="0.00" oninput="recalcularTarjetaCombustible()">
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Resumen en vivo (fórmulas del Excel) -->
+                    <div id="resumen-tarjeta-combustible" style="display:none;margin-top:0.75rem;">
+                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;text-align:center;">
+                            <div style="padding:0.5rem;border-radius:6px;background:rgba(0,0,0,0.25);border:1px solid var(--accent);">
+                                <div style="font-size:0.7rem;color:var(--text-secondary);">PRECIO PROMEDIO</div>
+                                <div id="res-precio-promedio" style="font-weight:700;color:var(--accent);">$0.00</div>
+                            </div>
+                            <div style="padding:0.5rem;border-radius:6px;background:rgba(0,0,0,0.25);border:1px solid var(--accent);">
+                                <div style="font-size:0.7rem;color:var(--text-secondary);">GASTO KM DIRECTO</div>
+                                <div id="res-gasto-km" style="font-weight:700;color:var(--accent);">$0.00</div>
+                            </div>
+                            <div style="padding:0.5rem;border-radius:6px;background:rgba(0,0,0,0.25);border:1px solid var(--accent);">
+                                <div style="font-size:0.7rem;color:var(--text-secondary);">TOPE MÁXIMO</div>
+                                <div id="res-tope-combustible" style="font-weight:700;color:var(--accent);">$0.00</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="alerta-tope-combustible" style="display:none;margin-top:0.75rem;padding:0.6rem 0.75rem;border-radius:6px;border:1px solid #ff9f43;background:rgba(255,159,67,0.12);color:#ff9f43;font-size:0.9rem;"></div>
                 </div>
                 <!-- Total de la fila -->
                 <div style="display:flex;justify-content:flex-end;margin-top:0.5rem;padding:0.75rem;background:var(--bg-secondary);border-radius:6px;">
