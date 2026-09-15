@@ -5840,6 +5840,7 @@ function normalizarUbicacionesArticuloV9(art, ubicaciones) {
 
     const filas = art.ubicaciones.map((fila, index) => {
         if (!fila) return null;
+
         const ubicacionOriginal = porId.get(Number(fila.ubicacionId));
         const nombreLegacy = fila.ubicacionNombre || fila.ubicacion || fila.sector;
         const ubicacionPorNombre = nombreLegacy
@@ -5848,7 +5849,9 @@ function normalizarUbicacionesArticuloV9(art, ubicaciones) {
         const ubicacion = ubicacionOriginal || ubicacionPorNombre || (art.sector
             ? porNombre.get(String(art.sector).trim().toLowerCase())
             : null) || deposito;
-        const cantidad = Number(fila.cantidad ?? fila.stock ?? fila.total ?? 0) || 0;
+
+        const cantidadRaw = Number(fila.cantidad ?? fila.stock ?? fila.total ?? 0);
+        const cantidad = Number.isFinite(cantidadRaw) ? Math.max(0, cantidadRaw) : 0;
         if (!ubicacion) return { ...fila, cantidad };
 
         const normalizada = {
@@ -5858,11 +5861,13 @@ function normalizarUbicacionesArticuloV9(art, ubicaciones) {
             talleId: fila.talleId ?? null,
             cantidad
         };
+
         if (Number(fila.ubicacionId) !== Number(normalizada.ubicacionId)
-            || Number(fila.cantidad ?? fila.stock ?? fila.total ?? 0) !== cantidad) {
+            || cantidadRaw !== Number(fila.cantidad ?? fila.stock ?? fila.total ?? 0)
+            || cantidad < 0) {
             reparada = true;
         }
-        return normalizada;
+        return cantidad > 0 ? normalizada : null;
     }).filter(Boolean);
 
     return { filas, reparada };
@@ -5878,7 +5883,7 @@ function construirDesgloseStockV9(art, articuloTalles, ubicaciones) {
     const mapa = new Map();
     for (const fila of normalizadas) {
         if (!fila) continue;
-        const cant = Number(fila.cantidad || 0);
+        const cant = Math.max(0, Number(fila.cantidad || 0));
         if (!cant) continue;
         const nombre = nombreDe(fila.ubicacionId) || 'Depósito Central';
         mapa.set(nombre, (mapa.get(nombre) || 0) + cant);
@@ -6214,9 +6219,23 @@ async function listarArticulos() {
         //               (Bodega + Camión + Carrera + ...): el activo sigue existiendo.
         const esBienUso = tipoBienEfectivoV9(art, categorias) === 'bien_uso';
         let total = 0, enBodega = null, enUsoV9 = 0;
+        const tallesArt = art.controlaTalles ? articuloTalles.filter(at => Number(at.articuloId) === Number(art.id)) : [];
         if (art.controlaTalles) {
-            const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
             total = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
+            const bodegaUbiV9 = (ubicaciones || []).find(u => String(u.nombre).trim().toLowerCase() === 'depósito central')
+                || (ubicaciones || []).find(u => String(u.nombre).trim().toLowerCase().includes('depósito'));
+            if (bodegaUbiV9 && Array.isArray(art.ubicaciones) && art.ubicaciones.length > 0) {
+                const sumaUbicaciones = art.ubicaciones.reduce((s, f) => s + Number(f.cantidad || 0), 0);
+                if (sumaUbicaciones !== total) {
+                    art.ubicaciones = tallesArt
+                        .filter(t => Number(t.stock || 0) > 0)
+                        .map(t => ({ id: Date.now() + Math.random(), ubicacionId: Number(bodegaUbiV9.id), talleId: Number(t.talleId), cantidad: Number(t.stock || 0) }));
+                    if (art.ubicaciones.length === 0) {
+                        art.ubicaciones = [{ id: Date.now(), ubicacionId: Number(bodegaUbiV9.id), talleId: null, cantidad: 0 }];
+                    }
+                    try { await guardar('articulos', art); } catch (eSync) { console.warn('listarArticulos: no se pudo sincronizar art.ubicaciones con artculoTalles:', eSync); }
+                }
+            }
         } else {
             total = Number(art.stockUnico || 0);
         }
@@ -7357,10 +7376,23 @@ async function exportarArticulosExcel() {
     mostrarToast('Artículos exportados.');
 }
 
+async function obtenerPersonaNombrePorIdV9(personaId) {
+    if (!personaId && personaId !== 0) return 'Sin persona';
+    try {
+        const staff = await getTodos('staff');
+        const persona = staff.find(p => Number(p.id) === Number(personaId));
+        if (!persona) return `ID: ${personaId}`;
+        return `${persona.nombre || ''} ${persona.apellido || ''}`.trim() || `ID: ${personaId}`;
+    } catch (e) {
+        return `ID: ${personaId}`;
+    }
+}
+
 async function listarMovimientosInventario() {
-    const [movimientos, articulos] = await Promise.all([
+    const [movimientos, articulos, staff] = await Promise.all([
         getTodos('movimientosInventario'),
-        getTodos('articulos')
+        getTodos('articulos'),
+        getTodos('staff')
     ]);
 
     const filtroTipo = document.getElementById('filtro-movimiento-tipo').value;
@@ -7410,6 +7442,8 @@ async function listarMovimientosInventario() {
     for (const mov of filtrados) {
         const art = articulos.find(a => Number(a.id) === Number(mov.articuloId));
         const artName = art ? art.nombre : 'ID: ' + mov.articuloId;
+        const pers = staff.find(s => Number(s.id) === Number(mov.personaId));
+        const personaLabel = mov.personaNombre || (pers ? `${pers.nombre} ${pers.apellido}` : (mov.personaId ? `ID: ${mov.personaId}` : 'Sin persona'));
         const c = categorizarMovimientoV9(mov);
 
         let talleText = '';
@@ -7422,12 +7456,15 @@ async function listarMovimientosInventario() {
         const item = document.createElement('div');
         item.className = `movement-item ${c.clase}`;
         const fecha = mov.fecha ? formatearFechaVisual(mov.fecha) : '-';
+        const observacionVisible = (mov.observaciones || '').trim();
+        const mostrarObservacion = !(observacionVisible.includes('Entrega #') || observacionVisible.includes('persona ID:') || observacionVisible.includes('persona:'));
         item.innerHTML = `
             <div class="mov-icon"><i class="fa-solid ${c.icono}"></i></div>
             <div class="mov-info">
                 <div class="mov-title">${escapeHtml(artName)}${talleText}</div>
                 <div class="mov-meta">${c.label} • ${escapeHtml(mov.motivo || '')} • ${fecha}</div>
-                ${mov.observaciones ? `<div class="mov-meta">📝 ${escapeHtml(mov.observaciones)}</div>` : ''}
+                <div class="mov-meta">👤 ${escapeHtml(personaLabel)}</div>
+                ${mostrarObservacion && mov.observaciones ? `<div class="mov-meta">📝 ${escapeHtml(mov.observaciones)}</div>` : ''}
                 ${mov.ubicacionOrigen || mov.ubicacionDestino ? `<div class="mov-meta">📍 ${escapeHtml([mov.ubicacionOrigen, mov.ubicacionDestino].filter(Boolean).join(' → '))}</div>` : ''}
             </div>
             <div class="mov-qty">${c.signo}${c.cantidad}</div>
@@ -8693,9 +8730,24 @@ async function onCambioArticuloEntrega(select) {
     }
     const art = await obtenerPorId('articulos', Number(artId));
     if (art && art.controlaTalles) {
-        const talles = await getTodos('talles');
-        talleSelect.innerHTML = '<option value="">Seleccione talle...</option>';
-        talles.forEach(t => talleSelect.innerHTML += `<option value="${t.id}">${t.nombre}</option>`);
+        const [talles, articuloTalles] = await Promise.all([
+            getTodos('talles'),
+            getTodos('articuloTalles')
+        ]);
+        const stockPorTalle = new Map();
+        articuloTalles
+            .filter(at => Number(at.articuloId) === Number(art.id))
+            .forEach(at => stockPorTalle.set(Number(at.talleId), Number(at.stock || 0)));
+
+        const tallesDisponibles = talles.filter(t => (stockPorTalle.get(Number(t.id)) || 0) > 0);
+        talleSelect.innerHTML = tallesDisponibles.length > 0
+            ? '<option value="">Seleccione talle...</option>'
+            : '<option value="">Sin stock disponible</option>';
+
+        tallesDisponibles.forEach(t => {
+            const stock = stockPorTalle.get(Number(t.id)) || 0;
+            talleSelect.innerHTML += `<option value="${t.id}">${t.nombre} (${stock})</option>`;
+        });
     } else {
         talleSelect.innerHTML = '<option value="">Sin talle</option>';
     }
@@ -8756,6 +8808,7 @@ async function guardarEntregaForm(e) {
     // PASADA 1 (validación): verificar stock suficiente en Depósito Central para TODAS las filas
     // antes de guardar el encabezado, evitando entregas parciales.
     const idOrigenEntrega = await resolverUbicacionV9('Depósito Central');
+    const articuloTalles = await getTodos('articuloTalles');
     for (const row of rows) {
         const artSelV = row.querySelector('.entrega-articulo-select');
         const talleSelV = row.querySelector('.entrega-talle-select');
@@ -8783,7 +8836,12 @@ async function guardarEntregaForm(e) {
                 }
             }
         }
-        const stockDispV = obtenerStockUbicacionV9(artV, talleIdV ? Number(talleIdV) : null, idOrigenEntrega);
+
+        let stockDispV = obtenerStockUbicacionV9(artV, talleIdV ? Number(talleIdV) : null, idOrigenEntrega);
+        if (artV.controlaTalles && stockDispV === 0) {
+            const stockPorTalle = articuloTalles.find(t => Number(t.articuloId) === Number(artV.id) && Number(t.talleId) === Number(talleIdV));
+            if (stockPorTalle) stockDispV = Number(stockPorTalle.stock || 0);
+        }
         if (cantidadV > stockDispV) {
             mostrarToast(`Stock insuficiente para "${artV.nombre}" en Depósito Central. Disponible: ${stockDispV}`, 'error');
             return;
@@ -8864,9 +8922,10 @@ async function guardarEntregaForm(e) {
         const motivoEntregaV9 = esAsignacionNominalV9
             ? `Asignación definitiva a ${receptorNominalV9}`
             : 'Entrega de indumentaria';
+        const personaNombreRealV9 = await obtenerPersonaNombrePorIdV9(Number(personaId));
         const observacionesEntregaV9 = esAsignacionNominalV9
             ? `Entrega #${entrega.id} — Baja por asignación definitiva a: ${receptorNominalV9}`
-            : `Entrega #${entrega.id} a persona ID: ${personaId}`;
+            : `Entrega #${entrega.id} a persona: ${personaNombreRealV9 || 'Sin persona'}`;
 
         await guardar('movimientosInventario', {
             articuloId: Number(articuloId),
