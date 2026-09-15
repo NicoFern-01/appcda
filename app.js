@@ -5829,18 +5829,58 @@ function categorizarMovimientoV9(mov) {
 // Agrega el array embebido articulo.ubicaciones[] por ubicación (sumando entre talles)
 // y devuelve [{ nombre, cantidad }] ordenado de mayor a menor. Devuelve [] si el artículo
 // aún no tiene datos migrados (legacy), en cuyo caso la UI muestra solo el total.
+function normalizarUbicacionesArticuloV9(art, ubicaciones) {
+    if (!art || !Array.isArray(art.ubicaciones) || art.ubicaciones.length === 0) return { filas: [], reparada: false };
+
+    const catalogo = Array.isArray(ubicaciones) ? ubicaciones : [];
+    const porId = new Map(catalogo.map(u => [Number(u.id), u]));
+    const porNombre = new Map(catalogo.map(u => [String(u.nombre || '').trim().toLowerCase(), u]));
+    const deposito = catalogo.find(u => String(u.nombre || '').trim().toLowerCase() === 'depósito central') || catalogo[0];
+    let reparada = false;
+
+    const filas = art.ubicaciones.map((fila, index) => {
+        if (!fila) return null;
+        const ubicacionOriginal = porId.get(Number(fila.ubicacionId));
+        const nombreLegacy = fila.ubicacionNombre || fila.ubicacion || fila.sector;
+        const ubicacionPorNombre = nombreLegacy
+            ? porNombre.get(String(nombreLegacy).trim().toLowerCase())
+            : null;
+        const ubicacion = ubicacionOriginal || ubicacionPorNombre || (art.sector
+            ? porNombre.get(String(art.sector).trim().toLowerCase())
+            : null) || deposito;
+        const cantidad = Number(fila.cantidad ?? fila.stock ?? fila.total ?? 0) || 0;
+        if (!ubicacion) return { ...fila, cantidad };
+
+        const normalizada = {
+            ...fila,
+            id: fila.id ?? (Date.now() + index),
+            ubicacionId: Number(ubicacion.id),
+            talleId: fila.talleId ?? null,
+            cantidad
+        };
+        if (Number(fila.ubicacionId) !== Number(normalizada.ubicacionId)
+            || Number(fila.cantidad ?? fila.stock ?? fila.total ?? 0) !== cantidad) {
+            reparada = true;
+        }
+        return normalizada;
+    }).filter(Boolean);
+
+    return { filas, reparada };
+}
+
 function construirDesgloseStockV9(art, articuloTalles, ubicaciones) {
     if (!art || !Array.isArray(art.ubicaciones) || art.ubicaciones.length === 0) return [];
+    const normalizadas = normalizarUbicacionesArticuloV9(art, ubicaciones).filas;
     const nombreDe = (idUbi) => {
         const u = (ubicaciones || []).find(x => Number(x.id) === Number(idUbi));
         return u ? u.nombre : null;
     };
     const mapa = new Map();
-    for (const fila of art.ubicaciones) {
+    for (const fila of normalizadas) {
         if (!fila) continue;
         const cant = Number(fila.cantidad || 0);
         if (!cant) continue;
-        const nombre = nombreDe(fila.ubicacionId) || `Ubicación ${fila.ubicacionId}`;
+        const nombre = nombreDe(fila.ubicacionId) || 'Depósito Central';
         mapa.set(nombre, (mapa.get(nombre) || 0) + cant);
     }
     return Array.from(mapa.entries())
@@ -5891,9 +5931,12 @@ function reconstruirUbicacionesDesdeMovimientosV9(art, movimientos, catalogo, id
                 if (!Number.isFinite(cant) || cant === 0) continue;
                 const talleId = m.talleId ? Number(m.talleId) : null;
                 // Normaliza tipos legacy (egreso/entrega/perdida/...) al vocabulario canónico.
-                const tipo = (typeof mapearTipoMovimientoV9 === 'function')
-                    ? String(mapearTipoMovimientoV9(m.tipoMovimiento, art.tipoBien || null) || '').toLowerCase()
-                    : String(m.tipoMovimiento || '').toLowerCase();
+                const tipoMapeado = (typeof mapearTipoMovimientoV9 === 'function')
+                    ? mapearTipoMovimientoV9(m.tipoMovimiento, art.tipoBien || null)
+                    : m.tipoMovimiento;
+                const tipo = String(tipoMapeado && typeof tipoMapeado === 'object'
+                    ? tipoMapeado.tipoMovimiento
+                    : tipoMapeado || '').toLowerCase();
                 if (tipo === 'ingreso' || tipo === 'devolucion') {
                     const dest = idDeNombre(String(m.ubicacionDestino || '').trim().toLowerCase()) || Number(idBodega);
                     add(dest, talleId, cant);
@@ -6197,19 +6240,55 @@ async function listarArticulos() {
                 } catch (eRepV9) { console.warn('No se pudo persistir la reparación de ubicaciones:', eRepV9); }
             }
         }
-        if (Array.isArray(art.ubicaciones) && art.ubicaciones.length > 0 && bodegaUbiV9) {
+        // Para Bienes de Uso, el historial de transferencias es la fuente de reparación
+        // cuando el array persistido conserva todo el stock en una sola ubicación.
+        if (esBienUso && !art.controlaTalles && bodegaUbiV9 && movimientosInventario.length > 0) {
+            const reconstruidasHistV9 = reconstruirUbicacionesDesdeMovimientosV9(
+                art, movimientosInventario, ubicaciones || [], Number(bodegaUbiV9.id)
+            );
+            const claveStockV9 = filas => (filas || [])
+                .reduce((mapa, fila) => {
+                    const clave = `${Number(fila.ubicacionId)}|${fila.talleId == null ? 'null' : Number(fila.talleId)}`;
+                    mapa.set(clave, (mapa.get(clave) || 0) + Number(fila.cantidad || 0));
+                    return mapa;
+                }, new Map());
+            const actualStockV9 = claveStockV9(art.ubicaciones);
+            const historicoStockV9 = claveStockV9(reconstruidasHistV9);
+            const stocksCoincidenV9 = actualStockV9.size === historicoStockV9.size
+                && [...historicoStockV9].every(([clave, cantidad]) => actualStockV9.get(clave) === cantidad);
+            if (reconstruidasHistV9 && !stocksCoincidenV9) {
+                art.ubicaciones = reconstruidasHistV9;
+                art.stockUnico = reconstruidasHistV9.reduce((s, fila) => s + Number(fila.cantidad || 0), 0);
+                try {
+                    await guardar('articulos', art);
+                } catch (eHistV9) {
+                    console.warn('No se pudo persistir la reconstrucción histórica:', eHistV9);
+                }
+            }
+        }
+        const normalizacionUbiV9 = normalizarUbicacionesArticuloV9(art, ubicaciones || []);
+        const filasUbicacionesV9 = normalizacionUbiV9.filas;
+        if (normalizacionUbiV9.reparada) {
+            art.ubicaciones = filasUbicacionesV9;
+            try {
+                await guardar('articulos', art);
+            } catch (eNormalizarV9) {
+                console.warn('No se pudo normalizar la ubicación del artículo:', eNormalizarV9);
+            }
+        }
+        if (filasUbicacionesV9.length > 0 && bodegaUbiV9) {
             const idBodegaV9 = Number(bodegaUbiV9.id);
             // "En Bodega" = estrictamente la(s) fila(s) cuya ubicacionId es la Bodega principal.
-            enBodega = art.ubicaciones.filter(f => Number(f.ubicacionId) === idBodegaV9).reduce((s, f) => s + Number(f.cantidad || 0), 0);
+            enBodega = filasUbicacionesV9.filter(f => Number(f.ubicacionId) === idBodegaV9).reduce((s, f) => s + Number(f.cantidad || 0), 0);
             // "En Uso" = sumatoria DIRECTA de TODAS las demás ubicaciones (Camión, Carrera, ...).
             // Nunca se deriva del total: se cuenta fila por fila.
-            enUsoV9 = art.ubicaciones.filter(f => Number(f.ubicacionId) !== idBodegaV9).reduce((s, f) => s + Number(f.cantidad || 0), 0);
+            enUsoV9 = filasUbicacionesV9.filter(f => Number(f.ubicacionId) !== idBodegaV9).reduce((s, f) => s + Number(f.cantidad || 0), 0);
         }
         // REGLA (Bien de Uso): el número principal del badge SIEMPRE es el reduce() absoluto de
         // TODAS las cantidades del array ubicaciones[] (Bodega + Camión + Carrera + ...). Nunca
         // el stock de una sola ubicación ni un stockUnico/articuloTalles desactualizado.
-        if (esBienUso && Array.isArray(art.ubicaciones) && art.ubicaciones.length > 0) {
-            total = art.ubicaciones.reduce((s, f) => s + Number(f.cantidad || 0), 0);
+        if (esBienUso && filasUbicacionesV9.length > 0) {
+            total = filasUbicacionesV9.reduce((s, f) => s + Number(f.cantidad || 0), 0);
         }
         const stock = esBienUso ? total : (enBodega != null ? enBodega : total);
 
@@ -6223,7 +6302,7 @@ async function listarArticulos() {
 
         // Celda de stock: desglose "¿dónde está físicamente?" a partir de art.ubicaciones[].
         // Bien de Uso → "Total: 10 (3 en Bodega / 7 en Uso)" con badges de estado.
-        const desgloseStock = construirDesgloseStockV9(art, articuloTalles, ubicaciones || []);
+        const desgloseStock = construirDesgloseStockV9({ ...art, ubicaciones: filasUbicacionesV9 }, articuloTalles, ubicaciones || []);
         let stockCellHtml;
         if (esBienUso && desgloseStock.length > 0) {
             // enUsoV9 ya fue calculado como sumatoria directa de las ubicaciones != Bodega.
@@ -6255,7 +6334,7 @@ async function listarArticulos() {
                 <button class="action-btn" onclick="editarArticulo(${art.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
                 <button class="action-btn" onclick="duplicarArticulo(${art.id})" title="Duplicar"><i class="fa-solid fa-copy"></i></button>
                 ${esAdmin() ? `<button class="action-btn" onclick="abrirAjusteStockAdmin(${art.id})" title="Ajustar Stock (solo Administrador)"><i class="fa-solid fa-sliders"></i></button>` : ''}
-                <button class="action-btn delete" onclick="eliminarArticulo(${art.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                ${esAdmin() ? `<button class="action-btn delete" onclick="eliminarArticulo(${art.id})" title="Eliminar (solo Administrador)"><i class="fa-solid fa-trash"></i></button>` : ''}
             </td>
         ` : `
             <td style="text-align:right;white-space:nowrap;">
@@ -6513,6 +6592,10 @@ async function cargarSelectoresArticulo() {
         getTodos('subcategoriasInventario'),
         getTodos('proveedores')
     ]);
+
+    // El catálogo de ubicaciones puede terminar de sembrarse después del DOMContentLoaded.
+    // Cargarlo aquí garantiza que el selector del modal siempre tenga sus opciones.
+    await actualizarSelectoresUbicaciones();
 
     const selCat = document.getElementById('articulo-categoria');
     // Escucha el evento 'change' para evaluar el tipo de bien y la visibilidad del sector
@@ -7154,13 +7237,24 @@ async function guardarAjusteStockAdmin() {
 }
 
 async function eliminarArticulo(id) {
-    if (!puedeEditar()) return;
+    // Solo Administradores pueden eliminar artículos (operación destructiva que
+    // además arrastra sus movimientos de stock asociados).
+    if (!esAdmin()) { mostrarToast('Solo un Administrador puede eliminar artículos.', 'error'); return; }
+
     const movimientos = await getTodos('movimientosInventario');
-    if (movimientos.some(m => Number(m.articuloId) === Number(id))) {
-        mostrarToast('No se puede eliminar un artículo con movimientos asociados.', 'error');
-        return;
+    const movsArt = movimientos.filter(m => Number(m.articuloId) === Number(id));
+
+    const extraMsg = movsArt.length > 0
+        ? `\n\nSe eliminarán también ${movsArt.length} movimiento(s) de stock asociados a este artículo.`
+        : '';
+    const confirmado = await mostrarConfirmacion('Eliminar Artículo',
+        `¿Eliminar este artículo permanentemente?${extraMsg}`);
+    if (!confirmado) return;
+
+    // Eliminar los movimientos de stock del artículo (por defecto, junto con el artículo).
+    for (const m of movsArt) {
+        await eliminar('movimientosInventario', Number(m.id));
     }
-    if (!(await mostrarConfirmacion('Eliminar Artículo', '¿Eliminar este artículo permanentemente?'))) return;
 
     const tallesArt = await getTodos('articuloTalles');
     for (const t of tallesArt.filter(t => Number(t.articuloId) === Number(id))) {
@@ -7174,8 +7268,12 @@ async function eliminarArticulo(id) {
     await eliminar('articulos', id);
     invalidarCache('articulos');
     invalidarCache('articuloTalles');
-    mostrarToast('Artículo eliminado.');
+    invalidarCache('movimientosInventario');
+    mostrarToast(movsArt.length > 0
+        ? `Artículo eliminado junto con ${movsArt.length} movimiento(s) de stock.`
+        : 'Artículo eliminado.');
     listarArticulos();
+    listarMovimientosInventario();
 }
 
 async function duplicarArticulo(id) {
@@ -7621,6 +7719,29 @@ async function guardarEdicionMovimientoInventario() {
         && (destinoNombreN || null) === (nombreDestinoOrigV9 || null)
         && (talleNuevoV9 || null) === (mov.talleId != null ? Number(mov.talleId) : null);
 
+    // Reparación defensiva de transferencias antiguas: el movimiento puede tener los
+    // snapshots correctos aunque la mutación física no se haya aplicado al artículo.
+    if (mismoStock && tipoNuevoV9 === 'transferencia_interna' && idOrigenN && idDestinoN) {
+        const talleRepararV9 = talleNuevoV9;
+        const origenActualV9 = obtenerStockUbicacionV9(art, talleRepararV9, idOrigenN);
+        const destinoActualV9 = obtenerStockUbicacionV9(art, talleRepararV9, idDestinoN);
+        const cantidadRepararV9 = Math.abs(cantNuevaV9);
+        if (destinoActualV9 === 0 && origenActualV9 >= cantidadRepararV9) {
+            try {
+                await ajustarStockV9(Number(mov.articuloId), talleRepararV9, {
+                    tipoMovimiento: 'transferencia_interna',
+                    cantidad: cantidadRepararV9,
+                    ubicacionOrigenId: idOrigenN,
+                    ubicacionDestinoId: idDestinoN
+                });
+                mostrarToast('Se corrigió la ubicación física del artículo.', 'success');
+            } catch (eRepararV9) {
+                mostrarToast(`No se pudo corregir la ubicación: ${eRepararV9.message}`, 'error');
+                return;
+            }
+        }
+    }
+
     if (!mismoStock) {
         // SIMULACIÓN ATÓMICA sobre el baseline del artículo (consistente con el backfill de
         // ajustarStockV9: art.sector || 'Depósito Central' si aún no tiene ubicaciones[]).
@@ -7936,7 +8057,19 @@ async function guardarMovimientoForm(e) {
     }
 
     // 2) Resolver ubicaciones de origen/destino por nombre (crea el catálogo si faltan).
-    const origenNombre = sectorUbicacion || 'Depósito Central';
+    // Las transferencias parten del Depósito Central cuando ambos selectores quedaron
+    // con la misma ubicación, evitando registrar movimientos Camión -> Camión.
+    let origenNombre = sectorUbicacion || 'Depósito Central';
+    if (esTransferencia && origenNombre.trim().toLowerCase() === String(sectorDestino).trim().toLowerCase()
+        && String(sectorDestino).trim().toLowerCase() !== 'depósito central') {
+        origenNombre = 'Depósito Central';
+        const selectorOrigen = document.getElementById('movimiento-sector-ubicacion');
+        if (selectorOrigen) selectorOrigen.value = origenNombre;
+    }
+    if (esTransferencia && origenNombre.trim().toLowerCase() === String(sectorDestino).trim().toLowerCase()) {
+        mostrarToast('La ubicación de origen y destino deben ser diferentes.', 'error');
+        return;
+    }
     const idOrigen = await resolverUbicacionV9(origenNombre);
     let idDestino = null;
     if (esTransferencia || canon.esIngreso) {
@@ -7974,12 +8107,28 @@ async function guardarMovimientoForm(e) {
     } else {
         // Comportamiento canónico (sin anulación del Admin).
         try {
+            const talleVerificado = talleId ? Number(talleId) : null;
+            const origenAntes = obtenerStockUbicacionV9(art, talleVerificado, idOrigen);
+            const destinoAntes = obtenerStockUbicacionV9(art, talleVerificado, idDestino);
             await ajustarStockV9(Number(articuloId), talleId ? Number(talleId) : null, {
                 tipoMovimiento: canon.tipoMovimiento,
                 cantidad,
                 ubicacionOrigenId: idOrigen,
                 ubicacionDestinoId: idDestino
             });
+            if (esTransferencia) {
+                const artVerificado = await obtenerPorId('articulos', Number(articuloId));
+                const origenDespues = obtenerStockUbicacionV9(artVerificado, talleVerificado, idOrigen);
+                const destinoDespues = obtenerStockUbicacionV9(artVerificado, talleVerificado, idDestino);
+                if (origenDespues !== origenAntes - cantidad || destinoDespues !== destinoAntes + cantidad) {
+                    await ajustarStockV9(Number(articuloId), talleVerificado, {
+                        tipoMovimiento: 'transferencia_interna',
+                        cantidad,
+                        ubicacionOrigenId: idOrigen,
+                        ubicacionDestinoId: idDestino
+                    });
+                }
+            }
         } catch (e) {
             mostrarToast(e.message || 'Error al ajustar el stock.', 'error');
             return;
@@ -8041,10 +8190,72 @@ async function guardarMovimientoForm(e) {
     if (activeView) {
         const viewId = activeView.id.replace('view-', '');
         if (viewId === 'movimientos-inventario') listarMovimientosInventario();
+        if (viewId === 'articulos') listarArticulos();
+    }
+}
+
+function claveCatalogoInventario(nombre) {
+    return String(nombre || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').toLowerCase();
+}
+
+// Consolida registros duplicados creados por importaciones o sincronizaciones antiguas.
+// Conserva el primer registro (el catálogo original) y repara sus referencias antes de
+// eliminar los duplicados, para que los artículos no queden apuntando a IDs inexistentes.
+async function consolidarCatalogosInventario() {
+    const [categorias, talles, subcategorias, articulos, articuloTalles] = await Promise.all([
+        getTodos('categoriasInventario'),
+        getTodos('talles'),
+        getTodos('subcategoriasInventario'),
+        getTodos('articulos'),
+        getTodos('articuloTalles')
+    ]);
+
+    const consolidar = async (registros, storeName, actualizarReferencias) => {
+        const canonicos = new Map();
+        const duplicados = [];
+        for (const registro of registros || []) {
+            const clave = claveCatalogoInventario(registro.nombre);
+            if (!clave) continue;
+            if (!canonicos.has(clave)) canonicos.set(clave, registro);
+            else duplicados.push({ duplicado: registro, canonico: canonicos.get(clave) });
+        }
+        if (duplicados.length === 0) return false;
+
+        for (const { duplicado, canonico } of duplicados) {
+            await actualizarReferencias(duplicado, canonico);
+            await eliminar(storeName, Number(duplicado.id));
+        }
+        invalidarCache(storeName);
+        return true;
+    };
+
+    let cambio = false;
+    cambio = await consolidar(categorias, 'categoriasInventario', async (duplicada, canonica) => {
+        for (const articulo of articulos.filter(a => Number(a.categoriaId) === Number(duplicada.id))) {
+            articulo.categoriaId = Number(canonica.id);
+            await guardar('articulos', articulo);
+        }
+        for (const subcategoria of subcategorias.filter(s => Number(s.categoriaId) === Number(duplicada.id))) {
+            subcategoria.categoriaId = Number(canonica.id);
+            await guardar('subcategoriasInventario', subcategoria);
+        }
+    }) || cambio;
+
+    cambio = await consolidar(talles, 'talles', async (duplicado, canonico) => {
+        for (const fila of articuloTalles.filter(t => Number(t.talleId) === Number(duplicado.id))) {
+            fila.talleId = Number(canonico.id);
+            await guardar('articuloTalles', fila);
+        }
+    }) || cambio;
+
+    if (cambio) {
+        ['categoriasInventario', 'talles', 'subcategoriasInventario', 'articulos', 'articuloTalles']
+            .forEach(invalidarCache);
     }
 }
 
 async function listarCategoriasInventario() {
+    await consolidarCatalogosInventario();
     const [categorias, subcategorias, talles] = await Promise.all([
         getTodos('categoriasInventario'),
         getTodos('subcategoriasInventario'),
@@ -8148,6 +8359,15 @@ async function guardarCategoriaInventarioForm(e) {
         controlaTalles: document.getElementById('categoria-inv-controla-talles').value === 'true',
         activo: document.getElementById('categoria-inv-activo').value === 'true'
     };
+    const categoriasExistentes = await getTodos('categoriasInventario');
+    const categoriaDuplicada = categoriasExistentes.find(c =>
+        claveCatalogoInventario(c.nombre) === claveCatalogoInventario(cat.nombre)
+        && String(c.id) !== String(id)
+    );
+    if (categoriaDuplicada) {
+        mostrarToast('Ya existe una categoría con ese nombre.', 'error');
+        return;
+    }
     if (id) cat.id = Number(id);
     await guardar('categoriasInventario', cat);
     invalidarCache('categoriasInventario');
@@ -8252,6 +8472,15 @@ async function guardarTalleForm(e) {
         descripcion: document.getElementById('talle-descripcion').value.trim()
     };
     if (!talle.nombre) { mostrarToast('El nombre del talle es obligatorio.', 'error'); return; }
+    const tallesExistentes = await getTodos('talles');
+    const talleDuplicado = tallesExistentes.find(t =>
+        claveCatalogoInventario(t.nombre) === claveCatalogoInventario(talle.nombre)
+        && String(t.id) !== String(id)
+    );
+    if (talleDuplicado) {
+        mostrarToast('Ya existe un talle con ese nombre.', 'error');
+        return;
+    }
     if (id) talle.id = Number(id);
     await guardar('talles', talle);
     invalidarCache('talles');
