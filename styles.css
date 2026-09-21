@@ -195,6 +195,213 @@ header {
 .view.active {
     display: block;
 }
+/* ==================== CALENDARIO ANUAL (Google Sheets) ==================== */
+#calendario-anual-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    padding: 0.25rem 0 1.5rem;
+}
+
+.mes-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 1rem;
+    transition: border-color .2s ease, transform .2s ease;
+}
+
+.mes-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+}
+
+.mes-card h3 {
+    margin: 0 0 0.75rem;
+    font-size: 1.05rem;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.mes-semanas {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+}
+
+.cal-sem {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.5rem 0.6rem;
+}
+
+.cal-sem-header {
+    font-size: 0.78rem;
+    color: var(--accent-blue);
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+}
+
+.cal-sem .cal-badge {
+    background: rgba(255, 71, 87, 0.15);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    padding: 0.2rem 0.5rem;
+    margin-bottom: 0.35rem;
+    line-height: 1.3;
+}
+
+.cal-sem .cal-badge .cal-categoria {
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.cal-sem .cal-badge .cal-lugar {
+    color: var(--text-secondary);
+}
+
+.calendario-vacio {
+    grid-column: 1 / -1;
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 2rem;
+    font-size: 0.95rem;
+}
+
+@media (max-width: 900px) {
+    #calendario-anual-grid {
+        grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    }
+}
+
+/* ==================== CALENDARIO ANUAL: PORTADA INTERACTIVA (Etapa 3) ==================== */
+#view-calendario header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.btn-circle {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    color: var(--accent);
+    cursor: pointer;
+    transition: all .2s ease;
+}
+
+.btn-circle:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(255, 71, 87, 0.12);
+}
+
+.btn-circle:disabled {
+    opacity: .6;
+    cursor: default;
+}
+
+/* --- Leyenda / filtro de categorías --- */
+.calendario-leyenda {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.cal-leyenda-titulo {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.cal-leyenda-item {
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    padding: 0.25rem 0.65rem;
+    border-radius: 999px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    transition: all .2s ease;
+}
+
+.cal-leyenda-item:hover {
+    border-color: var(--border-hover);
+}
+
+.cal-leyenda-item.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+    background: rgba(255, 71, 87, 0.12);
+}
+
+.cal-leyenda-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+/* --- Filtro dinámico: opacar / resaltar semanas o badges según categoría --- */
+.cal-sem-dim {
+    opacity: 0.25;
+    filter: saturate(0.3);
+}
+
+.cal-sem-destacada {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent), 0 4px 12px rgba(255, 71, 87, 0.28);
+}
+
+.cal-badge-dim {
+    opacity: 0.18;
+}
+
+/* --- Estados por fecha (pasado = rojo oscuro, futuro/presente = verde esmeralda) --- */
+.cal-sem.fecha-pasada {
+    border-color: rgba(220, 38, 38, 0.55);
+    box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.4), 0 5px 14px rgba(180, 30, 30, 0.22);
+    background: linear-gradient(180deg, var(--bg-card), rgba(64, 18, 24, 0.55));
+}
+
+.cal-sem.fecha-pasada .cal-badge {
+    border-left-color: rgba(220, 38, 38, 0.7);
+    background: rgba(220, 38, 38, 0.12);
+}
+
+.cal-sem.fecha-futura {
+    border-color: rgba(46, 213, 115, 0.55);
+    box-shadow: 0 0 0 1px rgba(46, 213, 115, 0.4), 0 5px 14px rgba(46, 213, 115, 0.22);
+    background: linear-gradient(180deg, var(--bg-card), rgba(20, 46, 32, 0.5));
+}
+
+.cal-sem.fecha-futura .cal-badge {
+    border-left-color: rgba(46, 213, 115, 0.7);
+    background: rgba(46, 213, 115, 0.12);
+}
+
+/* --- Toast informativo (refresco) --- */
+.toast-info {
+    background-color: rgba(0, 210, 211, 0.18);
+    border-color: rgba(0, 210, 211, 0.4);
+}
 
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }

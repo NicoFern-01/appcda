@@ -108,7 +108,7 @@
                             <i class="fa-solid fa-dollar-sign"></i>
                         </div>
                     </div>
-                    <div class="stat-card dashboard-link-card" role="link" tabindex="0" onclick="navegarDesdeDashboard('calendario')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('calendario')" title="Ir al Calendario de Competencias">
+                    <div class="stat-card dashboard-link-card" role="link" tabindex="0" onclick="navegarDesdeDashboard('competencias')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('competencias')" title="Ir al Calendario de Competencias">
                         <div class="stat-info">
                             <h3>Competencias</h3>
                             <p id="stat-competencias-count">0</p>
@@ -159,8 +159,21 @@
                 </div>
             </section>
 
-            <!-- VIEW: CALENDARIO -->
+            <!-- VIEW: CALENDARIO (Google Sheets) -->
             <section id="view-calendario" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Calendario de Categorías</h1>
+                        <p class="page-subtitle">Almanaque anual cargado desde Google Sheets</p>
+                    </div>
+                    <button type="button" class="btn btn-circle" id="btn-refrescar-calendario" onclick="refrescarCalendario()" title="Actualizar calendario desde Google Sheets" aria-label="Actualizar calendario"><i class="fa-solid fa-arrows-rotate"></i></button>
+                </header>
+                <div id="calendario-leyenda" class="calendario-leyenda"></div>
+                <div id="calendario-anual-grid"></div>
+            </section>
+
+            <!-- VIEW: COMPETENCIAS -->
+            <section id="view-competencias" class="view">
                 <header>
                     <div>
                         <h1 class="page-title">Calendario de Competencias</h1>
@@ -1018,6 +1031,26 @@
                             <i class="fa-solid fa-upload"></i> Importar Datos (JSON)
                         </label>
                         <input type="file" id="import-file" style="display: none;" accept=".json" onchange="importarDatos(event)">
+                    </div>
+                </div>
+
+                <!-- Módulo Calendario: enlace CSV de Google Sheets -->
+                <div class="form-card admin-only" style="margin-bottom: 2rem;">
+                    <h3 class="form-title" style="display: flex; align-items: center; gap: 8px;">
+                        <i class="fa-solid fa-calendar-days" style="color: var(--accent);"></i> Calendario (Google Sheets)
+                    </h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.95rem;">
+                        Configurá el enlace de descarga CSV de la planilla de Google Sheets que alimenta el módulo Calendario.
+                    </p>
+                    <div class="form-grid" style="grid-template-columns: 1fr;">
+                        <div class="form-group full-width">
+                            <label for="config-url-sheets">Enlace CSV de Google Sheets</label>
+                            <input type="url" id="config-url-sheets" placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv" style="background: rgba(0,0,0,0.2); color: #fff; padding: 10px; border-radius: 4px; border: 1px solid var(--border); width: 100%; box-sizing: border-box;">
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1.5rem; align-items: center;">
+                        <button class="btn" onclick="guardarConfiguracion()"><i class="fa-solid fa-floppy-disk"></i> Guardar Configuración</button>
+                        <span id="config-sheets-save-msg" style="color: var(--text-secondary); font-size: 0.9rem;"></span>
                     </div>
                 </div>
 

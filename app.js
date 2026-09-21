@@ -19,7 +19,7 @@ let chartConceptoInstance = null;
 // Flag para evitar re-renderizar el dashboard si no cambiaron los datos
 let dashboardDirty = true;
 
-const views = ['dashboard', 'calendario', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal', 'alojamiento', 'categorias-circuitos', 'configuracion'];
+const views = ['dashboard', 'calendario', 'competencias', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal', 'alojamiento', 'categorias-circuitos', 'configuracion'];
 
 // ==================== RENDERIZADO ASÍNCRONO DE LA INTERFAZ ====================
 // Escucha el evento disparado por db.js cuando la sincronización con Firestore
@@ -654,6 +654,7 @@ function _ejecutarSwitchView(viewId) {
 
     views.forEach(v => {
         const viewEl = document.getElementById(`view-${v}`);
+        if (!viewEl) return; // vista sin sección en el HTML todavía (ej: calendario en primer paso)
         viewEl.classList.toggle('active', v === viewId);
     });
 
@@ -2690,6 +2691,361 @@ async function listarConfiguraciones() {
 
     if (esAdmin()) {
         await listarUsuarios();
+    }
+
+    await precargarEnlaceSheets();
+}
+
+// ==================== CONFIGURACIÓN GLOBAL DE LA APP (módulo Calendario) ====================
+// 'configuracionGlobal' es un único documento (id fijo 1) en IndexedDB/Firestore donde se
+// persisten ajustes globales de la aplicación (ej: enlace CSV de Google Sheets).
+
+async function cargarConfiguracionGlobal() {
+    try {
+        const todos = await getTodos('configuracionGlobal');
+        return (todos || []).find(c => Number(c.id) === 1) || {};
+    } catch (e) {
+        console.warn('No se pudo leer la configuración global:', e);
+        return {};
+    }
+}
+
+async function precargarEnlaceSheets() {
+    const input = document.getElementById('config-url-sheets');
+    if (!input) return;
+    const cfg = await cargarConfiguracionGlobal();
+    input.value = cfg.urlGoogleSheets || '';
+}
+
+async function guardarConfiguracion() {
+    const input = document.getElementById('config-url-sheets');
+    const msg = document.getElementById('config-sheets-save-msg');
+    if (!input) return;
+
+    const urlGoogleSheets = input.value.trim();
+    try {
+        await guardar('configuracionGlobal', { id: 1, urlGoogleSheets });
+        if (typeof invalidarCache === 'function') invalidarCache('configuracionGlobal');
+        mostrarToast('Configuración guardada correctamente.');
+        if (msg) { msg.textContent = '✓ Guardado'; msg.style.color = 'var(--accent)'; }
+    } catch (e) {
+        console.error('Error al guardar configuración global:', e);
+        mostrarToast('No se pudo guardar la configuración.', 'error');
+        if (msg) { msg.textContent = '✗ Error al guardar'; msg.style.color = '#ff6b6b'; }
+    }
+}
+
+// ==================== CALENDARIO ANUAL (Google Sheets) ====================
+// Lee la matriz exportada en CSV de una planilla de Google Sheets, la parsea fila
+// por fila y dibuja el almanaque anual en la cuadrícula #calendario-anual-grid.
+
+const MESES_DEL_ANIO = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'];
+
+/**
+ * Meses del año en mayúsculas (variante argentina "SETIEMBRE"; también se acepta "SEPTIEMBRE").
+ * El índice de cada mes coincide con MESES_DEL_ANIO para el renderizado.
+ */
+const MESES = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SETIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"];
+
+const _INDICE_MES = Object.fromEntries([
+    ...MESES.map((m, i) => [m, i]),
+    ['SEPTIEMBRE', MESES.indexOf('SETIEMBRE')]
+]);
+
+/** Categorías reales del automovilismo: estandarizan los encabezados de columna de la planilla. */
+const CATEGORIAS_CANONICAS = [
+    'TC2000', 'F. NACIONAL', 'TOP RACE', 'TCR', 'COPA FIAT',
+    'SPORT REG', 'IAME', 'ROTAX', 'CAK', 'RALLY ARG'
+];
+
+const _NORMALIZAR_CATEGORIA = (s) =>
+    String(s || '')
+        .toUpperCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^A-Z0-9]/g, '');
+
+const _CATEGORIA_POR_NORMALIZADA = Object.fromEntries(
+    CATEGORIAS_CANONICAS.map(c => [_NORMALIZAR_CATEGORIA(c), c])
+);
+
+/** Frases que encabezan los títulos de la planilla: esas filas se ignoran por completo. */
+const FRASES_IGNORAR = ['CATEGORIAS DE AUTOS', 'COMPITEN EN', 'RUTA O CIRCUITO'];
+
+/**
+ * Parser ultra-resistente de la matriz exportada en CSV.
+ * Estructura real del Excel:
+ *   - Filas de títulos / texto / vacías → se ignoran (.trim() + frases).
+ *   - Fila que empieza con un MES → Mes Activo; las demás celdas de ESA MISMA fila son
+ *     las cabeceras de las categorías (col 1 = TC2000, col 2 = F. NACIONAL, col 10 = RALLY ARG).
+ *   - Fila que empieza con un número (1..31, domingo) → celdas de categoría con el LUGAR.
+ * Devuelve: [{ mes, domingo, categoria, lugar }]
+ */
+function parsearCalendarioCSV(texto) {
+    if (typeof texto === 'string' && texto.charCodeAt(0) === 0xFEFF) texto = texto.slice(1);
+
+    const eventos = [];
+    let mesActivo = null;              // índice 0..11 del mes actual
+    let columnasCategorias = {};       // { columna: nombreCategoria }
+
+    const lineas = String(texto || '').split('\n');
+    const lineasMayus = lineas.map(l => l.toUpperCase());
+
+    for (let i = 0; i < lineas.length; i++) {
+        const linea = lineas[i];
+        if (!linea.trim()) continue; // línea totalmente vacía → ignorar
+
+        // Títulos superiores de la planilla → ignorar por completo.
+        const lineaMayus = lineasMayus[i];
+        if (FRASES_IGNORAR.some(f => lineaMayus.includes(f))) continue;
+
+        const fila = linea.split(',').map(c => c.trim()); // celdas limpias de espacios
+        const celda0 = (fila[0] || '').toUpperCase();
+
+        // 1) ¿Fila de MES? → Mes Activo + cabecera de categorías en la MISMA fila.
+        const idxMes = _INDICE_MES[celda0];
+        if (idxMes !== undefined) {
+            mesActivo = idxMes;
+            columnasCategorias = {};
+            fila.forEach((celda, col) => {
+                if (col === 0) return; // col 0 = el mes, no una categoría
+                if (celda) {
+                    // Nombre canónico si coincide; si no, se conserva el texto del encabezado.
+                    columnasCategorias[col] = _CATEGORIA_POR_NORMALIZADA[_NORMALIZAR_CATEGORIA(celda)] || celda;
+                }
+            });
+            continue; // la cabecera NO se busca en la fila de abajo
+        }
+
+        // 2) ¿Fila de semana? La columna 0 es el número del día domingo.
+        if (mesActivo !== null && /^\d{1,2}$/.test(celda0)) {
+            const numeroDiaDomingo = parseInt(celda0, 10);
+            if (numeroDiaDomingo >= 1 && numeroDiaDomingo <= 31) {
+                for (const colStr of Object.keys(columnasCategorias)) {
+                    const col = Number(colStr);
+                    const celda = fila[col] || '';
+                    if (!celda) continue; // vacía → la categoría no compite esa semana
+
+                    let lugar;
+                    const celdaMayus = celda.toUpperCase();
+                    const esNumeroSolo = !/[A-Za-zÀ-ÿÑñ]/.test(celda);
+                    const esMarcador = celdaMayus === 'A CONFIRMAR' || celdaMayus === 'SUSPENDIDA';
+
+                    if (esNumeroSolo || esMarcador) {
+                        lugar = 'A confirmar'; // compite pero el lugar está por confirmar
+                    } else {
+                        lugar = celda; // texto con letras → circuito/ciudad exacto
+                    }
+
+                    eventos.push({
+                        mes: mesActivo,
+                        domingo: numeroDiaDomingo,
+                        categoria: columnasCategorias[col],
+                        lugar: lugar
+                    });
+                }
+            }
+        }
+    }
+
+    console.log('Eventos parseados con éxito:', eventos.length);
+    return eventos;
+}
+
+// ---- Estado del módulo (se conserva entre renders para filtros y recarga) ----
+let calendarioEventos = [];
+let calendarioFiltroCategoria = null;
+let _leyendaListenerAgregado = false;
+
+const PALETA_CATEGORIAS = ['#ff4757', '#00d2d3', '#2ed573', '#ff9f43', '#a78bfa', '#feca57', '#ff6b9d', '#4dc3ff'];
+
+async function cargarYParsearCalendario() {
+    const grid = document.getElementById('calendario-anual-grid');
+    if (!grid) return;
+
+    const cfg = await cargarConfiguracionGlobal();
+    const urlConfigured = (cfg && cfg.urlGoogleSheets) ? String(cfg.urlGoogleSheets).trim() : '';
+
+    if (!urlConfigured) {
+        calendarioEventos = [];
+        calendarioFiltroCategoria = null;
+        renderizarLeyendaCategorias([]);
+        grid.innerHTML = '<div class="calendario-vacio">⚠️ No hay un enlace CSV de Google Sheets configurado. Cargalo desde Configuración.</div>';
+        return;
+    }
+
+    // Rompe-caché. La URL de publicación de Google Sheets puede traer parámetros propios
+    // (signo '?'), así que el conector correcto depende de si ya existe ese signo:
+    //   - con '?':  usar '&' para no generar doble signo de interrogación (HTTP 400).
+    //   - sin '?':  usar '?' (primer parámetro).
+    const conector = urlConfigured.includes('?') ? '&' : '?';
+    const urlSaneada = `${urlConfigured}${conector}t=${Date.now()}`;
+
+    try {
+        const res = await fetch(urlSaneada);
+        if (!res.ok) {
+            // Red de seguridad: no se corta la ejecución; se reporta el fallo con detalle en el DOM.
+            const motivo = res.status === 400
+                ? 'la solicitud es inválida (posible URL mal configurada)'
+                : `error de lectura (HTTP ${res.status})`;
+            throw new Error(`No se pudo leer la planilla: ${motivo}.`);
+        }
+        const texto = await res.text();
+        calendarioEventos = parsearCalendarioCSV(texto);
+        calendarioFiltroCategoria = null; // al recargar datos se limpia el filtro previo
+        renderizarCalendarioAnual();
+    } catch (e) {
+        console.error('Error al cargar/parsear el calendario de Google Sheets:', e);
+        calendarioEventos = [];
+        calendarioFiltroCategoria = null;
+        renderizarLeyendaCategorias([]);
+        grid.innerHTML = `<div class="calendario-vacio">⚠️ No se pudo leer la planilla: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+/**
+ * Recoge las categorías únicas detectadas en el CSV (ordenadas alfabéticamente) y les
+ * asigna un color estable de la paleta, para mantener coherencia entre leyenda y badges.
+ */
+function _categoriasConColor() {
+    const unicas = [];
+    const vistos = new Set();
+    for (const ev of calendarioEventos) {
+        const cat = String(ev.categoria || '').trim();
+        if (cat && !vistos.has(cat)) {
+            vistos.add(cat);
+            unicas.push(cat);
+        }
+    }
+    unicas.sort((a, b) => a.localeCompare(b));
+    return unicas.map((nombre, i) => ({
+        nombre,
+        color: PALETA_CATEGORIAS[i % PALETA_CATEGORIAS.length]
+    }));
+}
+
+function toggleFiltroCategoria(categoria) {
+    // Clic de nuevo sobre la categoría activa → limpia el filtro.
+    calendarioFiltroCategoria = (calendarioFiltroCategoria === categoria) ? null : categoria;
+    renderizarCalendarioAnual();
+}
+
+function _conectarLeyenda() {
+    if (_leyendaListenerAgregado) return;
+    _leyendaListenerAgregado = true;
+    const cont = document.getElementById('calendario-leyenda');
+    if (!cont) return;
+    cont.addEventListener('click', (e) => {
+        const item = e.target.closest('.cal-leyenda-item');
+        if (!item) return;
+        toggleFiltroCategoria(item.dataset.categoria);
+    });
+}
+
+function renderizarLeyendaCategorias(categorias) {
+    const cont = document.getElementById('calendario-leyenda');
+    if (!cont) return;
+
+    if (!categorias || categorias.length === 0) {
+        cont.innerHTML = '';
+        return;
+    }
+
+    const items = categorias.map(({ nombre, color }) => {
+        const activa = calendarioFiltroCategoria === nombre ? ' active' : '';
+        return `<button type="button" class="cal-leyenda-item${activa}" data-categoria="${escapeHtml(nombre)}" title="Filtrar por ${escapeHtml(nombre)}">
+                    <span class="cal-leyenda-dot" style="background:${color}"></span> ${escapeHtml(nombre)}
+                </button>`;
+    }).join('');
+
+    cont.innerHTML = `<span class="cal-leyenda-titulo">Filtrar por categoría:</span>${items}`;
+    _conectarLeyenda();
+}
+
+function renderizarCalendarioAnual() {
+    const grid = document.getElementById('calendario-anual-grid');
+    if (!grid) return;
+
+    const categorias = _categoriasConColor();
+    renderizarLeyendaCategorias(categorias);
+
+    if (!calendarioEventos || calendarioEventos.length === 0) {
+        grid.innerHTML = '<div class="calendario-vacio">La planilla no contiene eventos de calendario.</div>';
+        return;
+    }
+
+    const filtroActivo = calendarioFiltroCategoria !== null;
+
+    // Referencia de fecha actual para colorear las semanas (competencia pasada = rojo,
+    // competencia futura o presente = verde esmeralda).
+    const anioActual = new Date().getFullYear();
+    const hoyInicio = new Date();
+    hoyInicio.setHours(0, 0, 0, 0);
+
+    // Agrupar por mes y por SEMANA (número de domingo): porMes[mes][domingo] = [{categoria, lugar}]
+    const porMes = Array.from({ length: 12 }, () => ({}));
+    for (const ev of calendarioEventos) {
+        if (ev.mes < 0 || ev.mes > 11) continue;
+        const m = porMes[ev.mes];
+        if (!m[ev.domingo]) m[ev.domingo] = [];
+        m[ev.domingo].push({ categoria: String(ev.categoria || ''), lugar: String(ev.lugar || '') });
+    }
+
+    grid.innerHTML = MESES_DEL_ANIO.map((nombreMes, idxMes) => {
+        const semanas = porMes[idxMes];
+        const domingosOrdenados = Object.keys(semanas).map(Number).sort((a, b) => a - b);
+
+        let contenidoSemanas;
+        if (domingosOrdenados.length === 0) {
+            contenidoSemanas = '<div class="calendario-vacio" style="grid-column:auto;padding:1rem;">Sin fechas cargadas</div>';
+        } else {
+            contenidoSemanas = domingosOrdenados.map(domingo => {
+                const items = semanas[domingo];
+                const tieneCategoria = items.some(it => it.categoria === calendarioFiltroCategoria);
+
+                // Fecha de la competencia: combina año actual + índice de mes (0-11) + día domingo.
+                const fechaSemana = new Date(anioActual, idxMes, domingo);
+                const claseFecha = fechaSemana < hoyInicio ? ' fecha-pasada' : ' fecha-futura';
+                const claseSem = (filtroActivo ? (tieneCategoria ? ' cal-sem-destacada' : ' cal-sem-dim') : '') + claseFecha;
+
+                const badges = items.map(it => {
+                    const badgeClase = filtroActivo && it.categoria !== calendarioFiltroCategoria
+                        ? ' cal-badge-dim'
+                        : '';
+                    return `<div class="cal-badge${badgeClase}">
+                                <span class="cal-categoria">${escapeHtml(it.categoria)}</span>
+                                <span class="cal-lugar">: ${escapeHtml(it.lugar)}</span>
+                            </div>`;
+                }).join('');
+
+                return `<div class="cal-sem${claseSem}">
+                            <div class="cal-sem-header">Día ${domingo}</div>
+                            ${badges}
+                        </div>`;
+            }).join('');
+        }
+
+        return `
+            <div class="mes-card">
+                <h3>${nombreMes}</h3>
+                <div class="mes-semanas">${contenidoSemanas}</div>
+            </div>`;
+    }).join('');
+}
+
+// Botón de recarga manual: fuerza el fetch (rompe-caché) con spinner + toast informativo.
+async function refrescarCalendario() {
+    const btn = document.getElementById('btn-refrescar-calendario');
+    const icono = btn ? btn.querySelector('i') : null;
+
+    mostrarToast('Actualizando calendario...', 'info');
+    if (btn) btn.disabled = true;
+    if (icono) icono.classList.add('fa-spin');
+
+    try {
+        await cargarYParsearCalendario();
+    } finally {
+        if (btn) btn.disabled = false;
+        if (icono) icono.classList.remove('fa-spin');
     }
 }
 
@@ -5775,7 +6131,8 @@ let chartInvStock = null;
 async function cargarDatosVista(viewId) {
     switch(viewId) {
         case 'dashboard':    dashboardDirty = true; await renderDashboard(); break;
-        case 'calendario':   await listarCompetencias(); break;
+        case 'calendario':   await cargarYParsearCalendario(); break;
+        case 'competencias': await listarCompetencias(); break;
         case 'gastos':       await listarGastos(); break;
         case 'carga-detallada': await listarRendiciones(); break;
         case 'personal-competencia': await cargarPersonalCompetencia(); break;

@@ -5,7 +5,9 @@ const DB_NAME = 'ControlAutomovilismoDB';
 // store 'tiposMovimiento'; como ya se estaba en la versión objetivo, onupgradeneeded no se
 // volvía a disparar y el store faltaba físicamente (NotFoundError en db.transaction). Al subir
 // a V11 el navegador se ve OBLIGADO a ejecutar la migración y a crear la tabla faltante.
-const DB_VERSION = 11;
+// V12: agrega el store 'configuracionGlobal' (documento único de ajustes de la app, p.ej. el
+// enlace CSV de Google Sheets del módulo Calendario). La creación con .contains() es idempotente.
+const DB_VERSION = 12;
 
 let dbInstance = null;
 
@@ -410,6 +412,14 @@ function openDB() {
             if (!db.objectStoreNames.contains('tiposMovimiento')) {
                 const tiposStore = db.createObjectStore('tiposMovimiento', { keyPath: 'id', autoIncrement: true });
                 tiposStore.createIndex('valor', 'valor', { unique: true });
+            }
+
+            // ============ NUEVO EN DB_VERSION 12: CONFIGURACIÓN GLOBAL DE LA APP ============
+            // Documento único (id fijo 1) de ajustes de la aplicación, p.ej. el enlace CSV de
+            // Google Sheets del módulo Calendario. El guard .contains() lo hace idempotente para
+            // bases ya abiertas en V11 (el bump de versión dispara la migración).
+            if (!db.objectStoreNames.contains('configuracionGlobal')) {
+                db.createObjectStore('configuracionGlobal', { keyPath: 'id', autoIncrement: true });
             }
 
             // ============ DB_VERSION 11: REPARACIÓN DEFINITIVA DE ESQUEMAS INCONSISTENTES ============

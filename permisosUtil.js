@@ -21,20 +21,22 @@
 
 const CATALOGO_MODULOS = Object.freeze([
     { id: 'dashboard',              nombre: 'Dashboard',                     icono: 'fa-gauge',           orden: 1,  funciones: ['ver'] },
-    { id: 'calendario',             nombre: 'Calendario',                    icono: 'fa-calendar-days',   orden: 2,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-    { id: 'gastos',                 nombre: 'Gastos',                        icono: 'fa-receipt',         orden: 3,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-    { id: 'carga-detallada',        nombre: 'Carga Detallada (Rendiciones)', icono: 'fa-file-invoice',    orden: 4,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-    { id: 'personal-competencia',   nombre: 'Personal por Competencia',      icono: 'fa-people-group',    orden: 5,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-    { id: 'inventario',             nombre: 'Inventario',                    icono: 'fa-boxes-stacked',   orden: 6,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-    { id: 'articulos',              nombre: 'Artículos',                     icono: 'fa-box',             orden: 7,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-    { id: 'movimientos-inventario', nombre: 'Movimientos',                   icono: 'fa-right-left',      orden: 8,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-    { id: 'categorias-inventario',  nombre: 'Categorías de Inventario',      icono: 'fa-tags',            orden: 9,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-    { id: 'entregas-inventario',    nombre: 'Entregas',                      icono: 'fa-truck-ramp-box',  orden: 10, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-    { id: 'staff',                  nombre: 'Staff',                         icono: 'fa-user-tie',        orden: 11, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-    { id: 'estadisticas-personal',  nombre: 'Estadísticas de Personal',      icono: 'fa-chart-column',    orden: 12, funciones: ['ver'] },
-    { id: 'alojamiento',            nombre: 'Alojamiento',                   icono: 'fa-hotel',           orden: 13, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-    { id: 'categorias-circuitos',   nombre: 'Categorías y Circuitos',        icono: 'fa-flag-checkered',  orden: 14, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-    { id: 'configuracion',          nombre: 'Configuración',                 icono: 'fa-gear',            orden: 15, funciones: ['ver'], soloAdmin: true }
+    // Módulo 'calendario' (nuevo): lee datos desde Google Sheets. Por ahora solo lectura.
+    { id: 'calendario',             nombre: 'Calendario',                    icono: 'fa-calendar-days',   orden: 2,  funciones: ['ver'] },
+    { id: 'competencias',           nombre: 'Competencias',                  icono: 'fa-calendar-days',   orden: 3,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+    { id: 'gastos',                 nombre: 'Gastos',                        icono: 'fa-receipt',         orden: 4,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+    { id: 'carga-detallada',        nombre: 'Carga Detallada (Rendiciones)', icono: 'fa-file-invoice',    orden: 5,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+    { id: 'personal-competencia',   nombre: 'Personal por Competencia',      icono: 'fa-people-group',    orden: 6,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+    { id: 'inventario',             nombre: 'Inventario',                    icono: 'fa-boxes-stacked',   orden: 7,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+    { id: 'articulos',              nombre: 'Artículos',                     icono: 'fa-box',             orden: 8,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+    { id: 'movimientos-inventario', nombre: 'Movimientos',                   icono: 'fa-right-left',      orden: 9,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+    { id: 'categorias-inventario',  nombre: 'Categorías de Inventario',      icono: 'fa-tags',            orden: 10, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+    { id: 'entregas-inventario',    nombre: 'Entregas',                      icono: 'fa-truck-ramp-box',  orden: 11, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+    { id: 'staff',                  nombre: 'Staff',                         icono: 'fa-user-tie',        orden: 12, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+    { id: 'estadisticas-personal',  nombre: 'Estadísticas de Personal',      icono: 'fa-chart-column',    orden: 13, funciones: ['ver'] },
+    { id: 'alojamiento',            nombre: 'Alojamiento',                   icono: 'fa-hotel',           orden: 14, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+    { id: 'categorias-circuitos',   nombre: 'Categorías y Circuitos',        icono: 'fa-flag-checkered',  orden: 15, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+    { id: 'configuracion',          nombre: 'Configuración',                 icono: 'fa-gear',            orden: 16, funciones: ['ver'], soloAdmin: true }
 ]);
 
 // Índice O(1) por id de módulo (evita recorrer el array en cada verificación).
