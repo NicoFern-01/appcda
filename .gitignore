@@ -1,0 +1,33 @@
+# ---- Node.js ----
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- Vite / Build ----
+dist/
+dist-ssr/
+*.local
+
+# ---- Entorno (secretos) ----
+# .env es local; solo se versiona .env.example
+.env
+.env.local
+.env.*.local
+
+# ---- Editor / SO ----
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- Playwright (reportes/artefactos de test) ----
+playwright-report/
+test-results/
+playwright/.cache/
+
+# ---- Logs / archivos temporales ----
+*.log
+.tmp/
+coverage/

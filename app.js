@@ -9,7 +9,7 @@ function escapeHtml(str) {
 }
 
 // ==================== ESTADO DE SESIÓN ====================
-let currentUser = null;
+var currentUser = null;
 
 // ==================== INSTANCIAS DE GRÁFICOS ====================
 let chartCategoriasInstance = null;
@@ -118,17 +118,6 @@ function togglePasswordVisibility() {
     }
 }
 
-// Mapea un nombre de usuario a un email válido para Firebase Auth
-// Ej: 'admin' -> 'admin@controlcda.com'
-function mapearUsuarioAEmail(username) {
-    const usuarioLimpio = String(username || '').trim().toLowerCase();
-    if (!usuarioLimpio) return '';
-    // Si ya es un email, devolverlo tal cual
-    if (usuarioLimpio.includes('@')) return usuarioLimpio;
-    // Mapear a un dominio interno de la app
-    return usuarioLimpio + '@controlcda.com';
-}
-
 // Mapea un email de Firebase Auth de vuelta al nombre de usuario
 function mapearEmailAUsuario(email) {
     const emailLimpio = String(email || '').trim().toLowerCase();
@@ -136,47 +125,6 @@ function mapearEmailAUsuario(email) {
         return emailLimpio.replace('@controlcda.com', '');
     }
     return emailLimpio;
-}
-
-// Obtiene el rol del usuario desde Firestore (colección 'usuarios')
-async function obtenerRolUsuarioDesdeFirestore(uid) {
-    try {
-        if (typeof getDoc === 'function' && typeof doc === 'function' && dbFirebase) {
-            const docRef = doc(dbFirebase, 'usuarios', String(uid));
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
-                const data = docSnap.data();
-                return {
-                    rol: data.rol || 'viewer',
-                    nombre: data.nombre || 'Usuario',
-                    // BUGFIX: incluir permisos granulares guardados (si existen)
-                    permisos: (data.permisos && typeof data.permisos === 'object')
-                        ? JSON.parse(JSON.stringify(data.permisos)) : null,
-                    activo: data.activo !== false
-                };
-            }
-        }
-    } catch (e) {
-        console.warn('No se pudo obtener el rol desde Firestore:', e);
-    }
-    // Fallback: buscar en IndexedDB local
-    try {
-        const usuarios = await getTodos('usuarios');
-        const usuario = usuarios.find(u => u.uid === uid || u.username === mapearEmailAUsuario(uid));
-        if (usuario) {
-            return {
-                rol: usuario.rol || 'viewer',
-                nombre: usuario.nombre || 'Usuario',
-                // BUGFIX: incluir permisos granulares guardados (si existen)
-                permisos: (usuario.permisos && typeof usuario.permisos === 'object')
-                    ? JSON.parse(JSON.stringify(usuario.permisos)) : null,
-                activo: usuario.activo !== false
-            };
-        }
-    } catch (e) {
-        console.warn('No se pudo obtener el rol desde IndexedDB:', e);
-    }
-    return { rol: 'viewer', nombre: 'Usuario', activo: true };
 }
 
 // Verifica la contraseña contra un hash guardado, soportando ambos formatos
@@ -222,110 +170,29 @@ async function verificarPasswordConCompatibilidad(passwordInput, passwordHashAlm
     return false;
 }
 
-async function handleLogin(event) {
-    event.preventDefault();
-    const usernameInput = document.getElementById('login-username').value.trim();
-    const passwordInput = document.getElementById('login-password').value;
-    const errorEl = document.getElementById('login-error');
-    const submitBtn = document.getElementById('login-submit-btn');
-
-    errorEl.style.display = 'none';
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Verificando...';
-
-    try {
-        // Verificar que Firestore esté inicializado
-        if (!dbFirebase || typeof query !== 'function' || typeof collection !== 'function' || typeof where !== 'function' || typeof getDocs !== 'function') {
-            throw new Error('Firestore no está inicializado correctamente.');
-        }
-
-        // 1) IMPRIMIR DATOS DE INICIALIZACIÓN
-        console.log("Intentando conectar al proyecto:", dbFirebase.app.options.projectId);
-        console.log("Usuario ingresado:", usernameInput);
-        console.log("Contraseña ingresada en texto plano:", passwordInput);
-
-        // 2) CONSULTA DIRECTA A FIRESTORE
-        const usuariosRef = collection(dbFirebase, 'usuarios');
-        const q = query(usuariosRef, where('username', '==', usernameInput), where('activo', '==', true));
-        const querySnapshot = await getDocs(q);
-
-        // LOGUEAR RESULTADOS DE LA BÚSQUEDA
-        if (querySnapshot.empty) {
-            console.log("❌ ERROR: No se encontró ningún documento con el username: " + usernameInput + " en la colección 'usuarios'.");
-            errorEl.style.display = 'flex';
-            document.getElementById('login-password').value = '';
-            return;
-        } else {
-            console.log("📋 Se encontraron " + querySnapshot.size + " documento(s) con el username: " + usernameInput);
-        }
-
-        // 3) CORRECCIÓN DEL BUCLE DE VALIDACIÓN (DETENER EN LA PRIMERA COINCIDENCIA)
-        // Usar bucle tradicional 'for...of' en lugar de 'forEach' para poder hacer 'return' real
-        for (const docSnap of querySnapshot.docs) {
-            const usuarioData = docSnap.data();
-            const usuarioId = docSnap.id;
-
-            console.log("✅ PROCESANDO DOCUMENTO EN FIRESTORE:", docSnap.id, usuarioData);
-            console.log("Contraseña guardada en DB:", usuarioData.passwordHash);
-            console.log("Contraseña ingresada por el usuario en texto plano:", passwordInput);
-
-            // 4) VERIFICAR LA CONTRASEÑA CON COMPATIBILIDAD DE AMBOS FORMATOS
-            const esValida = await verificarPasswordConCompatibilidad(passwordInput, usuarioData.passwordHash);
-
-            if (esValida) {
-                // 5) LOGIN EXITOSO Y PERSISTENCIA
-                console.log("✅ CONTRASEÑA VÁLIDA para el documento: " + docSnap.id);
-
-                // BUGFIX: el usuario DEBE incluir los permisos granulares guardados en
-                // Firestore. Sin esta línea, obtenerPermisosEfectivos() no ve datos
-                // granulares y aplicaba el preset del rol (ej: 'editor'), ignorando los
-                // módulos desmarcados a mano (caso gastos/inventario de Chris).
-                const usuario = {
-                    id: Number(usuarioId) || usuarioId,
-                    username: usuarioData.username,
-                    nombre: usuarioData.nombre || 'Usuario',
-                    rol: usuarioData.rol || 'viewer',
-                    permisos: (usuarioData.permisos && typeof usuarioData.permisos === 'object')
-                        ? JSON.parse(JSON.stringify(usuarioData.permisos)) // copia profunda limpia
-                        : null,
-                    activo: true
-                };
-
-                // Guardar sesión en localStorage para persistencia (incluye permisos,
-                // para que restaurar la sesión no vuelva a caer en el preset del rol)
-                localStorage.setItem('cda_session', JSON.stringify({
-                    id: usuario.id,
-                    username: usuario.username,
-                    nombre: usuario.nombre,
-                    rol: usuario.rol,
-                    permisos: usuario.permisos,
-                    loginTime: new Date().toISOString()
-                }));
-
-                console.log("✅ LOGIN EXITOSO:", usuario);
-                currentUser = usuario;
-                iniciarSesion(usuario);
-                return; // Romper el bucle real con return
-            } else {
-                console.log("❌ Contraseña incorrecta para el documento: " + docSnap.id + " (passwordHash: " + usuarioData.passwordHash + ")");
-            }
-        }
-
-        // Si llegamos aquí, ningún documento fue válido
-        console.log("❌ CONTRASEÑA INCORRECTA: Ningún documento del usuario '" + usernameInput + "' tiene una contraseña válida.");
-        errorEl.style.display = 'flex';
-        document.getElementById('login-password').value = '';
-    } catch (error) {
-        // 6) CONTROLADOR DE ERRORES DEL SDK (CATCH BLOCKS)
-        console.error("💥 ERROR CRÍTICO DEL SDK DE FIREBASE:", error.code, error.message);
-        alert("Error técnico de Firebase: " + error.message);
-        errorEl.style.display = 'flex';
-        document.getElementById('login-password').value = '';
-    } finally {
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Ingresar';
+// FALLBACK local del login: la lógica real vive en src/services/authService.js.
+async function intentarLoginLocal(usernameInput, passwordInput) {
+    // FASE 5: pasamano hacia el dominio de autenticación.
+    const auth = typeof window !== 'undefined' ? window.__CDA_MODULES__?.auth : null;
+    if (auth && typeof auth.intentarLoginLocal === 'function') {
+        return auth.intentarLoginLocal(usernameInput, passwordInput);
     }
+    return false;
 }
+
+async function handleLogin(event) {
+    // FASE 5: pasamano hacia el dominio de autenticación (src/services/authService.js).
+    const auth = typeof window !== 'undefined' ? window.__CDA_MODULES__?.auth : null;
+    if (auth && typeof auth.handleLogin === 'function') {
+        return auth.handleLogin(event);
+    }
+    // Red de seguridad: si el módulo no cargara, al menos no romper el submit.
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+}
+
+        // ------------------------------------------------------------------
+// El dominio de Autenticación fue extraído a src/services/authService.js
+// (handleLogin, intentarLoginLocal, iniciarSesion, handleLogout, cda_session).
 
 // ==================== PERMISOS: RESOLUCIÓN DE PERMISOS EFECTIVOS ====================
 // El catálogo de roles vive en permisosUtil.js (DICCIONARIO_ROLES): agregar un rol
@@ -370,311 +237,89 @@ function usuarioTienePermisosPersonalizados(usuario) {
         !== JSON.stringify(normalizarPermisos(usuario.rol, defRol.preset || {}));
 }
 
-
 // ==================== RENDERIZADO DINÁMICO DEL MENÚ LATERAL ====================
-// Grupos con submenú (Gastos e Inventario), replicando la estructura del HTML estático.
-const GRUPOS_MENU = [
-    { padreId: 'menu-gastos',      submenuId: 'submenu-gastos',      padre: 'gastos',     hijos: ['carga-detallada', 'personal-competencia'] },
-    { padreId: 'menu-inventario',  submenuId: 'submenu-inventario',  padre: 'inventario', hijos: ['articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario'] }
-];
-
-/**
- * Renderiza el menú lateral según los permisos del usuario actual.
- * - Recorre CATALOGO_MODULOS ordenado por 'orden'.
- * - Solo agrega al DOM los módulos con verificarPermiso(usuario, id, 'ver') === true.
- * - Los módulos sin permiso NO existen en el DOM (ni ocultos: no se crean).
- * - Mantiene los ids 'menu-gastos'/'submenu-gastos' y 'menu-inventario'/'submenu-inventario'
- *   porque toggleSubmenu() y abrirSubmenuDeVista() dependen de ellos.
- */
+// La lógica completa vive en src/services/viewManager.js
 function renderizarMenuLateral(usuario) {
-    const menuList = document.getElementById('menu-list');
-    if (!menuList || !usuario) return;
-    // Fail-safe: si permisosUtil.js no se cargó, no dejar el menú vacío sin aviso.
-    if (typeof verificarPermiso !== 'function' || typeof CATALOGO_MODULOS === 'undefined') {
-        console.warn('renderizarMenuLateral: permisosUtil.js no está cargado.');
-        return;
+    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
+    if (v && typeof v.renderizarMenuLateral === 'function') {
+        return v.renderizarMenuLateral(usuario);
     }
-
-    menuList.innerHTML = '';
-
-    const modulosOrdenados = [...CATALOGO_MODULOS].sort((a, b) => a.orden - b.orden);
-    const gruposPorPadre = Object.fromEntries(GRUPOS_MENU.map(g => [g.padre, g]));
-    const idsHijos = new Set(GRUPOS_MENU.flatMap(g => g.hijos));
-
-    for (const modulo of modulosOrdenados) {
-        // Los hijos se renderizan dentro de su grupo, nunca como ítems sueltos.
-        if (idsHijos.has(modulo.id)) continue;
-
-        const grupo = gruposPorPadre[modulo.id];
-        if (grupo) {
-            const padreVisible = verificarPermiso(usuario, grupo.padre, 'ver');
-            const hijosVisibles = grupo.hijos.filter(id => verificarPermiso(usuario, id, 'ver'));
-            // El grupo aparece si el padre o al menos un hijo es accesible.
-            if (!padreVisible && hijosVisibles.length === 0) continue;
-            menuList.appendChild(_crearGrupoMenu(grupo, modulo, hijosVisibles, padreVisible));
-            continue;
-        }
-
-        // Módulo simple (dashboard, calendario, staff, ... configuracion).
-        if (!verificarPermiso(usuario, modulo.id, 'ver')) continue; // sin permiso → ni existe
-        menuList.appendChild(_crearMenuItemEl(modulo, false));
-    }
-}
-
-/** Crea un ítem simple del menú: <div class="menu-item" data-view="..."><i/><span/></div> */
-function _crearMenuItemEl(modulo, esSubmenu) {
-    const item = document.createElement('div');
-    item.className = esSubmenu ? 'menu-item submenu-item' : 'menu-item';
-    item.dataset.view = modulo.id; // clave para el toggle de 'active' y la red de seguridad
-
-    const icono = document.createElement('i');
-    icono.className = `fa-solid ${modulo.icono}`;
-    const texto = document.createElement('span');
-    texto.textContent = modulo.nombre; // textContent: inmune a XSS
-
-    item.append(icono, texto);
-    item.addEventListener('click', () => switchView(modulo.id));
-    return item;
-}
-
-/**
- * Crea un grupo con submenú (Gastos / Inventario).
- * Si el padre no tiene permiso 'ver' pero sí hay hijos visibles, el padre solo
- * despliega el submenú (sin navegar) para que no salga "Acceso denegado".
- */
-function _crearGrupoMenu(grupo, moduloPadre, hijosVisibles, padreVisible) {
-    const li = document.createElement('li');
-
-    const padre = document.createElement('div');
-    padre.id = grupo.padreId;
-    padre.className = 'menu-item menu-parent';
-    if (padreVisible) padre.dataset.view = moduloPadre.id;
-
-    const icono = document.createElement('i');
-    icono.className = `fa-solid ${moduloPadre.icono}`;
-    const texto = document.createElement('span');
-    texto.textContent = moduloPadre.nombre;
-    const chevron = document.createElement('i');
-    chevron.className = 'fa-solid fa-chevron-down submenu-chevron';
-    padre.append(icono, texto, chevron);
-
-    padre.addEventListener('click', () => {
-        toggleSubmenu(grupo.submenuId);
-        if (padreVisible) switchView(moduloPadre.id);
-    });
-
-    const submenu = document.createElement('div');
-    submenu.id = grupo.submenuId;
-    submenu.className = 'submenu collapsed';
-    hijosVisibles.forEach(id => {
-        const def = MODULOS_MAP[id];
-        if (def) submenu.appendChild(_crearMenuItemEl(def, true));
-    });
-
-    li.append(padre, submenu);
-    return li;
 }
 
 function iniciarSesion(usuario) {
-    document.getElementById('login-screen').style.display = 'none';
-    const appMain = document.getElementById('app-main');
-    appMain.style.display = 'flex';
-
-    document.getElementById('sidebar-user-name').textContent = usuario.nombre;
-    document.getElementById('sidebar-avatar').textContent = usuario.nombre.charAt(0).toUpperCase();
-
-    const rolesNombres = { admin: 'Administrador', editor: 'Editor', viewer: 'Visualizador', supervisor: 'Supervisor' };
-    document.getElementById('sidebar-user-role').textContent = rolesNombres[usuario.rol] || usuario.rol;
-
-    // Normaliza/sanea los permisos de la sesión (usa granulares persistidos;
-    // si no existen, aplica el preset legacy del rol — Capa 2).
-    usuario.permisos = obtenerPermisosEfectivos(usuario);
-
-    // BUGFIX: refresca el registro de sesión local con los permisos efectivos, para
-    // que una restauración posterior (F5 / reapertura) no vuelva a caer en el preset.
-    try {
-        const sesion = JSON.parse(localStorage.getItem('cda_session') || 'null');
-        if (sesion) {
-            sesion.permisos = usuario.permisos;
-            localStorage.setItem('cda_session', JSON.stringify(sesion));
-        }
-    } catch (e) {
-        console.warn('No se pudo actualizar la sesión con los permisos:', e);
+    // FASE 5: pasamano hacia el dominio de autenticación.
+    const auth = typeof window !== 'undefined' ? window.__CDA_MODULES__?.auth : null;
+    if (auth && typeof auth.iniciarSesion === 'function') {
+        return auth.iniciarSesion(usuario);
     }
-
-    // Menú lateral dinámico según permisos: los módulos sin 'ver' no existen en el DOM.
-    renderizarMenuLateral(usuario);
-
-    aplicarControlDeAcceso(usuario.rol);
-    switchView('dashboard');
 }
 
 async function handleLogout() {
-    const confirmado = await mostrarConfirmacion('Cerrar sesión', '¿Deseas cerrar la sesión?', 'question');
-    if (confirmado) {
-        // Limpiar sesión local
-        localStorage.removeItem('cda_session');
-        currentUser = null;
-        document.getElementById('app-main').style.display = 'none';
-        document.getElementById('login-screen').style.display = 'flex';
-        document.getElementById('form-login').reset();
-        document.getElementById('login-error').style.display = 'none';
+    // FASE 5: pasamano hacia el dominio de autenticación.
+    const auth = typeof window !== 'undefined' ? window.__CDA_MODULES__?.auth : null;
+    if (auth && typeof auth.handleLogout === 'function') {
+        return auth.handleLogout();
     }
 }
 
 function aplicarControlDeAcceso(rol) {
-    const esViewer = rol === 'viewer';
-    const esAdmin = rol === 'admin';
-    const esSupervisor = rol === 'supervisor';
-
-    document.querySelectorAll('.editor-only').forEach(el => {
-        el.style.display = (esViewer || esSupervisor) ? 'none' : '';
-    });
-
-    document.querySelectorAll('.admin-only').forEach(el => {
-        el.style.display = esAdmin ? '' : 'none';
-    });
-
-    // Menú lateral: los ítems se crean/eliminan según permisos en renderizarMenuLateral().
-    // Este barrido es una red de seguridad por si la sesión se restauró con datos viejos.
-    // (Antes se ocultaba por índice; ahora por permiso 'ver' vía data-view.)
-    document.querySelectorAll('.menu-item[data-view]').forEach(item => {
-        const permitido = typeof verificarPermiso === 'function'
-            && verificarPermiso(currentUser, item.dataset.view, 'ver');
-        item.style.display = permitido ? '' : 'none';
-    });
-
-    document.body.classList.toggle('viewer-mode', esViewer);
-    document.body.classList.toggle('admin-mode', esAdmin);
-    document.body.classList.toggle('supervisor-mode', esSupervisor);
-
-    document.querySelectorAll('.dashboard-link-card').forEach(card => {
-        card.classList.toggle('dashboard-link-disabled', esSupervisor);
-        card.setAttribute('aria-disabled', String(esSupervisor));
-        card.tabIndex = esSupervisor ? -1 : 0;
-    });
+    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
+    if (v && typeof v.aplicarControlDeAcceso === 'function') {
+        return v.aplicarControlDeAcceso(rol);
+    }
 }
 
 function puedeEditar() {
+    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
+    if (v && typeof v.puedeEditar === 'function') return v.puedeEditar();
     return currentUser && (currentUser.rol === 'admin' || currentUser.rol === 'editor');
 }
 
 function esAdmin() {
+    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
+    if (v && typeof v.esAdmin === 'function') return v.esAdmin();
     return currentUser && currentUser.rol === 'admin';
 }
 
 function esSupervisor() {
+    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
+    if (v && typeof v.esSupervisor === 'function') return v.esSupervisor();
     return currentUser && currentUser.rol === 'supervisor';
 }
 
 function navegarDesdeDashboard(viewId) {
-    // El supervisor solo tiene acceso al dashboard; los demás roles pueden
-    // navegar a los módulos que ya tienen visibles en el menú.
+    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
+    if (v && typeof v.navegarDesdeDashboard === 'function') return v.navegarDesdeDashboard(viewId);
     if (!currentUser || esSupervisor()) return;
     switchView(viewId);
 }
 
 // ==================== NAVEGACIÓN SPA ====================
+// La lógica completa de navegación vive en src/services/viewManager.js
 
 function toggleSubmenu(submenuId) {
-    const submenu = document.getElementById(submenuId);
-    if (!submenu) return;
-    submenu.classList.toggle('collapsed');
-
-    const parent = submenu.previousElementSibling;
-    if (parent) parent.classList.toggle('expanded', !submenu.classList.contains('collapsed'));
+    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
+    if (v && typeof v.toggleSubmenu === 'function') return v.toggleSubmenu(submenuId);
 }
 
 function abrirSubmenuDeVista(viewId) {
-    const grupos = {
-        'carga-detallada': ['submenu-gastos', 'menu-gastos'],
-        'personal-competencia': ['submenu-gastos', 'menu-gastos'],
-        'articulos': ['submenu-inventario', 'menu-inventario'],
-        'movimientos-inventario': ['submenu-inventario', 'menu-inventario'],
-        'categorias-inventario': ['submenu-inventario', 'menu-inventario'],
-        'entregas-inventario': ['submenu-inventario', 'menu-inventario']
-    };
-    const grupo = grupos[viewId];
-    if (!grupo) return;
-    const submenu = document.getElementById(grupo[0]);
-    const parent = document.getElementById(grupo[1]);
-    if (submenu) submenu.classList.remove('collapsed');
-    if (parent) parent.classList.add('expanded');
+    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
+    if (v && typeof v.abrirSubmenuDeVista === 'function') return v.abrirSubmenuDeVista(viewId);
 }
 
 function switchView(viewId) {
-    // ===== INTERCEPTOR DE PERMISOS (Capa 3) =====
-    // Toda navegación entre las 15 vistas pasa por acá (menú, dashboard, atajos).
-    // Si el usuario no tiene 'ver' sobre la vista destino: bloquear + avisar + dashboard.
-    if (typeof verificarPermiso === 'function' && !verificarPermiso(currentUser, viewId, 'ver')) {
-        mostrarToast('Acceso denegado: no tenés permisos para acceder a este módulo.', 'error');
-        if (viewId !== 'dashboard') {
-            // Redirección de seguridad (el dashboard es accesible para todo rol activo).
-            _ejecutarSwitchView('dashboard');
-        }
-        return;
-    }
-
-    // Si se está editando una rendición con cambios sin guardar y se intenta navegar
-    // a otra vista, pedir confirmación para no perder el trabajo realizado.
-    const rendEditor = document.getElementById('rendicion-editor');
-    if (rendEditor && rendEditor.style.display === 'block' && detallesModificados) {
-        let vistaActual = null;
-        views.forEach(v => {
-            const el = document.getElementById(`view-${v}`);
-            if (el && el.classList.contains('active')) vistaActual = v;
-        });
-        if (vistaActual && vistaActual !== viewId) {
-            _vistaPendiente = viewId;
-            mostrarConfirmacion(
-                'Salir sin guardar',
-                'Hay cambios sin guardar en la rendición. ¿Deseas salir y perder los cambios?',
-                'warning'
-            ).then(ok => {
-                if (ok && _vistaPendiente === viewId) {
-                    _vistaPendiente = null;
-                    _finalizarSalidaEditorRendicion();
-                    _ejecutarSwitchView(viewId);
-                } else {
-                    _vistaPendiente = null;
-                }
-            });
-            return; // no cambiar de vista hasta confirmar
-        }
-    }
-    _ejecutarSwitchView(viewId);
+    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
+    if (v && typeof v.switchView === 'function') return v.switchView(viewId);
 }
 
 function _ejecutarSwitchView(viewId) {
-    // Toggle de 'active' por data-view (antes era por índice: incompatible con el menú
-    // dinámico, donde los ítems permitidos varían por usuario).
-    document.querySelectorAll('.menu-item[data-view]').forEach(item => {
-        item.classList.toggle('active', item.dataset.view === viewId);
-    });
-
-    views.forEach(v => {
-        const viewEl = document.getElementById(`view-${v}`);
-        if (!viewEl) return; // vista sin sección en el HTML todavía (ej: calendario en primer paso)
-        viewEl.classList.toggle('active', v === viewId);
-    });
-
-    abrirSubmenuDeVista(viewId);
-
-    cargarDatosVista(viewId);
+    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
+    if (v && typeof v.ejecutarSwitchView === 'function') return v.ejecutarSwitchView(viewId);
 }
 
-// Limpia el estado del editor de rendición y vuelve al listado (sin confirmación previa).
 function _finalizarSalidaEditorRendicion() {
-    detallesActuales = [];
-    adjuntosTemporales['modal'] = [];
-    detallesModificados = false;
-    rendicionActual = null;
-    const list = document.getElementById('rendiciones-list-container');
-    const editor = document.getElementById('rendicion-editor');
-    const aviso = document.getElementById('cambios-sin-guardar');
-    if (list) list.style.display = 'block';
-    if (editor) editor.style.display = 'none';
-    if (aviso) aviso.style.display = 'none';
+    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
+    if (v && typeof v.finalizarSalidaEditorRendicion === 'function') return v.finalizarSalidaEditorRendicion();
 }
 
 // ==================== DASHBOARD & GRÁFICOS ====================
@@ -896,17 +541,6 @@ async function renderDashboard() {
             }
         }
     });
-}
-
-function chartBarOptions() {
-    return {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ` $${ctx.raw.toLocaleString()}` } } },
-        scales: {
-            y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
-            x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
-        }
-    };
 }
 
 function chartLineOptions() {
@@ -1581,102 +1215,6 @@ async function restaurarTotalGastosAuto() {
 
 // ==================== GASTOS ====================
 
-// ==================== FUNCIÓN DE RESUMEN AUTOMÁTICO ====================
-// Agrupa los gastos por competencia y suma los montos por categoría.
-// Incluye el campo "montoFacturar" para cada gasto.
-async function generarResumenGastosPorCompetencia() {
-    const [gastos, competencias, categorias] = await Promise.all([
-        getTodos('gastos'),
-        getTodos('competencias'),
-        getTodos('categorias')
-    ]);
-
-    const resumen = {};
-
-    // Inicializar resumen para cada competencia existente
-    competencias.forEach(comp => {
-        resumen[comp.id] = {
-            id: comp.id,
-            nombre: comp.nombre,
-            codigo: comp.codigo || '',
-            categorias: {},
-            total: 0,
-            montoFacturar: 0
-        };
-    });
-
-    // Procesar cada gasto
-    gastos.forEach(g => {
-        const compId = Number(g.competenciaId);
-        if (!resumen[compId]) {
-            // Gasto sin competencia asociada
-            resumen[compId] = {
-                id: compId,
-                nombre: 'Sin competencia',
-                codigo: '',
-                categorias: {},
-                total: 0,
-                montoFacturar: 0
-            };
-        }
-
-        const monto = Number(g.monto) || 0;
-        const montoFacturar = Number(g.montoFacturar) || 0;
-
-        // PRIORIDAD 1: El gasto tiene una categoría deportiva específica asignada → usar directamente
-        const catDirecta = categorias.find(c => c.id === Number(g.categoriaId));
-        if (catDirecta) {
-            if (!resumen[compId].categorias[catDirecta.nombre]) {
-                resumen[compId].categorias[catDirecta.nombre] = { total: 0, montoFacturar: 0 };
-            }
-            resumen[compId].categorias[catDirecta.nombre].total += monto;
-            resumen[compId].categorias[catDirecta.nombre].montoFacturar += montoFacturar;
-            resumen[compId].total += monto;
-            resumen[compId].montoFacturar += montoFacturar;
-            return;
-        }
-
-        // PRIORIDAD 2: Sin categoría específica ('general' o vacío) → distribuir entre las categorías de la competencia
-        const comp = competencias.find(c => Number(c.id) === compId);
-        if (comp && comp.categoriasIds && comp.categoriasIds.length > 0) {
-            const montoCat = monto / comp.categoriasIds.length;
-            const montoFacturarCat = montoFacturar / comp.categoriasIds.length;
-            comp.categoriasIds.forEach(catId => {
-                const cat = categorias.find(c => c.id === Number(catId));
-                const nombreCat = cat ? cat.nombre : 'General / Compartido';
-                if (!resumen[compId].categorias[nombreCat]) {
-                    resumen[compId].categorias[nombreCat] = { total: 0, montoFacturar: 0 };
-                }
-                resumen[compId].categorias[nombreCat].total += montoCat;
-                resumen[compId].categorias[nombreCat].montoFacturar += montoFacturarCat;
-            });
-            resumen[compId].total += monto;
-            resumen[compId].montoFacturar += montoFacturar;
-            return;
-        }
-
-        // PRIORIDAD 3: Fallback → usar la categoría directamente asignada al gasto si existe
-        let catNombre;
-        if (g.categoriaId === 'general') {
-            catNombre = 'General / Compartido';
-        } else {
-            const cat = categorias.find(c => c.id === Number(g.categoriaId));
-            catNombre = cat ? cat.nombre : 'Desconocida';
-        }
-
-        if (!resumen[compId].categorias[catNombre]) {
-            resumen[compId].categorias[catNombre] = { total: 0, montoFacturar: 0 };
-        }
-        resumen[compId].categorias[catNombre].total += monto;
-        resumen[compId].categorias[catNombre].montoFacturar += montoFacturar;
-
-        resumen[compId].total += monto;
-        resumen[compId].montoFacturar += montoFacturar;
-    });
-
-    return resumen;
-}
-
 async function listarGastos() {
     const [competencias, gastos, rendiciones, detalleGastos] = await Promise.all([
         getTodos('competencias'),
@@ -1899,25 +1437,6 @@ async function guardarGastoExtraordinarioNuevo() {
     await listarGastos();
 }
 
-async function editarGasto(id) {
-    if (!puedeEditar()) return;
-    const g = await obtenerPorId('gastos', id);
-    if (!g) return;
-    await actualizarSelectoresFormularios();
-    document.getElementById('gasto-id').value = g.id;
-    document.getElementById('gasto-competencia').value = g.competenciaId;
-    if (document.getElementById('gasto-categoria')) {
-        document.getElementById('gasto-categoria').value = g.categoriaId || 'general';
-    }
-    document.getElementById('gasto-concepto').value = g.concepto;
-    document.getElementById('gasto-monto').value = g.monto;
-    document.getElementById('gasto-fecha').value = g.fecha;
-    document.getElementById('gasto-notas').value = g.observaciones || '';
-    document.getElementById('gasto-modal-title').innerText = 'Editar Gasto';
-    _fotoModalGasto = _fotoCampos(_IDS_MODAL_GASTO);
-    openModal('modal-gasto');
-}
-
 async function guardarGastoForm(e) {
     e.preventDefault();
     if (!puedeEditar()) return;
@@ -1942,155 +1461,9 @@ async function guardarGastoForm(e) {
     listarGastos();
 }
 
-async function eliminarGasto(id) {
-    if (!puedeEditar()) return;
-    if (!confirm('¿Eliminar este registro de gasto?')) return;
-    await eliminar('gastos', id);
-    dashboardDirty = true;
-    await listarGastos();
-}
-
-// ==================== PANEL RESUMEN DE COMPETENCIA ====================
-async function mostrarResumenCompetencia(compId, competencias, gastos, staff, categorias) {
-    const comp = await obtenerPorId('competencias', compId);
-    if (!comp) { cerrarResumenCompetencia(); return; }
-
-    const panel = document.getElementById('resumen-competencia-panel');
-    panel.style.display = 'block';
-
-    const circ = await obtenerPorId('circuitos', Number(comp.circuitoId));
-    const circNombre = circ ? `${circ.nombre} (${circ.ubicacion})` : 'Desconocido';
-    const catNombres = comp.categoriasIds.map(id => {
-        const cat = categorias.find(c => c.id === Number(id));
-        return cat ? cat.nombre : '';
-    }).filter(Boolean);
-    const staffNombres = (comp.staffIds || []).map(id => {
-        const s = staff.find(p => p.id === Number(id));
-        return s ? `${s.nombre} ${s.apellido} (${s.funcion})` : '';
-    }).filter(Boolean);
-
-    // Calcular totales
-    const costoSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + Number(g.monto), 0);
-    const rendiciones = await getTodos('rendiciones');
-    const detalleGastos = await getTodos('detalleGastos');
-    const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(comp.id));
-    const costoDetallado = rendicionesComp.reduce((s, r) => {
-        const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
-        return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
-    }, 0);
-    const costoAutoCalc = costoSinples + costoDetallado;
-    const tieneManual = comp.gastoTotal !== undefined && comp.gastoTotal !== null;
-    const costoComp = tieneManual ? Number(comp.gastoTotal) : costoAutoCalc;
-
-    // Calcular monto a facturar
-    const montoFacturarSinples = gastos.filter(g => Number(g.competenciaId) === Number(comp.id)).reduce((s, g) => s + (Number(g.montoFacturar) || 0), 0);
-    const montoFacturarDetallado = rendicionesComp.reduce((s, r) => {
-        const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
-        return s + detallesRend.reduce((sd, d) => sd + (Number(d.montoFacturar) || 0), 0);
-    }, 0);
-    const montoFacturarTotal = montoFacturarSinples + montoFacturarDetallado;
-    const tieneMontoFacturarManual = comp.montoFacturarManual !== undefined && comp.montoFacturarManual !== null;
-    const montoFacturarDisplay = tieneMontoFacturarManual ? Number(comp.montoFacturarManual) : montoFacturarTotal;
-
-    // Generar HTML de estadísticas (editable si tiene permisos)
-    const puedeEditarComp = puedeEditar() || esSupervisor();
-    let totalGastosHtml, montoFacturarHtml;
-    
-    if (puedeEditarComp) {
-        totalGastosHtml = `
-            <div class="stat-card" style="padding:1rem;cursor:pointer;" onclick="editarTotalCompetenciaInplace(${comp.id})" title="Clic para editar">
-                <div class="stat-info"><h3 style="font-size:0.85rem;">Total Gastos</h3>
-                <p style="font-size:1.1rem;color:var(--accent);font-weight:700;">${formatearMoneda(costoComp)}
-                    ${tieneManual ? '<i class="fa-solid fa-pencil" style="font-size:0.7rem;margin-left:4px;opacity:0.7;"></i>' : '<i class="fa-regular fa-pen-to-square" style="font-size:0.65rem;margin-left:4px;opacity:0.4;"></i>'}
-                </p></div>
-                <div class="stat-icon"><i class="fa-solid fa-dollar-sign"></i></div>
-            </div>`;
-        montoFacturarHtml = `
-            <div class="stat-card" style="padding:1rem;cursor:pointer;" onclick="editarMontoFacturarInplace(${comp.id})" title="Clic para editar">
-                <div class="stat-info"><h3 style="font-size:0.85rem;">Monto a Facturar</h3>
-                <p style="font-size:1.1rem;color:var(--accent);font-weight:700;">${formatearMoneda(montoFacturarDisplay)}
-                    ${tieneMontoFacturarManual ? '<i class="fa-solid fa-pencil" style="font-size:0.7rem;margin-left:4px;opacity:0.7;"></i>' : '<i class="fa-regular fa-pen-to-square" style="font-size:0.65rem;margin-left:4px;opacity:0.4;"></i>'}
-                </p></div>
-                <div class="stat-icon"><i class="fa-solid fa-file-invoice"></i></div>
-            </div>`;
-    } else {
-        totalGastosHtml = `
-            <div class="stat-card" style="padding:1rem;">
-                <div class="stat-info"><h3 style="font-size:0.85rem;">Total Gastos</h3><p style="font-size:1.1rem;color:var(--accent);font-weight:700;">${formatearMoneda(costoComp)}</p></div>
-                <div class="stat-icon"><i class="fa-solid fa-dollar-sign"></i></div>
-            </div>`;
-        montoFacturarHtml = `
-            <div class="stat-card" style="padding:1rem;">
-                <div class="stat-info"><h3 style="font-size:0.85rem;">Monto a Facturar</h3><p style="font-size:1.1rem;color:var(--accent);font-weight:700;">${formatearMoneda(montoFacturarDisplay)}</p></div>
-                <div class="stat-icon"><i class="fa-solid fa-file-invoice"></i></div>
-            </div>`;
-    }
-
-    document.getElementById('resumen-comp-stats').innerHTML = `
-        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Código</h3><p style="font-size:1.1rem;font-family:monospace;">${comp.codigo || 'SIN CÓDIGO'}</p></div><div class="stat-icon"><i class="fa-solid fa-hashtag"></i></div></div>
-        ${totalGastosHtml}
-        ${montoFacturarHtml}
-        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Categorías</h3><p style="font-size:1rem;">${catNombres.slice(0, 3).join(', ')}${catNombres.length > 3 ? ` (+${catNombres.length - 3})` : ''}</p></div><div class="stat-icon"><i class="fa-solid fa-tag"></i></div></div>
-        <div class="stat-card" style="padding:1rem;"><div class="stat-info"><h3 style="font-size:0.85rem;">Personal</h3><p style="font-size:1rem;">${staffNombres.length} asignados</p></div><div class="stat-icon"><i class="fa-solid fa-users"></i></div></div>
-    `;
-
-    document.getElementById('resumen-comp-info').innerHTML = `
-        <div><strong>Autódromo:</strong> ${circNombre}</div>
-        <div><strong>Código:</strong> <span style="font-family:monospace;">${comp.codigo || 'SIN CÓDIGO'}</span></div>
-        <div><strong>Fecha inicio:</strong> ${formatearFechaVisual(comp.fechaInicio)}</div>
-        <div><strong>Fecha fin:</strong> ${formatearFechaVisual(comp.fechaFin)}</div>
-        <div><strong>Total auto-calculado:</strong> ${formatearMoneda(costoAutoCalc)}</div>
-        <div><strong>Gastos simples:</strong> ${formatearMoneda(costoSinples)}</div>
-        <div><strong>Gastos detallados:</strong> ${formatearMoneda(costoDetallado)}</div>
-        <div><strong>Monto a facturar auto:</strong> ${formatearMoneda(montoFacturarTotal)}</div>
-    `;
-}
-
 function cerrarResumenCompetencia() {
     const panel = document.getElementById('resumen-competencia-panel');
     if (panel) panel.style.display = 'none';
-}
-
-// ==================== GASTO EXTRAORDINARIO ====================
-async function guardarGastoExtraordinario() {
-    if (!puedeEditar()) return;
-    
-    const compFiltro = document.getElementById('filtro-competencia-gastos').value;
-    if (!compFiltro || compFiltro === 'todos') {
-        alert('Seleccioná una competencia para agregar el gasto extraordinario.');
-        return;
-    }
-
-    const monto = Number(document.getElementById('extra-monto').value);
-    const concepto = document.getElementById('extra-concepto').value.trim();
-    const detalle = document.getElementById('extra-detalle').value.trim();
-
-    if (!monto || !concepto) {
-        alert('Ingresá el monto y concepto del gasto extraordinario.');
-        return;
-    }
-
-    const gasto = {
-        competenciaId: Number(compFiltro),
-        staffId: null,
-        categoriaId: 'general',
-        concepto: concepto,
-        monto: monto,
-        montoFacturar: monto,
-        fecha: new Date().toISOString().split('T')[0],
-        observaciones: detalle || 'Gasto extraordinario'
-    };
-
-    await guardar('gastos', gasto);
-    dashboardDirty = true;
-    
-    // Limpiar formulario
-    document.getElementById('extra-monto').value = '';
-    document.getElementById('extra-concepto').value = '';
-    document.getElementById('extra-detalle').value = '';
-    
-    mostrarToast('Gasto extraordinario guardado correctamente.');
-    await listarGastos();
 }
 
 // ==================== EDICIÓN RÁPIDA DE GASTO (NUEVO COMPONENTE) ====================
@@ -2328,21 +1701,6 @@ async function eliminarStaff(id) {
     await eliminar('staff', id);
     await quitarStaffDeCompetencias(id);
     listarStaff();
-}
-
-async function aplicarAsignacionesStaff(staffItem) {
-    const competencias = await getTodos('competencias');
-    for (const comp of competencias) {
-        const existeEnCompetencia = (comp.staffIds || []).includes(Number(staffItem.id));
-        const debeEstar = (staffItem.competenciasIds || []).includes(Number(comp.id));
-        if (debeEstar && !existeEnCompetencia) {
-            comp.staffIds = Array.from(new Set([...(comp.staffIds || []), Number(staffItem.id)]));
-            await guardar('competencias', comp);
-        } else if (!debeEstar && existeEnCompetencia) {
-            comp.staffIds = (comp.staffIds || []).filter(sid => Number(sid) !== Number(staffItem.id));
-            await guardar('competencias', comp);
-        }
-    }
 }
 
 async function aplicarAsignacionesCompetencia(competencia) {
@@ -3935,34 +3293,6 @@ function toggleResponsableLibre() {
 }
 // ==================== ALERTA / CONFIRMACIÓN PERSONALIZADA ====================
 let _alertaResolve = null;
-
-function mostrarAlerta(titulo, mensaje, icono = 'info') {
-    return new Promise((resolve) => {
-        const modal = document.getElementById('modal-alerta');
-        const iconoEl = document.getElementById('alerta-icono');
-        const tituloEl = document.getElementById('alerta-titulo');
-        const mensajeEl = document.getElementById('alerta-mensaje');
-        const btnCancelar = document.getElementById('alerta-btn-cancelar');
-        const btnConfirmar = document.getElementById('alerta-btn-confirmar');
-
-        const iconos = {
-            info: '<i class="fa-solid fa-circle-info" style="color: var(--accent-blue);"></i>',
-            warning: '<i class="fa-solid fa-triangle-exclamation" style="color: #ff9f43;"></i>',
-            error: '<i class="fa-solid fa-circle-exclamation" style="color: var(--accent);"></i>',
-            success: '<i class="fa-solid fa-circle-check" style="color: var(--accent-green);"></i>',
-            question: '<i class="fa-solid fa-circle-question" style="color: var(--accent-blue);"></i>'
-        };
-
-        iconoEl.innerHTML = iconos[icono] || iconos.info;
-        tituloEl.textContent = titulo;
-        mensajeEl.textContent = mensaje;
-        btnCancelar.style.display = 'none';
-        btnConfirmar.textContent = 'Aceptar';
-
-        _alertaResolve = resolve;
-        openModal('modal-alerta');
-    });
-}
 
 function mostrarConfirmacion(titulo, mensaje, icono = 'question') {
     return new Promise((resolve) => {
@@ -6129,23 +5459,9 @@ let chartInvCategorias = null;
 let chartInvStock = null;
 
 async function cargarDatosVista(viewId) {
-    switch(viewId) {
-        case 'dashboard':    dashboardDirty = true; await renderDashboard(); break;
-        case 'calendario':   await cargarYParsearCalendario(); break;
-        case 'competencias': await listarCompetencias(); break;
-        case 'gastos':       await listarGastos(); break;
-        case 'carga-detallada': await listarRendiciones(); break;
-        case 'personal-competencia': await cargarPersonalCompetencia(); break;
-        case 'inventario':   await renderDashboardInventario(); break;
-        case 'articulos':    await listarArticulos(); break;
-        case 'movimientos-inventario': await listarMovimientosInventario(); break;
-        case 'categorias-inventario': await listarCategoriasInventario(); break;
-        case 'entregas-inventario': await listarEntregas(); break;
-        case 'staff':        await listarStaff(); break;
-        case 'estadisticas-personal': await listarEstadisticasPersonal(); break;
-        case 'alojamiento':  await listarAlojamientos(); break;
-        case 'categorias-circuitos': await listarCategoriasCircuitos(); break;
-        case 'configuracion':await listarConfiguraciones(); break;
+    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
+    if (v && typeof v.cargarDatosVista === 'function') {
+        return v.cargarDatosVista(viewId);
     }
 }
 
@@ -6512,16 +5828,6 @@ function contarArticulosBajoStock(articulos, articuloTalles) {
         }
         return stock > 0 && stock <= (art.stockMinimo || 0);
     }).length;
-}
-
-async function obtenerStockArticulo(articuloId, articuloTalles) {
-    const art = await obtenerPorId('articulos', Number(articuloId));
-    if (!art) return 0;
-    if (art.controlaTalles) {
-        const talles = articuloTalles.filter(at => Number(at.articuloId) === Number(articuloId));
-        return talles.reduce((s, t) => s + Number(t.stock || 0), 0);
-    }
-    return Number(art.stockUnico || 0);
 }
 
 async function listarArticulos() {
@@ -9780,23 +9086,6 @@ async function actualizarGastoTotalCompetencia(compId) {
     // Los gastos simples + detallados ya se calculan automáticamente
     // Este campo se sumará en listarCompetencias, listarGastos y verCompetencia
     await guardar('competencias', comp);
-}
-
-// Obtener el total de personal para una competencia + gastos normales
-async function obtenerTotalGastosConPersonal(compId) {
-    const [gastos, rendiciones, detalleGastos] = await Promise.all([
-        getTodos('gastos'),
-        getTodos('rendiciones'),
-        getTodos('detalleGastos')
-    ]);
-    const costoSinples = gastos.filter(g => Number(g.competenciaId) === Number(compId)).reduce((s, g) => s + Number(g.monto), 0);
-    const rendicionesComp = rendiciones.filter(r => Number(r.competenciaId) === Number(compId));
-    const costoDetallado = rendicionesComp.reduce((s, r) => {
-        const detallesRend = detalleGastos.filter(d => Number(d.rendicionId) === Number(r.id));
-        return s + detallesRend.reduce((sd, d) => sd + Number(d.total || 0), 0);
-    }, 0);
-    const totalPersonal = await obtenerTotalPersonalCompetencia(compId);
-    return { normal: costoSinples + costoDetallado, personal: totalPersonal, total: costoSinples + costoDetallado + totalPersonal };
 }
 
 // ====================================================================

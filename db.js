@@ -20,18 +20,25 @@ const _cache = {};
 // para evitar lecturas repetidas innecesarias cuando ambas fuentes están vacías.
 const _cloudChecked = {};
 
+// FASE 6: estado de caché COMPARTIDO con src/services/persistenceService.js
+// (mismo objeto en ambos lados → la cache nunca se desincroniza).
+if (typeof window !== 'undefined') {
+    window.__CDA_DB_STATE__ = { _cache, _cloudChecked };
+}
+
 // ==================== INTEGRACIÓN CON FIREBASE ====================
 let dbFirebase = null;
 let useFirebase = false;
 
-const DEFAULT_FIREBASE_CONFIG = {
-    apiKey: "AIzaSyAGT318kBRICwdjrU05RCUNSJRanAQnfPQ",
-    projectId: "controlcda-e5f97",
-    storageBucket: "controlcda-e5f97.firebasestorage.app",
-    messagingSenderId: "971822887261",
-    appId: "1:971822887261:web:abe3fd29049c176946f8b4",
-    measurementId: "G-L5C4YLVW1V"
-};
+// ============================================================
+// CONFIGURACIÓN DE FIREBASE (FASE 3 - centralizada).
+// El objeto hardcodeado DEFAULT_FIREBASE_CONFIG fue ELIMINADO.
+// La nueva fuente de verdad es el módulo ES `src/services/firebaseConfig.js`,
+// que lee las variables de entorno (.env) vía import.meta.env.VITE_FIREBASE_*.
+// `main.js` (módulo ES) lo inyecta como `window.__CDA_FIREBASE_CONFIG__`
+// ANTES de DOMContentLoaded, es decir, antes de que db.js arranque Firebase,
+// para que `obtenerConfigFirebase()` siempre tenga una base disponible.
+// ============================================================
 
 // Detecta el entorno actual y devuelve el authDomain correcto
 function obtenerAuthDomainDinamico() {
@@ -54,10 +61,10 @@ function obtenerConfigFirebase() {
             config = JSON.parse(configStr);
         } catch (err) {
             console.warn('Configuración Firebase inválida en localStorage, usando configuración por defecto.', err);
-            config = { ...DEFAULT_FIREBASE_CONFIG };
+            config = { ...(typeof window !== 'undefined' && window.__CDA_FIREBASE_CONFIG__) || {} };
         }
     } else {
-        config = { ...DEFAULT_FIREBASE_CONFIG };
+        config = { ...(typeof window !== 'undefined' && window.__CDA_FIREBASE_CONFIG__) || {} };
     }
     
     // Ajustar authDomain dinámicamente según el entorno
@@ -216,6 +223,23 @@ async function inicializarFirebase() {
             window.signInWithEmailAndPassword = signInWithEmailAndPassword;
             window.onAuthStateChanged = onAuthStateChanged;
             window.signOut = signOut;
+
+            // FASE 5: bridge Firestore (Runtime) para el dominio de autenticación.
+            // authService (ES module) no puede leer los `let` de db.js; se los
+            // exponemos aquí de forma aditiva y aislada en un namespace.
+            window.__CDA_FIREBASE_RUNTIME__ = {
+                dbFirebase,
+                collection,
+                doc,
+                setDoc,
+                getDocs,
+                getDoc,
+                deleteDoc,
+                query,
+                where,
+                writeBatch,
+                get useFirebase() { return useFirebase; }
+            };
         }
 
         try {
@@ -1071,203 +1095,91 @@ function abrirTransaccionDefensiva(db, storeName, modo) {
     return db.transaction([storeName], modo);
 }
 
-// Helper genérico para guardar o actualizar un elemento
+// ==================== SINCRONIZACIÓN: DATOS SENSIBLES, VALIDACIÓN Y VERSIONES (FASE 3) ====================
+
+// Stores PROHIBIDOS de sincronizar con la nube (A-4): operan SOLO en IndexedDB local.
+// - 'usuarios': contiene passwordHash; jamás debe viajar a Firestore.
+// - 'configuracionGlobal': ajustes de la app puramente locales.
+const STORES_NO_SYNC = Object.freeze(['usuarios', 'configuracionGlobal']);
+
+function esStoreSincronizable(storeName) {
+    return !STORES_NO_SYNC.includes(storeName);
+}
+
+// Compara dos versiones de un registro para resolución defensiva de conflictos (A-3).
+// Gana el de mayor `version`; ante empate, el de `updatedAt` más reciente.
+function esMasReciente(a, b) {
+    const va = Number(a && a.version) || 0;
+    const vb = Number(b && b.version) || 0;
+    if (va !== vb) return va > vb;
+    const ta = a && a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+    const tb = b && b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+    return ta > tb;
+}
+
+// Validador interceptor simple (A-5): evita persistir objetos corruptos en IndexedDB/Firestore.
+// - Problemas GRAVES (no es objeto / falta id / funciones / NaN / circular) abortan la escritura.
+function validarRegistro(storeName, item) {
+    const resultado = { ok: true, motivo: '' };
+
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+        resultado.ok = false;
+        resultado.motivo = `[${storeName}] No se escribió: el registro no es un objeto simple.`;
+        return resultado;
+    }
+
+    if (typeof item.id === 'undefined') {
+        resultado.ok = false;
+        resultado.motivo = `[${storeName}] No se escribió: falta el campo 'id'.`;
+        return resultado;
+    }
+
+    const prohibidos = Object.values(item).some(
+        (v) => typeof v === 'function' || (typeof v === 'number' && Number.isNaN(v))
+    );
+    if (prohibidos) {
+        resultado.ok = false;
+        resultado.motivo = `[${storeName}] No se escribió: el registro contiene funciones o NaN.`;
+        return resultado;
+    }
+
+    // Referencias circulares → romperían JSON/IndexedDB/Firestore.
+    try {
+        JSON.stringify(item);
+    } catch (e) {
+        resultado.ok = false;
+        resultado.motivo = `[${storeName}] No se escribió: el registro contiene referencias circulares.`;
+        return resultado;
+    }
+
+    return resultado;
+}
+
+// FASE 6: la lógica real de persistencia vive en src/services/persistenceService.js.
 async function guardar(storeName, item) {
-    // Regla de escritura para objetos anidados (ej: usuario.permisos): se clonan en
-    // profundidad ANTES de escribir para (a) que el documento jamás comparta referencias
-    // con la caché de IndexedDB o con objetos de la sesión, y (b) que Firestore reciba
-    // el objeto ENTERO reemplazado vía setDoc (más abajo) — nunca un merge parcial
-    // estilo updateDoc que dejaría propiedades viejas mezcladas con las nuevas.
-    if (item && typeof item === 'object' && item.permisos && typeof item.permisos === 'object') {
-        item.permisos = limpiarObjetoParaFirebase(item.permisos);
-    }
-
-    // Si la ID no existe, generamos un identificador numérico único basado en timestamp
-    if (!item.id) {
-        item.id = Date.now() + Math.floor(Math.random() * 1000);
-    } else {
-        item.id = Number(item.id);
-    }
-
-    // SIEMPRE guardar primero en IndexedDB (fuente primaria local)
-    const result = await new Promise((resolve, reject) => {
-        openDB().then(db => {
-            const transaction = abrirTransaccionDefensiva(db, storeName, 'readwrite');
-            if (!transaction) { reject(`Object store '${storeName}' no disponible en IndexedDB.`); return; }
-            const store = transaction.objectStore(storeName);
-            const request = store.put(item);
-
-            request.onsuccess = (event) => {
-                const key = event.target.result;
-                try { if (!item.id) item.id = Number(key); } catch(e) {}
-
-                // Update in-memory cache if present so UI sees changes immediately
-                if (_cache[storeName]) {
-                    const idx = _cache[storeName].findIndex(x => Number(x.id) === Number(item.id));
-                    const clone = Object.assign({}, item);
-                    if (idx >= 0) {
-                        _cache[storeName][idx] = clone;
-                    } else {
-                        _cache[storeName].push(clone);
-                    }
-                }
-
-                resolve(key);
-            };
-
-            request.onerror = (event) => {
-                reject(`Error al guardar en ${storeName}: ` + event.target.error);
-            };
-        }).catch(reject);
-    });
-
-    // También sincronizar con Firebase si está conectado (no bloqueante, no revienta si falla)
-    if (useFirebase) {
-        try {
-            const docRef = doc(dbFirebase, storeName, String(item.id));
-            const itemToSync = limpiarObjetoParaFirebase(item);
-            await setDoc(docRef, itemToSync);
-        } catch (e) {
-            console.warn(`Firebase sync warning [${storeName}]:`, e);
-            // No lanzar error - la app sigue funcionando con datos locales
-        }
-    }
-
-    return result;
+    const p = typeof window !== 'undefined' ? window.__CDA_MODULES__?.persistencia : null;
+    if (p && typeof p.guardar === 'function') return p.guardar(storeName, item);
+    return null; // degradación controlada
 }
 
-// Helper genérico para obtener todos los elementos (con caché)
-// opciones.soloLocal: true → no intentar leer desde Firestore si IndexedDB está vacío
-// (usado por la sincronización local→nube para evitar lecturas redundantes a la nube)
+// FASE 6: la lógica real de persistencia vive en src/services/persistenceService.js.
 async function getTodos(storeName, opciones = {}) {
-    // Si hay datos en caché (no vacíos), los devuelve directamente sin tocar la BD
-    if (_cache[storeName] && _cache[storeName].length > 0) {
-        return _cache[storeName];
-    }
-
-    // SIEMPRE leer desde IndexedDB como fuente primaria. Firebase es solo para escritura/sync.
-    const dataLocal = await new Promise((resolve, reject) => {
-        openDB().then(db => {
-            const transaction = abrirTransaccionDefensiva(db, storeName, 'readonly');
-            // Store faltante (esquema inconsistente): se degrada a lista vacía en lugar de
-            // lanzar el NotFoundError no capturado que congelaba el hilo de la interfaz.
-            if (!transaction) { resolve([]); return; }
-            const store = transaction.objectStore(storeName);
-            const request = store.getAll();
-
-            request.onsuccess = (event) => {
-                _cache[storeName] = event.target.result; // guardar en caché
-                resolve(event.target.result);
-            };
-
-            request.onerror = (event) => {
-                reject(`Error al leer de ${storeName}: ` + event.target.error);
-            };
-        }).catch(reject);
-    });
-
-    // OPTIMIZACIÓN DE LAS FUNCIONES DE CARGA DE DATOS (GETDOCS):
-    // Si la colección local (IndexedDB) está vacía y Firebase está conectado,
-    // forzar un 'await getDocs(collection(dbFirebase, storeName))' directo a la nube
-    // para no quedarse congelado apuntando a un almacenamiento local vacío.
-    if (dataLocal.length === 0 && !opciones.soloLocal && useFirebase && dbFirebase && typeof getDocs === 'function' && typeof collection === 'function' && !_cloudChecked[storeName]) {
-        _cloudChecked[storeName] = true;
-        try {
-            console.log(`Colección '${storeName}' vacía en IndexedDB. Forzando lectura directa desde Firestore...`);
-            const querySnapshot = await getDocs(collection(dbFirebase, storeName));
-            const dataNube = [];
-            querySnapshot.forEach(docSnap => {
-                const item = docSnap.data();
-                item.id = Number(docSnap.id) || docSnap.id;
-                dataNube.push(item);
-            });
-            _cache[storeName] = dataNube;
-
-            // Guardar en IndexedDB para futuras cargas rápidas sin depender de la red
-            if (dataNube.length > 0) {
-                try {
-                    const db = await openDB();
-                    const transaction = abrirTransaccionDefensiva(db, storeName, 'readwrite');
-                    const store = transaction ? transaction.objectStore(storeName) : null;
-                    if (store) {
-                        for (const item of dataNube) {
-                            store.put(item);
-                        }
-                    }
-                } catch (e) {
-                    console.warn(`No se pudo guardar en IndexedDB la colección '${storeName}':`, e);
-                }
-            }
-
-            console.log(`Colección '${storeName}' cargada desde Firestore: ${dataNube.length} registros.`);
-            return dataNube;
-        } catch (e) {
-            console.warn(`Error al leer '${storeName}' desde Firestore:`, e);
-        }
-    }
-
-    return dataLocal;
+    const p = typeof window !== 'undefined' ? window.__CDA_MODULES__?.persistencia : null;
+    if (p && typeof p.getTodos === 'function') return p.getTodos(storeName, opciones);
+    return [];
 }
 
-// Helper genérico para eliminar por ID
+// FASE 6: la lógica real de persistencia vive en src/services/persistenceService.js.
 async function eliminar(storeName, id) {
-    // SIEMPRE eliminar primero de IndexedDB (fuente primaria local)
-    await new Promise((resolve, reject) => {
-        openDB().then(db => {
-            const transaction = abrirTransaccionDefensiva(db, storeName, 'readwrite');
-            if (!transaction) { reject(`Object store '${storeName}' no disponible en IndexedDB.`); return; }
-            const store = transaction.objectStore(storeName);
-            const request = store.delete(Number(id));
-
-            request.onsuccess = () => {
-                // Update in-memory cache if present so UI updates immediately
-                if (_cache[storeName]) {
-                    _cache[storeName] = _cache[storeName].filter(x => Number(x.id) !== Number(id));
-                }
-                resolve();
-            };
-
-            request.onerror = (event) => {
-                reject(`Error al eliminar en ${storeName}: ` + event.target.error);
-            };
-        }).catch(reject);
-    });
-
-    // También sincronizar con Firebase si está conectado (no bloqueante)
-    if (useFirebase) {
-        try {
-            await deleteDoc(doc(dbFirebase, storeName, String(id)));
-        } catch (e) {
-            console.warn(`Firebase delete sync warning [${storeName}]:`, e);
-            // No lanzar error - la app sigue funcionando con datos locales
-        }
-    }
+    const p = typeof window !== 'undefined' ? window.__CDA_MODULES__?.persistencia : null;
+    if (p && typeof p.eliminar === 'function') return p.eliminar(storeName, id);
 }
 
-// Helper genérico para obtener por ID
+// FASE 6: la lógica real de persistencia vive en src/services/persistenceService.js.
 async function obtenerPorId(storeName, id) {
-    if (_cache[storeName]) {
-        const found = _cache[storeName].find(x => Number(x.id) === Number(id));
-        if (found) return found;
-    }
-
-    // SIEMPRE leer desde IndexedDB como fuente primaria. Firebase es solo para escritura/sync.
-    return new Promise((resolve, reject) => {
-        openDB().then(db => {
-            const transaction = abrirTransaccionDefensiva(db, storeName, 'readonly');
-            if (!transaction) { resolve(null); return; }
-            const store = transaction.objectStore(storeName);
-            const request = store.get(Number(id));
-
-            request.onsuccess = (event) => {
-                resolve(event.target.result);
-            };
-
-            request.onerror = (event) => {
-                reject(`Error al obtener de ${storeName} con id ${id}: ` + event.target.error);
-            };
-        }).catch(reject);
-    });
+    const p = typeof window !== 'undefined' ? window.__CDA_MODULES__?.persistencia : null;
+    if (p && typeof p.obtenerPorId === 'function') return p.obtenerPorId(storeName, id);
+    return null;
 }
 
 // Variable global para que la UI muestre el estado de la sincronización
@@ -1283,135 +1195,17 @@ async function obtenerNombresColeccionesLocales() {
     return Array.from(db.objectStoreNames);
 }
 
-// Descarga los registros que ya existen en Firestore y los incorpora a IndexedDB.
-// Se hace una unión por ID para no perder registros locales todavía no sincronizados.
+// FASE 6: la lógica real de sincronización vive en src/services/persistenceService.js.
 async function sincronizarFirebaseALocal(stores) {
-    if (!useFirebase || !dbFirebase || typeof getDocs !== 'function' || typeof collection !== 'function') return 0;
-
-    let total = 0;
-    for (const storeName of stores) {
-        try {
-            const snapNube = await getDocs(collection(dbFirebase, storeName));
-            if (snapNube.empty) continue;
-
-            invalidarCache(storeName);
-            const locales = await getTodos(storeName, { soloLocal: true });
-            const porId = new Map(locales.map(item => [String(item.id), item]));
-            const desdeNube = [];
-
-            snapNube.forEach(docSnap => {
-                const item = docSnap.data();
-                item.id = Number(docSnap.id) || docSnap.id;
-                porId.set(String(item.id), item);
-                desdeNube.push(item);
-            });
-
-            const db = await openDB();
-            const transaction = abrirTransaccionDefensiva(db, storeName, 'readwrite');
-            if (!transaction) continue;
-            const store = transaction.objectStore(storeName);
-            for (const item of desdeNube) store.put(item);
-
-            await new Promise((resolve, reject) => {
-                transaction.oncomplete = resolve;
-                transaction.onerror = () => reject(transaction.error);
-                transaction.onabort = () => reject(transaction.error || new Error('Transacción cancelada'));
-            });
-
-            _cache[storeName] = Array.from(porId.values());
-            total += desdeNube.length;
-            console.log(`Colección '${storeName}': ${desdeNube.length} registros descargados desde Firestore.`);
-        } catch (e) {
-            console.warn(`No se pudo descargar '${storeName}' desde Firestore:`, e);
-        }
-    }
-    return total;
+    const p = typeof window !== 'undefined' ? window.__CDA_MODULES__?.persistencia : null;
+    if (p && typeof p.sincronizarFirebaseALocal === 'function') return p.sincronizarFirebaseALocal(stores);
+    return 0;
 }
 
-// Sincronizar todos los datos locales (IndexedDB) a Firebase
-// Se ejecuta automáticamente cuando Firebase se conecta.
-// VERIFICACIÓN Y CREACIÓN DE COLECCIONES LOCALES -> NUBE:
-// - Descubre dinámicamente los nombres reales de las colecciones desde IndexedDB.
-// - Verifica si Firestore está vacía (0 registros) en cada colección.
-// - Si está vacía, sube OBLIGATORIAMENTE TODOS los registros locales uno por uno,
-//   conservando la misma estructura.
-// - Al finalizar, dispara un evento para que la interfaz se recargue de inmediato.
+// FASE 6: la lógica real de sincronización vive en src/services/persistenceService.js.
 async function sincronizarLocalAFirebase() {
-    if (!useFirebase || !dbFirebase) {
-        if (typeof window !== 'undefined') {
-            window.firebaseSyncResult = { status: 'error', message: 'Firebase no está conectado.', count: 0 };
-        }
-        return;
-    }
-
-    // 1) Descubrir dinámicamente los nombres REALES de las colecciones desde IndexedDB
-    let stores;
-    try {
-        stores = await obtenerNombresColeccionesLocales();
-        console.log('Colecciones locales detectadas en IndexedDB:', stores);
-    } catch (e) {
-        console.warn('No se pudieron obtener las colecciones locales, usando lista por defecto:', e);
-        stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos', 'ubicacionesInventario', 'tiposMovimiento'];
-    }
-
-    let total = 0;
-    const detalle = [];
-
-    for (const storeName of stores) {
-        // 2) VERIFICAR si Firestore ya tiene datos en esta colección
-        let registrosNube = 0;
-        try {
-            const snapNube = await getDocs(collection(dbFirebase, storeName));
-            registrosNube = snapNube.size;
-        } catch (e) {
-            console.warn(`No se pudo verificar la colección '${storeName}' en Firestore:`, e);
-        }
-
-        // 3) Si Firestore está VACÍA (0 registros), subir TODOS los registros locales
-        if (registrosNube === 0) {
-            // Leer desde IndexedDB (forzando sin caché y sin intentar leer de la nube,
-            // porque ya sabemos que Firestore está vacía)
-            invalidarCache(storeName);
-            const data = await getTodos(storeName, { soloLocal: true });
-            for (const item of data) {
-                try {
-                    const docRef = doc(dbFirebase, storeName, String(item.id));
-                    const itemToSync = limpiarObjetoParaFirebase(item);
-                    await setDoc(docRef, itemToSync);
-                    total++;
-                } catch (e) {
-                    console.warn(`Error sync ${storeName}/${item.id}:`, e);
-                }
-            }
-            if (data.length > 0) {
-                detalle.push(`${storeName}: ${data.length} registros subidos (Firestore estaba vacía)`);
-                console.log(`Colección '${storeName}': Firestore vacía → subidos ${data.length} registros locales.`);
-            } else {
-                detalle.push(`${storeName}: 0 registros (local y nube vacíos)`);
-            }
-        } else {
-            detalle.push(`${storeName}: ${registrosNube} registros ya en Firestore (se omite subida)`);
-            console.log(`Colección '${storeName}': ya tiene ${registrosNube} registros en Firestore. Se omite la subida.`);
-        }
-    }
-
-    if (typeof window !== 'undefined') {
-        window.firebaseSyncResult = { status: 'synced', message: `Completado: ${total} registros subidos.`, count: total, detalle };
-    }
-    console.log(`Sincronización local→Firebase completada: ${total} registros subidos.`);
-    console.log('Detalle de sincronización:', detalle);
-
-    // Firestore puede contener datos cargados desde otro navegador. Incorporarlos
-    // también al almacenamiento local evita que Carga Detallada quede vacía.
-    const descargados = await sincronizarFirebaseALocal(stores);
-    console.log(`Sincronización Firebase→local completada: ${descargados} registros descargados.`);
-
-    // RENDERIZADO ASÍNCRONO DE LA INTERFAZ:
-    // Disparar evento para que la interfaz gráfica se recargue de inmediato
-    // y dibuje los datos descargados/subidos sin necesidad de recargar la página.
-    if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('firebase-sync-complete', { detail: { total, detalle } }));
-    }
+    const p = typeof window !== 'undefined' ? window.__CDA_MODULES__?.persistencia : null;
+    if (p && typeof p.sincronizarLocalAFirebase === 'function') return p.sincronizarLocalAFirebase();
 }
 
 // Función para importar datos desde backup
