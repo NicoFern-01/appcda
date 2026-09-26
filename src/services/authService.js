@@ -89,9 +89,22 @@ function mensajeErrorAuth(error) {
   return 'Usuario o contraseña incorrectos.';
 }
 
-/** Muestra el error de login sin bloquear la interfaz. */
-function mostrarErrorLogin(errorEl) {
+/**
+ * Muestra el error de login sin bloquear la interfaz.
+ * @param {HTMLElement} errorEl Contenedor del mensaje.
+ * @param {string} [detalle] Código técnico (p.ej. 'auth/invalid-credential').
+ *   Se muestra siempre: sin esto es imposible saber POR QUE falla el login,
+ *   porque el mensaje al usuario es siempre el mismo.
+ */
+function mostrarErrorLogin(errorEl, detalle) {
   if (errorEl) errorEl.style.display = 'flex';
+  const textoEl = document.getElementById('login-error-text');
+  if (textoEl) textoEl.textContent = mensajeErrorAuth({ code: detalle }) || 'Usuario o contraseña incorrectos.';
+  const detEl = document.getElementById('login-error-detail');
+  if (detEl) {
+    detEl.textContent = detalle || '';
+    detEl.style.display = detalle ? 'block' : 'none';
+  }
   const inputPass = document.getElementById('login-password');
   if (inputPass) inputPass.value = '';
 }
@@ -396,6 +409,13 @@ export async function handleLogin(event) {
   const rt = firebaseRuntime();
   const authListo = !!(rt.auth && typeof rt.signInWithEmailAndPassword === 'function');
 
+  // Diagnóstico: deja ver EXACTAMENTE qué email se está usando contra Firebase.
+  // Si el usuario escribió "admin" y aquí no dice admin@controlcda.com, el
+  // problema es de mapeo, no de contraseña.
+  console.log('[authService] Intentando login -> email:', identidad.email,
+    '| Firebase Auth disponible:', authListo,
+    '| proyecto:', rt.dbFirebase ? 'conectado' : 'sin conectar');
+
   try {
     // ---------- CAPA 1: Firebase Authentication ----------
     if (authListo) {
@@ -476,7 +496,7 @@ export async function handleLogin(event) {
         if (migrado) return;
       }
 
-      mostrarErrorLogin(errorEl);
+      mostrarErrorLogin(errorEl, code);
       return;
     }
 

@@ -45,7 +45,11 @@
                         </div>
                     </div>
                     <div id="login-error" class="login-error" style="display:none;">
-                        <i class="fa-solid fa-triangle-exclamation"></i> Usuario o contraseña incorrectos.
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        <span id="login-error-text">Usuario o contraseña incorrectos.</span>
+                        <!-- Detalle técnico: indispensable para diagnosticar fallos
+                             de migración/autenticación. Oculto por defecto. -->
+                        <small id="login-error-detail" style="display:none;opacity:0.8;margin-top:0.35rem;display:none;font-family:monospace;"></small>
                     </div>
                     <button type="submit" class="btn login-btn" id="login-submit-btn">
                         <i class="fa-solid fa-right-to-bracket"></i> Ingresar
