@@ -134,7 +134,31 @@ let storageFirebase = null;
 
 // Variables de módulo de Firebase Auth
 let getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword;
+let deleteApp = null;
 let authFirebase = null;
+let firebaseConfigActiva = null;
+
+// ==================== ALTA DE USUARIOS SIN ROBAR LA SESIÓN ====================
+// `createUserWithEmailAndPassword()`sobre el Auth principal INICIA SESIÓN con
+// la cuenta recien creada, expulsando al administrador que esta operando. Eso
+// rompe a continuacion: el setDoc del perfil se ejecuta con los permisos del
+// usuario nuevo (que no es admin) y las reglas de Firestore lo rechazan.
+//
+// Solucion: crear la cuenta en una APP SECUNDARIA de Firebase (mismo proyecto,
+// instancia de Auth independiente). La sesion principal del admin nunca se toca.
+const APP_SECUNDARIA_NOMBRE = 'cda-alta-usuarios';
+let authSecundario = null;
+
+async function crearUsuarioEnAppSecundaria(email, password) {
+    if (!initializeApp || !getAuth || !createUserWithEmailAndPassword) {
+        throw new Error('El SDK de Firebase Auth no esta disponible.');
+    }
+    if (!authSecundario) {
+        const app = initializeApp(firebaseConfigActiva, APP_SECUNDARIA_NOMBRE);
+        authSecundario = getAuth(app);
+    }
+    return createUserWithEmailAndPassword(authSecundario, email, password);
+}
 
 // ==================== CREDENCIALES POR DEFECTO DEL ADMIN ====================
 // Fuente única de verdad del usuario administrador inicial. Se crea de forma
@@ -237,6 +261,7 @@ async function inicializarFirebase() {
         createUserWithEmailAndPassword = authMod.createUserWithEmailAndPassword;
 
         const app = initializeApp(config);
+        firebaseConfigActiva = config;
         storageFirebase = getStorage(app);
         authFirebase = getAuth(app);
         if (initializeFirestore) {
@@ -303,6 +328,9 @@ async function inicializarFirebase() {
                 onAuthStateChanged,
                 signOut,
                 createUserWithEmailAndPassword,
+                // Alta de cuentas en una app secundaria: NO cierra la sesion del
+                // administrador que esta creando al usuario.
+                crearUsuarioEnAppSecundaria,
                 get useFirebase() { return useFirebase; }
             };
         }
