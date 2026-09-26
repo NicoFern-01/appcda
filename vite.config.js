@@ -4,6 +4,7 @@
 
 import { defineConfig } from 'vite';
 import { fileURLToPath, URL } from 'node:url';
+import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 export default defineConfig({
   // Raíz del proyecto = carpeta donde está index.html
@@ -16,10 +17,21 @@ export default defineConfig({
   // cualquier e incluso abierto vía file://.
   base: './',
 
-  // Servir la SPA estática tal cual, sin plugin de framework.
-  // La app ya usa scripts clásicos (import dinámico de Firebase al vuelo),
-  // por lo que no es necesario ningún plugin adicional.
-  plugins: [],
+  // La app conserva scripts clásicos además del bundle de módulos ES.
+  // Vite NO puede procesar `<script src="app.js">` / `<script src="db.js">`
+  // porque no llevan `type="module"`, así que no los incluye en dist/ por su
+  // cuenta y en producción terminaban pidiendo archivos inexistentes (404),
+  // rompiendo login, IndexedDB y las 16 vistas.
+  // viteStaticCopy los copia tal cual, sin transformar, a la raíz de dist/,
+  // de modo que las rutas relativas del index.html empaquetado los resuelven.
+  plugins: [
+    viteStaticCopy({
+      targets: [
+        { src: 'app.js', dest: '.' },
+        { src: 'db.js', dest: '.' },
+      ],
+    }),
+  ],
 
   resolve: {
     // Base para importar archivos de la propia app usando '@/' (opcional, no obligatorio).
