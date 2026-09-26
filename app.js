@@ -2604,10 +2604,28 @@ async function listarUsuarios() {
     if (!esAdmin()) return;
     let usuarios = await getTodos('usuarios');
 
+    // ============ FUENTE DE VERDAD: LA NUBE ============
+    // IndexedDB es POR DISPOSITIVO: los usuarios creados en la consola de
+    // Firebase o en otro equipo NO existían acá, por eso no aparecían en la
+    // lista. Se lee `usuarios` de Firestore y se fusiona con los locales.
+    const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
+    if (directorio && typeof directorio.listarPerfiles === 'function') {
+        const perfiles = await directorio.listarPerfiles();
+        if (perfiles.length) {
+            const porClave = new Map();
+            //Primero la nube (manda), después los locales que no estén en ella.
+            perfiles.forEach(p => porClave.set(String(p.id).toLowerCase(), p));
+            usuarios.forEach(u => {
+                const clave = String(u.id).toLowerCase();
+                if (!porClave.has(clave)) porClave.set(clave, { ...u, origen: 'local' });
+            });
+            usuarios = Array.from(porClave.values());
+        }
+    }
+
     // El `username` es la clave unica e inmutable (es el ID del documento en
     // Firestore). Si por data pasada quedaron duplicados ('admin' dos veces),
     // se muestran solo el registro con el rol mas privilegiado.
-    const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
     if (directorio && typeof directorio.limpiarDuplicadosLocales === 'function') {
         const { unicos } = await directorio.limpiarDuplicadosLocales(usuarios);
         usuarios = unicos;
