@@ -39,15 +39,16 @@ service cloud.firestore {
     }
 
     function esAdmin() {
-      return signedIn() && miPerfil().rol == 'admin' && miPerfil().activo == true;
+      return signedIn() && miPerfil() != null && miPerfil().rol == 'admin' && miPerfil().activo == true;
     }
 
     // Roles que pueden escribir datos operativos. La app tiene perfiles
-    // 'editor' y 'supervisor' que SIfuen editan sus modulos con los permisos
+    // 'editor' y 'supervisor' que SI editan sus modulos con los permisos
     // granulares de la matriz: excluirlos de los datos les romperia el uso
     // diario. 'viewer' queda excluido (solo lectura).
     function puedeEscribirDatos() {
       return signedIn()
+          && miPerfil() != null
           && miPerfil().activo == true
           && miPerfil().rol in ['admin', 'editor', 'supervisor'];
     }

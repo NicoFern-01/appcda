@@ -247,6 +247,51 @@ export const userDirectoryService = {
     }
   },
 
+  /**
+   * Lista los perfiles de la NUBE (Firestore), que es la fuente de verdad de
+   * los usuarios multi-dispositivo.
+   *
+   * ESTO ES ESENCIAL: la lista de "Control de Usuarios" se armaba solo con
+   * IndexedDB, que es POR DISPOSITIVO. Por eso los usuarios creados en la
+   * consola de Firebase (o en otro dispositivo) no aparecian nunca, aunque
+   * existieran y se pudieran loguear.
+   *
+   * @returns {Promise<Array>} perfiles normalizados (id = doc id).
+   */
+  async listarPerfiles() {
+    const rt = runtime();
+    if (!firestoreDisponible() || typeof rt.getDocs !== 'function') return [];
+    // Sin sesión las reglas rechazan la lectura: se devuelve vacío sin romper.
+    if (!rt.auth || !rt.auth.currentUser) {
+      console.info('[usuarios] Sin sesión activa: no se listan los perfiles de la nube.');
+      return [];
+    }
+    try {
+      const snap = await rt.getDocs(rt.collection(rt.dbFirebase, 'usuarios'));
+      if (!snap || snap.empty) return [];
+      return snap.docs.map((d) => {
+        const data = d.data() || {};
+        return {
+          id: d.id,
+          username: data.username || d.id,
+          nombre: data.nombre || data.username || d.id,
+          rol: data.rol || 'viewer',
+          activo: data.activo !== false,
+          email: data.email || null,
+          permisos: (data.permisos && typeof data.permisos === 'object')
+            ? JSON.parse(JSON.stringify(data.permisos))
+            : null,
+          origen: 'nube'
+        };
+      });
+    } catch (e) {
+      console.error('[usuarios] No se pudieron listar los perfiles de la nube:', {
+        code: e && e.code, message: e && e.message
+      });
+      return [];
+    }
+  },
+
   /** ¿Existe ya un perfil en Firestore para este username? */
   async existeEnNube(username) {
     if (!firestoreDisponible()) return false;

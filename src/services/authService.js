@@ -30,6 +30,15 @@
 
 import { construirIdentidadLogin } from './authCredentials.js';
 
+/**
+ * ID de documento en `usuarios`: el username en minusculas (misma clave que
+ * usa userDirectoryService al escribir). Se replica aquí para no generar una
+ * dependencia circular entre los dos servicios.
+ */
+function idDocumento(username) {
+  return String(username || '').trim().toLowerCase();
+}
+
 // Devuelve un global como funcion si existe (la app legacy sigue siendo de scripts clasicos).
 function lecturaGlobal(fn) {
   return typeof globalThis !== 'undefined' && typeof globalThis[fn] === 'function'
@@ -148,23 +157,30 @@ async function resolverPerfilEnFirestore(username, email) {
 
   const ref = rt.collection(rt.dbFirebase, 'usuarios');
 
-  const intentarPor = async (campo, valor) => {
+  // Se consulta POR ID de documento (que es el username en minusculas) en vez de
+  // por una query `where(...)`: el ID es la clave canonica del perfil y una query
+  // puede ser rechazada por las reglas de seguridad. La query queda solo como
+  // respaldo para perfiles cuyo ID difiere del username.
+  const porId = async (valorDoc) => {
+    const id = idDocumento(valorDoc);
+    if (!id) return null;
+    try {
+      const snap = await rt.getDoc(rt.doc(rt.dbFirebase, 'usuarios', id));
+      if (snap && typeof snap.exists === 'function' && snap.exists()) {
+        return normalizarPerfil(snap.data(), id);
+      }
+    } catch (e) {
+      console.warn('[authService] No se pudo leer el perfil por ID "' + id + '":', e && e.code);
+    }
+    return null;
+  };
+
+  const porQuery = async (campo, valor) => {
     try {
       const q = rt.query(ref, rt.where(campo, '==', valor), rt.where('activo', '==', true));
       const snap = await rt.getDocs(q);
       if (snap && !snap.empty) {
-        const doc = snap.docs[0];
-        const data = doc.data();
-        return {
-          id: doc.id,
-          username: data.username || username,
-          nombre: data.nombre || 'Usuario',
-          rol: data.rol || 'viewer',
-          permisos: (data.permisos && typeof data.permisos === 'object')
-            ? JSON.parse(JSON.stringify(data.permisos))
-            : null,
-          activo: true
-        };
+        return normalizarPerfil(snap.docs[0].data(), snap.docs[0].id);
       }
     } catch (e) {
       console.warn('[authService] No se pudo leer el perfil por ' + campo + ':', e && e.code);
@@ -172,7 +188,24 @@ async function resolverPerfilEnFirestore(username, email) {
     return null;
   };
 
-  return (await intentarPor('username', username)) || (await intentarPor('email', email));
+  return (await porId(username)) ||
+         (await porQuery('email', email)) ||
+         (await porId(email));
+}
+
+/** Normaliza un documento de `usuarios` al formato interno de sesión. */
+function normalizarPerfil(data, docId) {
+  if (!data) return null;
+  return {
+    id: docId,
+    username: data.username || docId,
+    nombre: data.nombre || data.username || docId,
+    rol: data.rol || 'viewer',
+    permisos: (data.permisos && typeof data.permisos === 'object')
+      ? JSON.parse(JSON.stringify(data.permisos))
+      : null,
+    activo: true
+  };
 }
 
 // ---------------- Iniciar sesion ----------------
