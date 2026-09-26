@@ -22,6 +22,7 @@ import getFirebaseConfig, { firebaseConfig } from './services/firebaseConfig.js'
 import validarRegistro from './services/schemaValidator.js';
 import authService from './services/authService.js';
 import persistenceService from './services/persistenceService.js';
+import userDirectoryService from './services/userDirectoryService.js';
 import viewManager from './services/viewManager.js';
 import { views } from './views/index.js';
 
@@ -44,6 +45,7 @@ if (typeof window !== 'undefined') {
     auth: authService,
     persistencia: persistenceService,
     vistas: viewManager,
+    usuarios: userDirectoryService,
     router: { registerView, navigate, VIEW_IDS },
   });
 }

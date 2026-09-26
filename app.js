@@ -2527,7 +2527,17 @@ async function eliminarCircuito(id) {
 
 async function listarUsuarios() {
     if (!esAdmin()) return;
-    const usuarios = await getTodos('usuarios');
+    let usuarios = await getTodos('usuarios');
+
+    // El `username` es la clave unica e inmutable (es el ID del documento en
+    // Firestore). Si por data pasada quedaron duplicados ('admin' dos veces),
+    // se muestran solo el registro con el rol mas privilegiado.
+    const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
+    if (directorio && typeof directorio.limpiarDuplicadosLocales === 'function') {
+        const { unicos } = await directorio.limpiarDuplicadosLocales(usuarios);
+        usuarios = unicos;
+    }
+
     const tbody = document.getElementById('config-usuarios-body');
     tbody.innerHTML = '';
 
@@ -2851,8 +2861,10 @@ async function guardarUsuarioForm(e) {
 
     if (!id) {
         const todos = await getTodos('usuarios');
-        if (todos.find(u => u.username === username)) {
-            alert('Ya existe un usuario con ese nombre de usuario. Elegí uno diferente.');
+        // Case-insensitive: 'Mati' y 'mati' colisionarian en Firestore
+        // (el ID de documento es el username en minusculas).
+        if (todos.find(u => String(u.username).toLowerCase() === username.toLowerCase())) {
+            mostrarToast('El nombre de usuario ya está registrado.', 'error');
             return;
         }
     }
@@ -2880,6 +2892,27 @@ async function guardarUsuarioForm(e) {
     } else {
         if (!password) { alert('La contraseña es obligatoria para nuevos usuarios.'); return; }
         usuario.passwordHash = await hashPassword(password);
+    }
+
+    // ===== INTEGRACION FIREBASE (identidad en Auth + perfil en Firestore) =====
+    // El servicio de directorio es la UNICA via que escribe en la nube.
+    // Nunca escribe `passwordHash`: ese campo queda solo en IndexedDB.
+    const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
+    if (!directorio) {
+        console.warn('[usuarios] Directorio en la nube no disponible; se guarda solo en local.');
+    } else if (!id) {
+        // ---- ALTA: primero la identidad en Firebase Auth, luego el perfil ----
+        const res = await directorio.crearUsuario({ username, nombre, rol, activo, permisos: usuario.permisos, password });
+        if (!res.ok) {
+            mostrarToast(escapeHtml(res.mensaje), 'error');
+            return;
+        }
+    } else {
+        // ---- EDICION: solo el perfil. La contrasena NO se toca en Auth ----
+        const res = await directorio.actualizarPerfil({ username, nombre, rol, activo, permisos: usuario.permisos });
+        if (!res.ok) {
+            console.warn('[usuarios] No se pudo sincronizar el perfil a la nube:', res.mensaje);
+        }
     }
 
     await guardar('usuarios', usuario);
