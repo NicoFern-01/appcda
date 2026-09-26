@@ -176,8 +176,13 @@ export const userDirectoryService = {
    * EDICION de perfil: actualiza SOLO el documento de Firestore.
    * Nunca toca la contrasena de Firebase Auth (eso es una operacion separada y
    * explicita). Si el documento aun no existe, se crea con merge.
+   *
+   * IMPORTANTE: el ID de documento ES el username en minusculas, por lo que
+   * cambiar el nombre de usuario implica un documento NUEVO. Si no se pasa
+   * `usernameAnterior`, el documento viejo queda huerfano en la nube (y su
+   * cuenta de Auth sigue existiendo). Por eso se borra explicitamente.
    */
-  async actualizarPerfil({ username, nombre, rol, activo, permisos }) {
+  async actualizarPerfil({ username, nombre, rol, activo, permisos, usernameAnterior }) {
     // Bandera apagada: se omite la nube y se sigue solo con IndexedDB.
     if (!SYNC_USUARIOS_NUBE) {
       console.info('[usuarios] Edicion de perfil en la nube omitida (bandera desactivada).');
@@ -189,12 +194,55 @@ export const userDirectoryService = {
       return { ok: false, mensaje: 'Firestore no está disponible. No se pudo actualizar el perfil.' };
     }
 
+    const idAnterior = idDocumento(usernameAnterior);
+    const cambioDeUsuario = idAnterior && idAnterior !== id;
+
     try {
       const rt = runtime();
       const doc = construirDocPerfil({ username, nombre, rol, activo, permisos });
       await rt.setDoc(rt.doc(rt.dbFirebase, 'usuarios', id), doc, { merge: true });
-      return { ok: true };
+
+      // Renombre: el documento anterior debe desaparecer, si no el usuario
+      // queda duplicado en la nube y su nombre viejo nunca se libera.
+      if (cambioDeUsuario) {
+        try {
+          await rt.deleteDoc(rt.doc(rt.dbFirebase, 'usuarios', idAnterior));
+          console.info('[usuarios] Documento anterior eliminado tras renombrar:', idAnterior, '->', id);
+        } catch (errDel) {
+          console.warn('[usuarios] No se pudo borrar el documento anterior "' + idAnterior + '":', errDel && errDel.code, errDel && errDel.message);
+        }
+      }
+      return { ok: true, renombrado: cambioDeUsuario };
     } catch (error) {
+      return { ok: false, mensaje: traducirErrorAuth(error), codigo: error && error.code };
+    }
+  },
+
+  /**
+   * BAJA de usuario: elimina el documento de perfil de Firestore.
+   *
+   * La cuenta de Firebase Auth NO se puede borrar desde el cliente (requiere el
+   * Admin SDK). Por eso el nombre queda tomado en la nube y el usuario no puede
+   * volver a crearse. Se desactiva la identidad documentandolo en el perfil,
+   * de modo que el bloqueo quede explícito en lugar de ser un fallo místico.
+   */
+  async eliminarPerfil(username) {
+    if (!SYNC_USUARIOS_NUBE) {
+      return { ok: true, nube: false };
+    }
+    const id = idDocumento(username);
+    if (!id) return { ok: false, mensaje: 'El nombre de usuario es obligatorio.' };
+    if (!firestoreDisponible()) {
+      return { ok: false, mensaje: 'Firestore no está disponible. No se pudo eliminar el perfil.' };
+    }
+    try {
+      const rt = runtime();
+      await rt.deleteDoc(rt.doc(rt.dbFirebase, 'usuarios', id));
+      return { ok: true, borrado: true };
+    } catch (error) {
+      console.error('[usuarios] No se pudo eliminar el perfil de la nube:', {
+        code: error && error.code, message: error && error.message, path: 'usuarios/' + id
+      });
       return { ok: false, mensaje: traducirErrorAuth(error), codigo: error && error.code };
     }
   },
