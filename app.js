@@ -2847,6 +2847,27 @@ async function editarUsuario(id) {
 async function guardarUsuarioForm(e) {
     e.preventDefault();
     if (!esAdmin()) return;
+
+    // Bloqueo de reentrada: la funcion es async (espera a Firestore) y el boton
+    // es type="submit". Sin este candado, dos clics rapidos ejecutan el guardado
+    // dos veces y se emiten dos toasts/error duplicados.
+    const btn = document.getElementById('usuario-guardar-btn');
+    if (guardarUsuarioEnCurso) return;
+    guardarUsuarioEnCurso = true;
+    if (btn) { btn.disabled = true; btn.innerHTML = 'Guardando...'; }
+
+    try {
+        await guardarUsuarioFormInterno(e);
+    } finally {
+        guardarUsuarioEnCurso = false;
+        if (btn) { btn.disabled = false; btn.innerHTML = 'Guardar Usuario'; }
+    }
+}
+
+// Candado de guardado del formulario de usuario (evita envios duplicados).
+let guardarUsuarioEnCurso = false;
+
+async function guardarUsuarioFormInterno() {
     const id = document.getElementById('usuario-id').value;
     const username = document.getElementById('usuario-username').value.trim();
     const nombre = document.getElementById('usuario-nombre').value.trim();
@@ -2859,24 +2880,22 @@ async function guardarUsuarioForm(e) {
     const activo = document.getElementById('usuario-activo').value === 'true';
     const password = document.getElementById('usuario-password').value;
 
-    if (!id) {
-        const todos = await getTodos('usuarios');
-        // Case-insensitive: 'Mati' y 'mati' colisionarian en Firestore
-        // (el ID de documento es el username en minusculas).
-        if (todos.find(u => String(u.username).toLowerCase() === username.toLowerCase())) {
-            mostrarToast('El nombre de usuario ya está registrado.', 'error');
-            return;
-        }
-    } else {
-        // En EDICION el mismo control aplica: renombrar 'admin1' a 'admin' cuando
-        // 'admin' ya existe crearia dos documentos en conflicto en Firestore.
-        const todos = await getTodos('usuarios');
-        const choque = todos.find(u => Number(u.id) !== Number(id) &&
-            String(u.username).toLowerCase() === username.toLowerCase());
-        if (choque) {
-            mostrarToast('Ese nombre de usuario ya pertenece a otro usuario.', 'error');
-            return;
-        }
+    // El username es la clave primaria en Firestore (es el ID del documento), asi
+    // que debe ser UNICO en toda la app. El mensaje nombra al usuario que ya lo
+    // ocupa, para que el admin entienda por que le rechazan el guardado.
+    const idNum = id ? Number(id) : null;
+    const todos = await getTodos('usuarios');
+    const choque = todos.find(u =>
+        String(u.username || '').toLowerCase() === username.toLowerCase() &&
+        Number(u.id) !== idNum);
+    if (choque) {
+        mostrarToast(`El nombre "${username}" ya lo usa ${choque.nombre || choque.username}. ` +
+            'Elegí otro nombre o eliminá ese usuario primero.', 'error');
+        return;
+    }
+    if (!username) {
+        mostrarToast('El nombre de usuario es obligatorio.', 'error');
+        return;
     }
 
     const usuario = { username, nombre, rol, activo };
