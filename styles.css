@@ -897,6 +897,45 @@ tr:hover td {
     padding: 0;
 }
 
+/* Filtro por mes del Calendario de Categorías */
+.calendario-filtro-mes {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0.75rem 0 1rem 0;
+}
+
+.calendario-filtro-mes-titulo {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-right: 0.25rem;
+}
+
+.cal-mes-btn {
+    padding: 0.3rem 0.7rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-secondary);
+    background: var(--bg-card, rgba(255, 255, 255, 0.03));
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.cal-mes-btn:hover {
+    color: var(--text-primary, #fff);
+    border-color: var(--accent);
+}
+
+.cal-mes-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
 /* Calendario filters collapse */
 #calendario-filters-container.collapsed {
     display: none !important;

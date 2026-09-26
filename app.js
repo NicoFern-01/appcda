@@ -2245,7 +2245,44 @@ function parsearCalendarioCSV(texto) {
 // ---- Estado del módulo (se conserva entre renders para filtros y recarga) ----
 let calendarioEventos = [];
 let calendarioFiltroCategoria = null;
+// Filtro de mes: null = mostrar el almanaque anual completo (todos los meses).
+// Un numero 0-11 = mostrar SOLO ese mes.
+let calendarioFiltroMes = null;
 let _leyendaListenerAgregado = false;
+
+/** Genera los botones de mes una sola vez (evita duplicar los nombres en el HTML). */
+let _botonesMesGenerados = false;
+function _poblarBotonesMes() {
+    const cont = document.getElementById('calendario-filtro-mes');
+    if (!cont || _botonesMesGenerados) {
+        _sincronizarBotonesMes();
+        return;
+    }
+    _botonesMesGenerados = true;
+    cont.innerHTML = '<span class="calendario-filtro-mes-titulo">Filtrar por mes:</span>' +
+        '<button type="button" class="cal-mes-btn active" data-mes="todos" onclick="filtrarCalendarioPorMes(null)">Todos</button>' +
+        MESES_DEL_ANIO.map((nombre, i) =>
+            `<button type="button" class="cal-mes-btn" data-mes="${i}" onclick="filtrarCalendarioPorMes(${i})">${escapeHtml(nombre)}</button>`
+        ).join('');
+    _sincronizarBotonesMes();
+}
+
+/** Selecciona un mes (0-11) o `null` para ver el año completo. */
+function filtrarCalendarioPorMes(mes) {
+    calendarioFiltroMes = mes;
+    renderizarCalendarioAnual();
+    _sincronizarBotonesMes();
+}
+
+/** Pone "Todos" cuando no hay mes seleccionado (para que el estado visual cuadre). */
+function _sincronizarBotonesMes() {
+    document.querySelectorAll('#calendario-filtro-mes button').forEach(btn => {
+        const valor = btn.dataset.mes;
+        const activo = (calendarioFiltroMes === null && valor === 'todos') ||
+                       (valor !== 'todos' && Number(valor) === calendarioFiltroMes);
+        btn.classList.toggle('active', activo);
+    });
+}
 
 const PALETA_CATEGORIAS = ['#ff4757', '#00d2d3', '#2ed573', '#ff9f43', '#a78bfa', '#feca57', '#ff6b9d', '#4dc3ff'];
 
@@ -2358,6 +2395,7 @@ function renderizarCalendarioAnual() {
 
     const categorias = _categoriasConColor();
     renderizarLeyendaCategorias(categorias);
+    _poblarBotonesMes();
 
     if (!calendarioEventos || calendarioEventos.length === 0) {
         grid.innerHTML = '<div class="calendario-vacio">La planilla no contiene eventos de calendario.</div>';
@@ -2382,6 +2420,10 @@ function renderizarCalendarioAnual() {
     }
 
     grid.innerHTML = MESES_DEL_ANIO.map((nombreMes, idxMes) => {
+        // Filtro de mes: si hay uno seleccionado, NO se dibuja el resto, para que
+        // la vista muestre unicamente ese mes (en lugar de atenuar los demas).
+        if (calendarioFiltroMes !== null && idxMes !== calendarioFiltroMes) return '';
+
         const semanas = porMes[idxMes];
         const domingosOrdenados = Object.keys(semanas).map(Number).sort((a, b) => a - b);
 
@@ -2416,7 +2458,7 @@ function renderizarCalendarioAnual() {
         }
 
         return `
-            <div class="mes-card">
+            <div class="mes-card"${calendarioFiltroMes !== null ? ' style="grid-column:1 / -1;"' : ''}>
                 <h3>${nombreMes}</h3>
                 <div class="mes-semanas">${contenidoSemanas}</div>
             </div>`;
