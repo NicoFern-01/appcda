@@ -9,6 +9,13 @@ export default defineConfig({
   // Raíz del proyecto = carpeta donde está index.html
   root: '.',
 
+  // GitHub Pages sirve el sitio en https://<usuario>.github.io/<repo>/.
+  // Sin `base`, Vite emite rutas absolutas (/assets/...) que dan 404 en Pages.
+  // Con './' todas las rutas quedan relativas al propio index.html, lo que
+  // hace que el build funcione en GitHub Pages, en un subdirectorio
+  // cualquier e incluso abierto vía file://.
+  base: './',
+
   // Servir la SPA estática tal cual, sin plugin de framework.
   // La app ya usa scripts clásicos (import dinámico de Firebase al vuelo),
   // por lo que no es necesario ningún plugin adicional.
