@@ -1034,7 +1034,7 @@ async function guardarCompetenciaForm(e) {
     const id = document.getElementById('competencia-id').value;
     const categoriasCheckboxes = document.querySelectorAll('#competencia-categorias-checkboxes input:checked');
     const categoriasIds = Array.from(categoriasCheckboxes).map(cb => Number(cb.value));
-    if (categoriasIds.length === 0) { alert('Seleccioná al menos una categoría.'); return; }
+    if (categoriasIds.length === 0) { mostrarToast('Seleccioná al menos una categoría.', 'error'); return; }
 
     const staffCheckboxes = document.querySelectorAll('#competencia-staff-checkboxes input:checked');
     const staffIds = Array.from(staffCheckboxes).map(cb => Number(cb.value));
@@ -2638,7 +2638,13 @@ async function listarUsuarios() {
     const rolesBadge = { admin: 'badge-role-admin', editor: 'badge-role-editor', viewer: 'badge-role-viewer', supervisor: 'badge-role-supervisor' };
 
     usuarios.forEach(u => {
-        const esElMismo = currentUser && currentUser.id === u.id;
+        // Comparación tolerante: en la nube el id es el username (string) y en
+        // IndexedDB es numérico. Comparar con `===` hacía que un usuario de la
+        // nube NUNCA se reconociera como "yo" (y por eso no tenía botón de borrar).
+        const esElMismo = !!currentUser && String(currentUser.id).toLowerCase() === String(u.id).toLowerCase();
+        // El id puede ser numérico o string: se pasa como JSON para que las
+        // comillas del caso nube no rompan el onclick.
+        const idArg = JSON.stringify(String(u.id));
         tbody.innerHTML += `
             <tr>
                 <td style="font-weight:600;">
@@ -2649,12 +2655,42 @@ async function listarUsuarios() {
                 <td><span class="badge ${rolesBadge[u.rol]}">${rolesNombres[u.rol] || escapeHtml(u.rol)}</span></td>
                 <td><span class="badge ${u.activo ? 'badge-active' : 'badge-inactive'}">${u.activo ? 'Activo' : 'Inactivo'}</span></td>
                 <td style="text-align:right;">
-                    <button class="action-btn" onclick="editarUsuario(${u.id})"><i class="fa-solid fa-pen-to-square"></i></button>
-                    ${!esElMismo ? `<button class="action-btn delete" onclick="eliminarUsuario(${u.id})"><i class="fa-solid fa-trash"></i></button>` : ''}
+                    <button class="action-btn" onclick="editarUsuario(${idArg})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
+                    ${!esElMismo ? `<button class="action-btn delete" onclick="eliminarUsuario(${idArg})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>` : ''}
                 </td>
             </tr>
         `;
     });
+}
+
+/**
+ * Busca un usuario por id tanto en la nube (id = username) como en IndexedDB
+ * (id numérico). Sin esto, editar/borrar un usuario que vino de Firestore
+ * fallaba en silencio porque `obtenerPorId` solo miraba el store local.
+ */
+async function _buscarUsuarioPorId(id) {
+    const clave = String(id);
+    const esNumerico = /^\d+$/.test(clave);
+
+    // 1) Nube primero: es la fuente de verdad.
+    const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
+    if (directorio && typeof directorio.listarPerfiles === 'function') {
+        const perfiles = await directorio.listarPerfiles();
+        const encontrado = perfiles.find(p => String(p.id).toLowerCase() === clave.toLowerCase());
+        if (encontrado) return encontrado;
+    }
+
+    // 2) IndexedDB: se compara por id Y por username (el id local puede diferir).
+    try {
+        const usuarios = await getTodos('usuarios');
+        const encontrado = usuarios.find(u =>
+            String(u.id) === clave ||
+            String(u.username || '').toLowerCase() === clave.toLowerCase());
+        if (encontrado) return encontrado;
+    } catch (e) {
+        console.warn('[usuarios] No se pudo leer el store local:', e);
+    }
+    return null;
 }
 
 // ==================== MATRIZ DE PERMISOS (MODAL NUEVO/EDITAR USUARIO) ====================
@@ -2915,8 +2951,10 @@ function openModalUsuario() {
 
 async function editarUsuario(id) {
     if (!esAdmin()) return;
-    const u = await obtenerPorId('usuarios', id);
-    if (!u) return;
+    // Busca en nube + local: un usuario de Firebase no está en IndexedDB, y
+    // `obtenerPorId` (solo local) devolvía undefined -> el modal abría vacío.
+    const u = await _buscarUsuarioPorId(id);
+    if (!u) { mostrarToast('No se encontró el usuario.', 'error'); return; }
     document.getElementById('usuario-id').value = u.id;
     document.getElementById('usuario-nombre').value = u.nombre;
     document.getElementById('usuario-username').value = u.username;
@@ -2976,11 +3014,13 @@ async function guardarUsuarioFormInterno() {
     // El username es la clave primaria en Firestore (es el ID del documento), asi
     // que debe ser UNICO en toda la app. El mensaje nombra al usuario que ya lo
     // ocupa, para que el admin entienda por que le rechazan el guardado.
-    const idNum = id ? Number(id) : null;
+    // El id puede venir como string (usuarios de la nube, donde el id es el
+    // username). `Number(...)` lo convertía en NaN y rompía toda la edición.
+    const idNum = id ? String(id) : null;
     const todos = await getTodos('usuarios');
     const choque = todos.find(u =>
         String(u.username || '').toLowerCase() === username.toLowerCase() &&
-        Number(u.id) !== idNum);
+        String(u.id) !== idNum);
     if (choque) {
         mostrarToast(`El nombre "${username}" ya lo usa ${choque.nombre || choque.username}. ` +
             'Elegí otro nombre o eliminá ese usuario primero.', 'error');
@@ -3004,15 +3044,18 @@ async function guardarUsuarioFormInterno() {
         : obtenerPermisosEfectivos({ rol });
 
     if (id) {
-        usuario.id = Number(id);
+        // Usuario de la nube: su id ES el username (string). No se fuerza a
+        // Number() porque daria NaN y se perderia el vinculo con el documento.
+        const esNube = !/^\d+$/.test(String(id));
+        usuario.id = esNube ? String(id) : Number(id);
         if (password) {
             usuario.passwordHash = await hashPassword(password);
         } else {
-            const existente = await obtenerPorId('usuarios', Number(id));
-            usuario.passwordHash = existente.passwordHash;
+            const existente = await _buscarUsuarioPorId(id);
+            usuario.passwordHash = existente ? existente.passwordHash : undefined;
         }
     } else {
-        if (!password) { alert('La contraseña es obligatoria para nuevos usuarios.'); return; }
+        if (!password) { mostrarToast('La contraseña es obligatoria para nuevos usuarios.', 'error'); return; }
         usuario.passwordHash = await hashPassword(password);
     }
 
@@ -3038,7 +3081,7 @@ async function guardarUsuarioFormInterno() {
         // ---- EDICION: solo el perfil. La contrasena NO se toca en Auth ----
         // `usernameAnterior` es imprescindible: el ID del documento en Firestore
         // ES el username, asi que al renombrar hay que borrar el documento viejo.
-        const previo = await obtenerPorId('usuarios', Number(id));
+        const previo = await _buscarUsuarioPorId(id);
         const res = await directorio.actualizarPerfil({
             username, nombre, rol, activo,
             permisos: usuario.permisos,
@@ -3046,7 +3089,16 @@ async function guardarUsuarioFormInterno() {
         });
         if (!res.ok) {
             mostrarToast('No se pudo sincronizar el perfil a la nube: ' + escapeHtml(res.mensaje), 'error');
+            return;
         }
+
+        // Un usuario que vive en la nube NO se duplica en IndexedDB: su perfil
+        // ya quedó escrito en Firestore. Escribirlo local creaba un registro
+        // fantasma con el mismo username y el listado lo duplicaba.
+        mostrarToast(`Usuario actualizado correctamente. Usuario: ${escapeHtml(usuario.username)}${password ? ' | Contraseña actualizada' : ' | Contraseña sin cambios'}`, 'success');
+        closeModal('modal-usuario');
+        await listarUsuarios();
+        return;
     }
 
     // `guardar()` devuelve null cuando el validador rechaza el registro.
@@ -3057,7 +3109,7 @@ async function guardarUsuarioFormInterno() {
         return;
     }
 
-    if (currentUser && currentUser.id === usuario.id) {
+    if (currentUser && String(currentUser.id) === String(usuario.id)) {
         currentUser = { ...currentUser, ...usuario };
         document.getElementById('sidebar-user-name').textContent = usuario.nombre;
         document.getElementById('sidebar-avatar').textContent = usuario.nombre.charAt(0).toUpperCase();
@@ -3182,34 +3234,57 @@ async function toggleTipoMovimientoActivoV10(id) {
 
 async function eliminarUsuario(id) {
     if (!esAdmin()) return;
-    if (currentUser && currentUser.id === id) { alert('No podés eliminar tu propio usuario.'); return; }
-    const usuarios = await getTodos('usuarios');
-    if (usuarios.length <= 1) { alert('Debe existir al menos un usuario en el sistema.'); return; }
+    // Comparación tolerante: el id de la nube es string (username) y el local numérico.
+    const clave = String(id);
+    if (currentUser && String(currentUser.id) === clave) {
+        mostrarToast('No podés eliminar tu propio usuario.', 'error');
+        return;
+    }
+
+    // El objetivo se resuelve en nube + local: sin esto, `obtenerPorId` (solo
+    // local) devolvía undefined y el borrado no sabía a quién eliminar.
+    const objetivo = await _buscarUsuarioPorId(id);
+    if (!objetivo) { mostrarToast('No se encontró el usuario.', 'error'); return; }
+
+    const total = (typeof window !== 'undefined' && window.__CDA_MODULES__ &&
+        window.__CDA_MODULES__.usuarios && typeof window.__CDA_MODULES__.usuarios.listarPerfiles === 'function')
+        ? (await window.__CDA_MODULES__.usuarios.listarPerfiles()).length
+        : (await getTodos('usuarios')).length;
+    if (total <= 1) {
+        mostrarToast('Debe existir al menos un usuario en el sistema.', 'error');
+        return;
+    }
 
     const confirmado = await mostrarConfirmacion(
         'Eliminar usuario',
-        '¿Eliminar este usuario permanentemente?',
+        `¿Eliminar a "${objetivo.username}" permanentemente?`,
         'warning'
     );
 
     if (!confirmado) return;
 
-    // Baja en la nube ANTES que en local: si el nombre queda tomado en Firebase
-    // (la cuenta de Auth no se puede borrar desde el cliente), el usuario no
-    // podría volver a crearse nunca. Hay que conservar el username para limpiarlo.
-    const objetivo = await obtenerPorId('usuarios', id);
+    // 1) Primero la nube: si el nombre queda tomado en Firebase Auth (esa cuenta
+    //    no se puede borrar desde el cliente), el usuario no podría crearse nunca.
     const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
-    if (directorio && typeof directorio.eliminarPerfil === 'function' && objetivo) {
+    let falloNube = null;
+    if (directorio && typeof directorio.eliminarPerfil === 'function') {
         const resNube = await directorio.eliminarPerfil(objetivo.username);
-        if (!resNube.ok) {
-            mostrarToast('Se eliminó localmente, pero el perfil en la nube no se pudo borrar: ' +
-                escapeHtml(resNube.mensaje || 'error desconocido') +
-                '. El nombre puede quedar tomado en Firebase.', 'warning');
-        }
+        if (!resNube.ok) falloNube = resNube.mensaje || 'error desconocido';
     }
 
-    await eliminar('usuarios', id);
-    mostrarToast('Usuario eliminado correctamente.', 'success');
+    // 2) Después el registro local (si existía en este dispositivo).
+    try {
+        if (/^\d+$/.test(clave)) await eliminar('usuarios', Number(clave));
+    } catch (e) {
+        console.warn('[usuarios] No se pudo borrar el registro local:', e);
+    }
+
+    if (falloNube) {
+        mostrarToast('Se eliminó, pero el perfil en la nube no se pudo borrar: ' +
+            escapeHtml(falloNube) + '. Si el nombre no se libera, puede quedar tomado en Firebase.', 'warning');
+    } else {
+        mostrarToast('Usuario eliminado correctamente.', 'success');
+    }
     await listarUsuarios();
 }
 
