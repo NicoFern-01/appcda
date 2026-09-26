@@ -40,19 +40,54 @@ let useFirebase = false;
 // para que `obtenerConfigFirebase()` siempre tenga una base disponible.
 // ============================================================
 
-// Detecta el entorno actual y devuelve el authDomain correcto
-function obtenerAuthDomainDinamico() {
-    const hostname = window.location.hostname;
-    // Si estamos en GitHub Pages (producción), usar el dominio de GitHub Pages
-    if (hostname.includes('github.io')) {
-        return hostname; // Ej: nicofern-01.github.io
+// AUTH_DOMAIN CANONICO de Firebase.
+// Ya NO se reemplaza por el hostname del hosting: Firebase Auth rechaza la
+// configuracion con `auth/invalid-api-key` cuando authDomain no coincide con un
+// dominio autorizado en la consola del proyecto. El hostname del sitio
+// (p.ej. nicofern-01.github.io) debe estar REGISTRADO como dominio autorizado
+// en Firebase Console, pero no sustituye al authDomain canonico.
+const AUTH_DOMAIN_CANONICO = 'controlcda-e5f97.firebaseapp.com';
+
+// Limpia una config de Firebase cacheada en localStorage que este corrupta o
+// que contenga un authDomain invalido (p.ej. el hostname de GitHub Pages).
+// Sin esto, el error `auth/invalid-api-key` persistiria entre recargas aunque el
+// codigo ya este corregido, obligando al usuario a limpiar la cache a mano.
+function sanearConfigFirebaseLocal() {
+    const CLAVE = 'firebase_config';
+    try {
+        const crudo = localStorage.getItem(CLAVE);
+        if (!crudo) return;
+
+        let config = null;
+        try {
+            config = JSON.parse(crudo);
+        } catch (e) {
+            console.warn('[firebase] Config cacheada ilegible; se descarta.');
+            localStorage.removeItem(CLAVE);
+            return;
+        }
+
+        if (!config || typeof config !== 'object' || !config.apiKey || !config.projectId) {
+            console.warn('[firebase] Config cacheada incompleta; se descarta.');
+            localStorage.removeItem(CLAVE);
+            return;
+        }
+
+        if (config.authDomain && config.authDomain !== AUTH_DOMAIN_CANONICO) {
+            console.warn('[firebase] authDomain cacheado invalido ("' + config.authDomain +
+                '"); se descarta para forzar el canonico.');
+            localStorage.removeItem(CLAVE);
+        }
+    } catch (e) {
+        console.warn('[firebase] No se pudo sanear la config local:', e);
     }
-    // Si estamos en localhost o cualquier otro entorno, usar el authDomain de Firebase
-    return 'controlcda-e5f97.firebaseapp.com';
 }
 
-// Obtiene la configuración completa de Firebase, ajustando authDomain dinámicamente
+// Obtiene la configuración completa de Firebase.
+// El authDomain SIEMPRE es el canonico de Firebase: nunca el hostname del hosting.
 function obtenerConfigFirebase() {
+    sanearConfigFirebaseLocal();
+
     const configStr = localStorage.getItem('firebase_config');
     let config;
     
@@ -67,16 +102,28 @@ function obtenerConfigFirebase() {
         config = { ...(typeof window !== 'undefined' && window.__CDA_FIREBASE_CONFIG__) || {} };
     }
     
-    // Ajustar authDomain dinámicamente según el entorno
-    // Si el usuario no especificó un authDomain, o si estamos en GitHub Pages,
-    // usar el authDomain dinámico
-    if (!config.authDomain || window.location.hostname.includes('github.io')) {
-        config.authDomain = obtenerAuthDomainDinamico();
+    // authDomain canonico: se impone sobre cualquier valor previo o dinamico.
+    // Si viene el hostname de GitHub Pages (config vieja o cacheada), se corrige.
+    if (!config.authDomain || config.authDomain.includes('github.io')) {
+        config.authDomain = AUTH_DOMAIN_CANONICO;
     }
-    
+
+    // Diagnostico explicito: un `auth/invalid-api-key` se debe casi siempre a una
+    // configuracion incompleta o a un authDomain que no es el canonico.
+    if (!config.apiKey) {
+        console.error('[firebase] ERROR: falta apiKey en la configuracion. ' +
+            'Verificar window.__CDA_FIREBASE_CONFIG__ (src/main.js) y el bundle publicado.');
+    } else {
+        console.info('[firebase] Config activa | projectId: ' + (config.projectId || '?') +
+            ' | authDomain: ' + config.authDomain +
+            ' | origen: ' + (config.authDomain === AUTH_DOMAIN_CANONICO ? 'canonico' : 'PERSONALIZADO') +
+            ' | apiKey: ' + String(config.apiKey).slice(0, 6) + '...' +
+            ' | host: ' + (typeof window !== 'undefined' ? window.location.hostname : '?'));
+    }
+
     // Guardar la configuración ajustada para futuras cargas
     localStorage.setItem('firebase_config', JSON.stringify(config));
-    
+
     return config;
 }
 
@@ -275,25 +322,33 @@ async function inicializarFirebase() {
 }
 
 
-// ==================== VERIFICACIÓN DE CONFIGURACIÓN FIREBASE ====================
-// Al cargar la página, verificar que la configuración guardada tenga el authDomain correcto
-// para el entorno actual (especialmente GitHub Pages en producción)
-(function verificarConfigFirebaseAlCargar() {
+// ==================== SANEO DE CONFIGURACIÓN FIREBASE ====================
+// Al cargar la página, descartar cualquier config de Firebase cacheada que
+// tenga un authDomain invalido (p.ej. el hostname de GitHub Pages).
+// Antes este bloque REESCRIBIA el authDomain con el hostname en cada carga,
+// lo que hacia que Firebase Auth fallara con auth/invalid-api-key de forma
+// permanente. Ahora solo sanea: la fuente de verdad es AUTH_DOMAIN_CANONICO.
+(function sanearConfigFirebaseAlCargar() {
     try {
         const configStr = localStorage.getItem('firebase_config');
-        if (configStr) {
-            const config = JSON.parse(configStr);
-            const hostname = window.location.hostname;
-            
-            // Si estamos en GitHub Pages y el authDomain no coincide, actualizarlo
-            if (hostname.includes('github.io') && config.authDomain !== hostname) {
-                console.log('Actualizando authDomain para GitHub Pages:', hostname);
-                config.authDomain = hostname;
-                localStorage.setItem('firebase_config', JSON.stringify(config));
-            }
+        if (!configStr) return;
+
+        let config = null;
+        try {
+            config = JSON.parse(configStr);
+        } catch (e) {
+            console.warn('[firebase] Config cacheada ilegible al cargar; se descarta.');
+            localStorage.removeItem('firebase_config');
+            return;
+        }
+
+        if (config && config.authDomain && config.authDomain !== AUTH_DOMAIN_CANONICO) {
+            console.warn('[firebase] authDomain cacheado invalido ("' + config.authDomain +
+                '"); se descarta al cargar para usar el canonico.');
+            localStorage.removeItem('firebase_config');
         }
     } catch (e) {
-        console.warn('Error al verificar configuración Firebase:', e);
+        console.warn('Error al sanear la configuracion Firebase:', e);
     }
 })();
 
