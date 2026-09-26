@@ -2867,6 +2867,16 @@ async function guardarUsuarioForm(e) {
             mostrarToast('El nombre de usuario ya está registrado.', 'error');
             return;
         }
+    } else {
+        // En EDICION el mismo control aplica: renombrar 'admin1' a 'admin' cuando
+        // 'admin' ya existe crearia dos documentos en conflicto en Firestore.
+        const todos = await getTodos('usuarios');
+        const choque = todos.find(u => Number(u.id) !== Number(id) &&
+            String(u.username).toLowerCase() === username.toLowerCase());
+        if (choque) {
+            mostrarToast('Ese nombre de usuario ya pertenece a otro usuario.', 'error');
+            return;
+        }
     }
 
     const usuario = { username, nombre, rol, activo };
@@ -2914,9 +2924,16 @@ async function guardarUsuarioForm(e) {
         }
     } else {
         // ---- EDICION: solo el perfil. La contrasena NO se toca en Auth ----
-        const res = await directorio.actualizarPerfil({ username, nombre, rol, activo, permisos: usuario.permisos });
+        // `usernameAnterior` es imprescindible: el ID del documento en Firestore
+        // ES el username, asi que al renombrar hay que borrar el documento viejo.
+        const previo = await obtenerPorId('usuarios', Number(id));
+        const res = await directorio.actualizarPerfil({
+            username, nombre, rol, activo,
+            permisos: usuario.permisos,
+            usernameAnterior: previo ? previo.username : username
+        });
         if (!res.ok) {
-            console.warn('[usuarios] No se pudo sincronizar el perfil a la nube:', res.mensaje);
+            mostrarToast('No se pudo sincronizar el perfil a la nube: ' + escapeHtml(res.mensaje), 'error');
         }
     }
 
@@ -3064,6 +3081,21 @@ async function eliminarUsuario(id) {
     );
 
     if (!confirmado) return;
+
+    // Baja en la nube ANTES que en local: si el nombre queda tomado en Firebase
+    // (la cuenta de Auth no se puede borrar desde el cliente), el usuario no
+    // podría volver a crearse nunca. Hay que conservar el username para limpiarlo.
+    const objetivo = await obtenerPorId('usuarios', id);
+    const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
+    if (directorio && typeof directorio.eliminarPerfil === 'function' && objetivo) {
+        const resNube = await directorio.eliminarPerfil(objetivo.username);
+        if (!resNube.ok) {
+            mostrarToast('Se eliminó localmente, pero el perfil en la nube no se pudo borrar: ' +
+                escapeHtml(resNube.mensaje || 'error desconocido') +
+                '. El nombre puede quedar tomado en Firebase.', 'warning');
+        }
+    }
+
     await eliminar('usuarios', id);
     mostrarToast('Usuario eliminado correctamente.', 'success');
     await listarUsuarios();
