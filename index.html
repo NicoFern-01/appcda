@@ -12,8 +12,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script type="module" crossorigin src="./assets/index-DIWinsnw.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-CcHWjaVi.css">
+  <script type="module" crossorigin src="./assets/index-Cr7zNMs9.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-Ddfxqj3z.css">
 </head>
 <body>
 
@@ -170,6 +170,10 @@
                     <button type="button" class="btn btn-circle" id="btn-refrescar-calendario" onclick="refrescarCalendario()" title="Actualizar calendario desde Google Sheets" aria-label="Actualizar calendario"><i class="fa-solid fa-arrows-rotate"></i></button>
                 </header>
                 <div id="calendario-leyenda" class="calendario-leyenda"></div>
+                <div id="calendario-filtro-mes" class="calendario-filtro-mes">
+                    <span class="calendario-filtro-mes-titulo">Filtrar por mes:</span>
+                    <button type="button" class="cal-mes-btn active" data-mes="todos" onclick="filtrarCalendarioPorMes(null)">Todos</button>
+                </div>
                 <div id="calendario-anual-grid"></div>
             </section>
 
