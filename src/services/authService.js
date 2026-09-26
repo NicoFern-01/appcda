@@ -212,6 +212,114 @@ export function iniciarSesion(usuario) {
   if (switchView) switchView('dashboard');
 }
 
+// ---------------- Migracion de cuentas locales a Firebase Auth ----------------
+/**
+ * Rescate de usuarios que existen SOLO en IndexedDB (creados antes de migrar
+ * a Firebase Auth). Sin esto quedan bloqueados: Firebase rechaza su login y,
+ * al no tener cuenta en la nube, tampoco pueden volver a registrarse.
+ *
+ * Flujo:
+ *   1. Busca el usuario local por username y valida la contraseña contra su hash.
+ *   2. Si es correcta, crea la cuenta en Firebase Auth (app secundaria, para no
+ *      expulsar al admin que está operando) y escribe su perfil en Firestore.
+ *   3. Inicia sesión.
+ *
+ * @returns {Promise<boolean>} true si el usuario pudo migrarse e iniciar sesión.
+ */
+async function intentarMigrarCuentaLocal(email, username, password, rt, errorEl) {
+  const getTodos = lecturaGlobal('getTodos');
+  const verificar = lecturaGlobal('verificarPasswordConCompatibilidad');
+  if (!getTodos || !verificar) return false;
+
+  let local = null;
+  try {
+    const usuarios = await getTodos('usuarios');
+    local = usuarios.find((u) =>
+      String(u.username || '').toLowerCase() === String(username).toLowerCase() &&
+      u.activo !== false
+    );
+  } catch (e) {
+    console.warn('[authService] No se pudo leer el store local de usuarios:', e);
+    return false;
+  }
+  if (!local) return false;
+
+  // La contraseña debe ser la REAL del usuario: es la que se usará para crear
+  // la cuenta en Firebase. No se migra a ciegas.
+  let valida = false;
+  try {
+    valida = await verificar(password, local.passwordHash);
+  } catch (e) {
+    console.warn('[authService] No se pudo verificar el hash local:', e);
+    return false;
+  }
+  if (!valida) return false;
+
+  // La cuenta ya podría existir en Auth con otra contraseña (p. ej. creada
+  // después). En ese caso NO se pisa: se avisa para que un admin la gestione.
+  if (typeof rt.crearUsuarioEnAppSecundaria === 'function') {
+    try {
+      await rt.crearUsuarioEnAppSecundaria(email, password);
+      console.info('[authService] Cuenta migrada a Firebase Auth:', email);
+    } catch (e) {
+      if (e && (e.code === 'auth/email-already-in-use' ||
+                e.code === 'auth/username-already-exists')) {
+        console.warn('[authService] La cuenta ya existe en Firebase con otra contraseña. ' +
+          'Ingresá con la contraseña de Firebase o pedí al admin que la reinicie.');
+        return false;
+      }
+      console.warn('[authService] No se pudo crear la cuenta en Firebase Auth:', e && e.code);
+      return false;
+    }
+  }
+
+  // Sesión local coherente con el perfil migrado.
+  const perfil = await resolverPerfilEnFirestore(username, email);
+
+  // Si el usuario migrado aun no tiene documento en Firestore, se crea con los
+  // datos que ya tenia en IndexedDB. Sin esto entra como 'viewer' y pierde sus
+  // permisos, que es el sintoma clasico de la migracion.
+  if (!perfil && typeof rt.dbFirebase === 'object' && typeof rt.setDoc === 'function') {
+    try {
+      await rt.setDoc(rt.doc(rt.dbFirebase, 'usuarios', String(username).trim().toLowerCase()), {
+        username: String(username).trim().toLowerCase(),
+        nombre: local.nombre || username,
+        rol: local.rol || 'viewer',
+        activo: true,
+        email,
+        permisos: (local.permisos && typeof local.permisos === 'object')
+          ? JSON.parse(JSON.stringify(local.permisos))
+          : null,
+        actualizadoEn: new Date().toISOString()
+      });
+      console.info('[authService] Perfil de "' + username + '" creado en Firestore durante la migración.');
+    } catch (e) {
+      console.warn('[authService] No se pudo escribir el perfil en Firestore:',
+        e && e.code, e && e.message);
+    }
+  }
+  const usuario = {
+    id: local.id || username,
+    username: (perfil && perfil.username) || local.username,
+    nombre: (perfil && perfil.nombre) || local.nombre || username,
+    rol: (perfil && perfil.rol) || local.rol || 'viewer',
+    permisos: (perfil && perfil.permisos) ||
+      (local.permisos && typeof local.permisos === 'object'
+        ? JSON.parse(JSON.stringify(local.permisos))
+        : null),
+    activo: true,
+    email,
+    firebaseUid: null,
+    origen: 'migrado-local'
+  };
+
+  guardarSesion(usuario);
+  console.log('LOGIN EXITOSO (migrado a Firebase Auth):', usuario.username, '| rol:', usuario.rol);
+  globalThis.currentUser = usuario;
+  iniciarSesion(usuario);
+  return true;
+}
+
 // ---------------- Login principal: Firebase Auth + perfil ----------------
 export async function handleLogin(event) {
   event.preventDefault();
@@ -245,6 +353,16 @@ export async function handleLogin(event) {
 
       // ---------- CAPA 2: perfil y rol desde Firestore ----------
       const perfil = await resolverPerfilEnFirestore(identidad.username, email);
+
+      // Si la autenticación fue correcta pero NO hay perfil en Firestore, el rol
+      // caería a 'viewer' en silencio y el usuario perdería sus permisos sin
+      // saber por qué. Se avisa en consola para que el admin registre el perfil.
+      if (!perfil) {
+        console.warn('[authService] El usuario "' + identidad.username +
+          '" se autenticó pero NO tiene perfil en la colección `usuarios` de Firestore. ' +
+          'Se asigna rol viewer. Creá el perfil desde Configuración > Usuarios para ' +
+          'restaurar sus permisos.');
+      }
 
       const usuario = {
         id: perfil ? (Number(perfil.id) || perfil.id) : (uid || identidad.username),
@@ -281,10 +399,26 @@ export async function handleLogin(event) {
       code === 'auth/user-disabled';
 
     // Un rechazo de credenciales es un caso NORMAL del formulario de login, no
-    // una falla de la app: se registra como advertencia para no inundar la
-    // consola (la UI ya muestra "Usuario o contraseña incorrectos").
+    // una falla de la app: se registra como advertencia para no inundar la consola.
     if (esErrorDeCredencial) {
-      console.warn('[authService] Credenciales rechazadas por Firebase:', code);
+      console.warn('[authService] Firebase Auth rechazó las credenciales:', code);
+
+      // ---------- MIGRACION: rescate de cuentas locales ----------
+      // Los usuarios creados ANTES de migrar a Firebase Auth solo existen en
+      // IndexedDB (con su passwordHash) y NO tienen cuenta en Firebase. Para ellos
+      // Firebase responde 'invalid-credential' SIEMPRE, y sin este rescate quedan
+      // bloqueados para siempre (no pueden ni entrar ni re-crearse el mismo nombre).
+      //
+      // Se valida contra el hash local; si es correcto, se MIGRA la cuenta a
+      // Firebase Auth usando la contraseña que el usuario acaba de escribir, y se
+      // inicia sesión. A partir de ese login ya usa la vía nube normalmente.
+      if (code !== 'auth/user-disabled') {
+        const migrado = await intentarMigrarCuentaLocal(
+          identidad.email, identidad.username, passwordInput, rt, errorEl
+        );
+        if (migrado) return;
+      }
+
       mostrarErrorLogin(errorEl);
       return;
     }
