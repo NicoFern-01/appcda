@@ -212,6 +212,25 @@ export function iniciarSesion(usuario) {
   if (switchView) switchView('dashboard');
 }
 
+/**
+ * Tras un login exitoso, asegura que la sincronización local <-> Firestore
+ * arranque. Las reglas exigen `signedIn()` para leer, así que en el arranque
+ * (sin sesión) se omite a propósito. Es idempotente: solo corre una vez.
+ */
+function _sincronizarTrasLogin(rt) {
+  try {
+    // Al iniciar sesion, las colecciones que se marqueron como "ya consultadas"
+    // en un intento sin sesion deben volver a estar disponibles: si no, la app
+    // sigue mostrando listas vacias aunque ahora haya permisos.
+    if (typeof globalThis.invalidarCache === 'function') globalThis.invalidarCache();
+    if (rt && typeof rt.sincronizarAhora === 'function') {
+      rt.sincronizarAhora();
+    }
+  } catch (e) {
+    console.warn('[authService] No se pudo disparar la sincronización post-login:', e);
+  }
+}
+
 // ---------------- Migracion de cuentas locales a Firebase Auth ----------------
 /**
  * Rescate de usuarios que existen SOLO en IndexedDB (creados antes de migrar
@@ -317,6 +336,7 @@ async function intentarMigrarCuentaLocal(email, username, password, rt, errorEl)
   console.log('LOGIN EXITOSO (migrado a Firebase Auth):', usuario.username, '| rol:', usuario.rol);
   globalThis.currentUser = usuario;
   iniciarSesion(usuario);
+  _sincronizarTrasLogin(rt);
   return true;
 }
 
@@ -380,6 +400,10 @@ export async function handleLogin(event) {
       console.log('LOGIN EXITOSO (Firebase Auth):', usuario.username, '| rol:', usuario.rol);
       globalThis.currentUser = usuario;
       iniciarSesion(usuario);
+      // La sincronizacion se difiere hasta tener sesion (las reglas exigen
+      // `signedIn()` para leer). Si en el arranque no habia sesion, aqui se
+      // dispara la primera carga de datos desde Firestore.
+      _sincronizarTrasLogin(rt);
       return;
     }
 

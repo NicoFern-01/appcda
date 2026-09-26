@@ -331,15 +331,25 @@ async function inicializarFirebase() {
                 // Alta de cuentas en una app secundaria: NO cierra la sesion del
                 // administrador que esta creando al usuario.
                 crearUsuarioEnAppSecundaria,
+                // Disparar la sincronizacion manualmente (tras un login exitoso,
+                // cuando en el arranque no habia sesion y se omitio).
+                sincronizarAhora: _dispararSincronizacion,
                 get useFirebase() { return useFirebase; }
             };
         }
 
-        try {
-            await sincronizarLocalAFirebase();
-        } catch (syncErr) {
-            console.warn('Sincronización inicial con Firebase no completada:', syncErr);
-        }
+        // ==================== ESPERA DE SESIÓN ANTES DE SINCRONIZAR ====================
+        // Las reglas de Firestore exigen `signedIn()` para LEER cualquier
+        // colección. Antes esta sincronización arrancaba en el `init`, sin
+        // sesión, y por eso cada lectura fallaba con
+        // "Missing or insufficient permissions" y la consola se llenaba de
+        // errores al abrir la app.
+        //
+        // Se espera a que Firebase Auth resuelva si hay usuario: si lo hay,
+        // sincroniza; si no, NO se intenta leer nada (el login de la app se
+        // ocupa de dispararla después). Así el arranque queda limpio y la nube
+        // sigue cerrada para visitantes sin sesión.
+        await _sincronizarCuandoHaySesion(authFirebase, onAuthStateChanged);
 
         return true;
     } catch (e) {
@@ -349,6 +359,52 @@ async function inicializarFirebase() {
     }
 }
 
+
+// ==================== SINCRONIZACIÓN CONDICIONADA A SESIÓN ====================
+// Las reglas de Firestore exigen `signedIn()` para leer. Esta función espera a
+// que Auth resuelva el estado de la sesión y SOLO entonces sincroniza. Sin ella,
+// el arranque intentaba leer sin sesión y llenaba la consola de
+// "Missing or insufficient permissions".
+let _syncIniciada = false;
+let _syncPendiente = false;
+
+function _sincronizarCuandoHaySesion(auth, onAuthStateChanged) {
+    return new Promise((resolve) => {
+        if (!auth || typeof onAuthStateChanged !== 'function') {
+            // Sin Auth disponible: no se toca la nube (se sigue solo local).
+            console.info('[db] Firebase Auth no disponible; se omite la sincronización inicial.');
+            resolve();
+            return;
+        }
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            // Primera resolución: define si arranca la sincronización.
+            if (user) {
+                _dispararSincronizacion().finally(() => {
+                    unsubscribe();
+                    resolve();
+                });
+            } else {
+                console.info('[db] Sin sesión activa: la sincronización se hará al iniciar sesión.');
+                unsubscribe();
+                resolve();
+            }
+        });
+    });
+}
+
+/**
+ * Lanza la sincronización local -> Firestore. Es idempotente por diseño:
+ * solo corre la primera vez que hay sesión.
+ */
+async function _dispararSincronizacion() {
+    if (_syncIniciada) return;
+    _syncIniciada = true;
+    try {
+        await sincronizarLocalAFirebase();
+    } catch (syncErr) {
+        console.warn('[db] Sincronización inicial con Firebase no completada:', syncErr);
+    }
+}
 
 // ==================== SANEO DE CONFIGURACIÓN FIREBASE ====================
 // Al cargar la página, descartar cualquier config de Firebase cacheada que

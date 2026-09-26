@@ -164,8 +164,13 @@ export async function getTodos(storeName, opciones = {}) {
   });
 
   const rt = runtime();
+  // Las reglas de Firestore exigen sesion para LEER. Sin ella, esta lectura
+  // falla con "Missing or insufficient permissions" y, peor, marca la coleccion
+  // como ya consultada (`cloudChecked`), por lo que no volveria a intentar la nube.
+  const haySesion = !!(rt.auth && rt.auth.currentUser);
   if (dataLocal.length === 0 && !opciones.soloLocal && rt.useFirebase && rt.dbFirebase &&
-      typeof rt.getDocs === 'function' && typeof rt.collection === 'function' && !cloudChecked()[storeName]) {
+      typeof rt.getDocs === 'function' && typeof rt.collection === 'function' &&
+      haySesion && !cloudChecked()[storeName]) {
     cloudChecked()[storeName] = true;
     try {
       console.log(`Colección '${storeName}' vacía en IndexedDB. Forzando lectura directa desde Firestore...`);
