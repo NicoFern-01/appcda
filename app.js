@@ -2606,21 +2606,20 @@ async function listarUsuarios() {
 
     // ============ FUENTE DE VERDAD: LA NUBE ============
     // IndexedDB es POR DISPOSITIVO: los usuarios creados en la consola de
-    // Firebase o en otro equipo NO existían acá, por eso no aparecían en la
-    // lista. Se lee `usuarios` de Firestore y se fusiona con los locales.
+    // Firebase o en otro equipo NO existían acá, por eso no aparecian nunca.
+    //
+    // La NUBE MANDA: si hay perfiles en Firestore, la lista es EXCLUSIVamente
+    // la nube. Si no, se usa IndexedDB (app sin Firebase o primer arranque).
     const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
+    let perfilesNube = [];
     if (directorio && typeof directorio.listarPerfiles === 'function') {
-        const perfiles = await directorio.listarPerfiles();
-        if (perfiles.length) {
-            const porClave = new Map();
-            //Primero la nube (manda), después los locales que no estén en ella.
-            perfiles.forEach(p => porClave.set(String(p.id).toLowerCase(), p));
-            usuarios.forEach(u => {
-                const clave = String(u.id).toLowerCase();
-                if (!porClave.has(clave)) porClave.set(clave, { ...u, origen: 'local' });
-            });
-            usuarios = Array.from(porClave.values());
-        }
+        perfilesNube = await directorio.listarPerfiles();
+    }
+
+    if (perfilesNube.length) {
+        // Sin fusionar: cada perfil de la nube es un documento único (id =
+        // username). Fusionar con los locales generaba duplicados fantasma.
+        usuarios = perfilesNube;
     }
 
     // El `username` es la clave unica e inmutable (es el ID del documento en
@@ -2642,24 +2641,46 @@ async function listarUsuarios() {
         // IndexedDB es numérico. Comparar con `===` hacía que un usuario de la
         // nube NUNCA se reconociera como "yo" (y por eso no tenía botón de borrar).
         const esElMismo = !!currentUser && String(currentUser.id).toLowerCase() === String(u.id).toLowerCase();
-        // El id puede ser numérico o string: se pasa como JSON para que las
-        // comillas del caso nube no rompan el onclick.
-        const idArg = JSON.stringify(String(u.id));
-        tbody.innerHTML += `
-            <tr>
-                <td style="font-weight:600;">
-                    ${escapeHtml(u.username)}
-                    ${esElMismo ? '<span class="badge badge-info" style="font-size:0.7rem;margin-left:0.5rem;">Yo</span>' : ''}
-                </td>
-                <td>${escapeHtml(u.nombre)}</td>
-                <td><span class="badge ${rolesBadge[u.rol]}">${rolesNombres[u.rol] || escapeHtml(u.rol)}</span></td>
-                <td><span class="badge ${u.activo ? 'badge-active' : 'badge-inactive'}">${u.activo ? 'Activo' : 'Inactivo'}</span></td>
-                <td style="text-align:right;">
-                    <button class="action-btn" onclick="editarUsuario(${idArg})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
-                    ${!esElMismo ? `<button class="action-btn delete" onclick="eliminarUsuario(${idArg})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>` : ''}
-                </td>
-            </tr>
+        // El id viaja en un data-attribute, NO interpolado en un onclick.
+        // Interpolar el id (que puede ser un string) dentro de onclick rompía el
+        // HTML: las comillas del id cerraban el atributo y el navegador lanzaba
+        // "SyntaxError: Unexpected end of input" al hacer clic.
+        const fila = document.createElement('tr');
+        fila.dataset.usuarioId = String(u.id);
+        fila.innerHTML = `
+            <td style="font-weight:600;">
+                ${escapeHtml(u.username)}
+                ${esElMismo ? '<span class="badge badge-info" style="font-size:0.7rem;margin-left:0.5rem;">Yo</span>' : ''}
+            </td>
+            <td>${escapeHtml(u.nombre)}</td>
+            <td><span class="badge ${rolesBadge[u.rol]}">${rolesNombres[u.rol] || escapeHtml(u.rol)}</span></td>
+            <td><span class="badge ${u.activo ? 'badge-active' : 'badge-inactive'}">${u.activo ? 'Activo' : 'Inactivo'}</span></td>
+            <td style="text-align:right;">
+                <button class="action-btn" data-accion="editar" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
+                ${!esElMismo ? `<button class="action-btn delete" data-accion="eliminar" title="Eliminar"><i class="fa-solid fa-trash"></i></button>` : ''}
+            </td>
         `;
+        tbody.appendChild(fila);
+    });
+
+    _conectarAccionesUsuarios(tbody);
+}
+
+// Delegación de eventos: un solo listener en el <tbody> en lugar de N onclick
+// con el id interpolado (fuente del SyntaxError). Además evita regenerar listeners.
+let _accionesUsuariosConectadas = false;
+function _conectarAccionesUsuarios(tbody) {
+    if (_accionesUsuariosConectadas) return;
+    _accionesUsuariosConectadas = true;
+    tbody.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-accion]');
+        if (!btn) return;
+        const fila = btn.closest('tr[data-usuario-id]');
+        if (!fila) return;
+        const id = fila.dataset.usuarioId;
+        if (!id) return;
+        if (btn.dataset.accion === 'editar') editarUsuario(id);
+        else if (btn.dataset.accion === 'eliminar') eliminarUsuario(id);
     });
 }
 

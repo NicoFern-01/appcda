@@ -332,7 +332,10 @@ export const userDirectoryService = {
     }
 
     if (duplicados.length) {
-      console.warn('[usuarios] Duplicados detectados por username:', duplicados.length);
+      // INFO y no WARN: al fusionar nube+locales es esperable ver el mismo
+      // usuario en ambos origenes, y un warn cada vez inundaba la consola.
+      console.info('[usuarios] Se colapsaron ' + duplicados.length +
+        ' registro(s) duplicado(s) por username (mismo usuario enIndexedDB y en la nube).');
     }
     return { unicos: Array.from(porUsername.values()), duplicados };
   },

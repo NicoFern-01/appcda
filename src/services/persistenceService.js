@@ -260,6 +260,12 @@ export async function obtenerPorId(storeName, id) {
 export async function sincronizarFirebaseALocal(stores) {
   const rt = runtime();
   if (!rt.useFirebase || !rt.dbFirebase || typeof rt.getDocs !== 'function' || typeof rt.collection !== 'function') return 0;
+  // Las reglas exigen `signedIn()` para leer. Sin sesión, TODAS las colecciones
+  // fallan con "Missing or insufficient permissions": se aborta limpio.
+  if (!(rt.auth && rt.auth.currentUser)) {
+    console.info('[persistencia] Sin sesión activa: no se descargan datos de Firestore.');
+    return 0;
+  }
 
   let total = 0;
   for (const storeName of stores) {
@@ -301,7 +307,15 @@ export async function sincronizarFirebaseALocal(stores) {
       total += desdeNube.length;
       console.log(`Colección '${storeName}': ${desdeNube.length} registros descargados desde Firestore (resolución A-3).`);
     } catch (e) {
-      console.warn(`No se pudo descargar '${storeName}' desde Firestore:`, e);
+      // Antes se imprimía el error crudo, que en varios casos era un
+      // "TypeError" sin mensaje y se veía como un `null` inútil. Se agrega
+      // contexto para poder diagnosticar sin adivinar.
+      console.warn(`No se pudo descargar '${storeName}' desde Firestore:`, {
+        mensaje: (e && e.message) || String(e),
+        codigo: e && e.code,
+        nombre: e && e.name,
+        conSesion: !!(rt.auth && rt.auth.currentUser)
+      });
     }
   }
   return total;
