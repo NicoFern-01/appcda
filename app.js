@@ -2907,6 +2907,11 @@ async function guardarUsuarioForm(e) {
             mostrarToast(escapeHtml(res.mensaje), 'error');
             return;
         }
+        // Sincronizacion a la nube desactivada: el alta quedo solo en este
+        // dispositivo. Se avisa para que el admin no asuma que es multi-dispositivo.
+        if (res.nube === false) {
+            mostrarToast('Usuario guardado solo en este dispositivo (sincronizacion a la nube desactivada).', 'warning');
+        }
     } else {
         // ---- EDICION: solo el perfil. La contrasena NO se toca en Auth ----
         const res = await directorio.actualizarPerfil({ username, nombre, rol, activo, permisos: usuario.permisos });

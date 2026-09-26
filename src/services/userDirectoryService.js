@@ -22,6 +22,28 @@
 import { normalizarUsernameAEmail } from './authCredentials.js';
 
 /** Runtime de Firebase expuesto por db.js (Firestore + Auth). */
+
+// ==================== BANDERA DE FUNCIONALIDAD ====================
+// La escritura de usuarios en la nube queda DESACTIVADA por defecto.
+//
+// Motivo: sin reglas de seguridad de Firestore, cualquiera puede abrir la
+// consola y escribirse un documento con `rol: 'admin'`. La API key es publica
+// por diseno (va en el bundle), asi que las reglas son la unica defensa.
+//
+// Para habilitarla, poner en .env:  VITE_CDA_SYNC_USUARIOS_NUBE=true
+// (solo despues de haber publicado las reglas restrictivas en Firebase).
+//
+// Con la bandera apagada NO se rompe nada: el alta/edicion sigue funcionando
+// exactamente como antes, guardando solo en IndexedDB.
+function leerBanderaSyncNube() {
+  const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {};
+  const valor = env && env.VITE_CDA_SYNC_USUARIOS_NUBE;
+  return String(valor).trim().toLowerCase() === 'true';
+}
+
+const SYNC_USUARIOS_NUBE = leerBanderaSyncNube();
+console.info('[usuarios] Sincronizacion de usuarios con la nube: ' +
+  (SYNC_USUARIOS_NUBE ? 'HABILITADA' : 'DESACTIVADA (solo local)'));
 function runtime() {
   return (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || {};
 }
@@ -94,6 +116,11 @@ export const userDirectoryService = {
    * @returns {{ok:boolean, mensaje?:string, email?:string}}
    */
   async crearUsuario({ username, nombre, rol, activo, permisos, password }) {
+    // Bandera apagada: se omite la nube y se sigue solo con IndexedDB.
+    if (!SYNC_USUARIOS_NUBE) {
+      console.info('[usuarios] Alta en la nube omitida (bandera desactivada).');
+      return { ok: true, nube: false };
+    }
     const id = idDocumento(username);
     if (!id) return { ok: false, mensaje: 'El nombre de usuario es obligatorio.' };
     if (!password) return { ok: false, mensaje: 'La contraseña es obligatoria para nuevos usuarios.' };
@@ -134,6 +161,11 @@ export const userDirectoryService = {
    * explicita). Si el documento aun no existe, se crea con merge.
    */
   async actualizarPerfil({ username, nombre, rol, activo, permisos }) {
+    // Bandera apagada: se omite la nube y se sigue solo con IndexedDB.
+    if (!SYNC_USUARIOS_NUBE) {
+      console.info('[usuarios] Edicion de perfil en la nube omitida (bandera desactivada).');
+      return { ok: true, nube: false };
+    }
     const id = idDocumento(username);
     if (!id) return { ok: false, mensaje: 'El nombre de usuario es obligatorio.' };
     if (!firestoreDisponible()) {
