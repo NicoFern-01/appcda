@@ -2920,7 +2920,13 @@ async function guardarUsuarioForm(e) {
         }
     }
 
-    await guardar('usuarios', usuario);
+    // `guardar()` devuelve null cuando el validador rechaza el registro.
+    // Sin esta comprobacion, la UI anunciaba exito aunque no se escribiera nada.
+    const guardado = await guardar('usuarios', usuario);
+    if (guardado === null || guardado === undefined) {
+        mostrarToast('No se pudo guardar el usuario (registro rechazado por el validador). Revisá la consola.', 'error');
+        return;
+    }
 
     if (currentUser && currentUser.id === usuario.id) {
         currentUser = { ...currentUser, ...usuario };
