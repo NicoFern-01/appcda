@@ -280,14 +280,16 @@ export async function handleLogin(event) {
       code === 'auth/user-not-found' || code === 'auth/invalid-email' ||
       code === 'auth/user-disabled';
 
-    console.error('ERROR DE AUTENTICACION:', code, error && error.message);
-
-    // Credencial rechazada por Firebase: respuesta definitiva. NO se reintenta
-    // con el hash local, para no bypassear la fuente de verdad.
+    // Un rechazo de credenciales es un caso NORMAL del formulario de login, no
+    // una falla de la app: se registra como advertencia para no inundar la
+    // consola (la UI ya muestra "Usuario o contraseña incorrectos").
     if (esErrorDeCredencial) {
+      console.warn('[authService] Credenciales rechazadas por Firebase:', code);
       mostrarErrorLogin(errorEl);
       return;
     }
+
+    console.error('ERROR DE AUTENTICACION:', code, error && error.message);
 
     // Fallo de infraestructura/red: aqui si se degrada al login local para que
     // la app siga utilizable sin conectividad.

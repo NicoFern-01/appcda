@@ -133,8 +133,17 @@ export const userDirectoryService = {
     const email = normalizarUsernameAEmail(username);
 
     // 1) Identidad primero: si falla, no queda un perfil huerfano en Firestore.
+    //    Se usa la app secundaria para NO cerrar la sesion del administrador:
+    //    con el Auth principal, createUserWithEmailAndPassword() inicia sesion
+    //    con la cuenta nueva y el setDoc siguiente seria rechazado por las reglas.
     try {
-      await rt.createUserWithEmailAndPassword(rt.auth, email, password);
+      if (typeof rt.crearUsuarioEnAppSecundaria === 'function') {
+        await rt.crearUsuarioEnAppSecundaria(email, password);
+      } else {
+        console.warn('[usuarios] App secundaria no disponible; se usa el Auth principal. ' +
+          'La sesion del administrador puede quedar reemplazada.');
+        await rt.createUserWithEmailAndPassword(rt.auth, email, password);
+      }
     } catch (error) {
       return { ok: false, mensaje: traducirErrorAuth(error), codigo: error && error.code };
     }
@@ -145,9 +154,17 @@ export const userDirectoryService = {
         const doc = construirDocPerfil({ username, nombre, rol, activo, permisos });
         await rt.setDoc(rt.doc(rt.dbFirebase, 'usuarios', id), doc);
       } catch (error) {
+        console.error('[usuarios] Escritura de Firestore rechazada:', {
+          code: error && error.code,
+          message: error && error.message,
+          path: 'usuarios/' + id,
+          authUser: rt.auth && rt.auth.currentUser ? rt.auth.currentUser.email : null,
+          rolSesion: globalThis.currentUser ? globalThis.currentUser.rol : null
+        });
         return {
           ok: false,
           mensaje: 'La cuenta se creó pero no se pudo guardar el perfil: ' + traducirErrorAuth(error),
+          codigo: error && error.code,
         };
       }
     }
