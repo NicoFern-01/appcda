@@ -89,6 +89,15 @@ let storageFirebase = null;
 let getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword;
 let authFirebase = null;
 
+// ==================== CREDENCIALES POR DEFECTO DEL ADMIN ====================
+// Fuente única de verdad del usuario administrador inicial. Se crea de forma
+// silenciosa (sin alert) cuando el store `usuarios` está vacío, con credenciales
+// fijas y predecibles de desarrollo. Coincide con el harness E2E (tests/app.spec.js).
+const ADMIN_POR_DEFECTO = Object.freeze({
+    username: 'admin',
+    password: 'Admin123!'
+});
+
 // ==================== HASH DE CONTRASEÑAS SEGURO (Web Crypto API) ====================
 // Usa SHA-256 con salt aleatorio. No almacena la contraseña en texto plano.
 async function hashPassword(password) {
@@ -238,6 +247,15 @@ async function inicializarFirebase() {
                 query,
                 where,
                 writeBatch,
+                // MIGRACIÓN A FIREBASE AUTHENTICATION: authService.js (ES module)
+                // no puede leer los `let` de db.js, así que el SDK de Auth
+                // se expone aquí dentro del mismo bridge aditivo.
+                auth: authFirebase,
+                getAuth,
+                signInWithEmailAndPassword,
+                onAuthStateChanged,
+                signOut,
+                createUserWithEmailAndPassword,
                 get useFirebase() { return useFirebase; }
             };
         }
@@ -539,23 +557,21 @@ async function inicializarDatosPorDefecto() {
             await guardar('conceptos', conc);
         }
     }
-    // Comprobar si hay usuarios - crear admin por defecto si no existe ninguno
+    // Comprobar si hay usuarios - crear admin por defecto si no existe ninguno.
+    // Silencioso y determinista: credenciales fijas de desarrollo (admin / Admin123!),
+    // unificadas con el harness E2E de Playwright (tests/app.spec.js). Sin alert().
     const usuarios = await getTodos('usuarios');
     if (usuarios.length === 0) {
-        // Generar una contraseña aleatoria segura y mostrarla al usuario
-        const tempPassword = generarPasswordTemporal();
-        const passwordHash = await hashPassword(tempPassword);
+        const passwordHash = await hashPassword(ADMIN_POR_DEFECTO.password);
         await guardar('usuarios', {
-            username: 'admin',
+            username: ADMIN_POR_DEFECTO.username,
             passwordHash,
             nombre: 'Administrador',
             rol: 'admin', // 'admin' | 'editor' | 'viewer'
             activo: true,
             requiereCambioPassword: true
         });
-        console.warn(`⚠️ Usuario admin creado con contraseña temporal: ${tempPassword}`);
-        console.warn('⚠️ IMPORTANTE: Cambie esta contraseña inmediatamente desde Configuración > Usuarios.');
-        alert(`Se creó el usuario administrador inicial.\n\nUsuario: admin\nContraseña temporal: ${tempPassword}\n\nIMPORTANTE: Cambie esta contraseña inmediatamente desde Configuración > Usuarios.`);
+        console.info('[db] Usuario admin por defecto creado (admin / Admin123!). Cambie la contraseña desde Configuración > Usuarios.');
     }
 
     // ==================== DATOS POR DEFECTO DE INVENTARIO ====================
@@ -1039,18 +1055,6 @@ async function ajustarStockV9(articuloId, talleId, opciones) {
     invalidarCache('articulos');
     invalidarCache('articuloTalles');
     return { ok: true, tipoAplicado: tipo, cantidad: Math.abs(cant), stockNuevo: art.stockUnico };
-}
-
-// Generar contraseña temporal segura
-function generarPasswordTemporal() {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
-    let password = '';
-    const array = new Uint32Array(12);
-    crypto.getRandomValues(array);
-    for (let i = 0; i < 12; i++) {
-        password += chars[array[i] % chars.length];
-    }
-    return password;
 }
 
 // Helper genérico para limpiar valores no soportados por Firebase como undefined
