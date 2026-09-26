@@ -22,6 +22,18 @@ const FALLBACK_CONFIG = {
   appId: '1:971822887261:web:abe3fd29049c176946f8b4',
   measurementId: 'G-L5C4YLVW1V'
 };
+/**
+ * authDomain CANÓNICO del proyecto Firebase.
+ *
+ * IMPORTANTE: Firebase Auth exige que `authDomain` coincida con un dominio
+ * autorizado en la consola del proyecto. Reemplazarlo por el hostname del
+ * hosting (por ejemplo `nicofern-01.github.io`) provoca el error
+ * `auth/invalid-api-key`, pese a que la API key sea perfectamente válida.
+ *
+ * El hostname del sitio solo debe registrarse como dominio AUTORIZADO en
+ * Firebase Console; no reemplaza al authDomain.
+ */
+export const AUTH_DOMAIN_CANONICO = 'controlcda-e5f97.firebaseapp.com';
 
 // Mapas variable-de-entorno → clave del objeto config.
 const ENV_MAP = [
@@ -57,7 +69,14 @@ export function getFirebaseConfig() {
     }
   }
 
-  // authDomain: si .env no lo aporta, NO forzamos uno (decisión de db.js).
+  // authDomain: SIEMPRE el canónico de Firebase.
+  // Antes se dejaba indefinido y db.js lo reemplazaba por el hostname del
+  // hosting, lo que rompía Firebase Auth en GitHub Pages. Ahora la decisión
+  // vive acá y db.js solo puede usar este valor.
+  if (!config.authDomain || config.authDomain.includes('github.io')) {
+    config.authDomain = AUTH_DOMAIN_CANONICO;
+  }
+
   return config;
 }
 
