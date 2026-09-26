@@ -644,16 +644,49 @@ async function listarCompetencias() {
             if (!comp.categoriasIds || !comp.categoriasIds.map(x => Number(x)).includes(Number(filtroCat))) return false;
         }
         const inicio = comp.fechaInicio ? new Date(comp.fechaInicio) : null;
-        if (filtroMes && filtroMes !== 'todos' && inicio) {
-            const mes = inicio.getMonth() + 1;
-            if (Number(filtroMes) !== mes) return false;
+        if (inicio && Number.isNaN(inicio.getTime())) inicio = null;
+
+        // Filtro de mes: se compara contra el mes de INICIO de la competencia.
+        // Si la competencia no tiene fecha valida NO se puede saber en que mes cae,
+        // asi que se EXCLUYE cuando se filtra por mes/año (antes se la dejaba pasar
+        // siempre, y por eso "solo el mes seleccionado" mostraba resultados extra).
+        if (filtroMes && filtroMes !== 'todos') {
+            if (!inicio) return false;
+            if (Number(filtroMes) !== inicio.getMonth() + 1) return false;
         }
-        if (filtroAno && filtroAno !== 'todos' && inicio) {
-            const ano = inicio.getFullYear();
-            if (Number(filtroAno) !== ano) return false;
+        if (filtroAno && filtroAno !== 'todos') {
+            if (!inicio) return false;
+            if (Number(filtroAno) !== inicio.getFullYear()) return false;
         }
         return true;
     });
+
+    // Contador de resultados + aviso cuando el filtro deja la lista vacia.
+    // Antes, un filtro sin coincidencias mostraba un bloque en blanco sin
+    // explicacion, y no habia forma de saber si el filtro se estaba aplicando.
+    const hayFiltro = (filtroCat && filtroCat !== 'todos') ||
+                     (filtroMes && filtroMes !== 'todos') ||
+                     (filtroAno && filtroAno !== 'todos');
+    const resumenFiltros = document.getElementById('calendario-resumen-filtros');
+    if (resumenFiltros) {
+        if (hayFiltro) {
+            resumenFiltros.style.display = '';
+            resumenFiltros.innerHTML =
+                `<i class="fa-solid fa-filter"></i> Mostrando ${competenciasFiltradas.length} de ${competencias.length} competencias`;
+        } else {
+            resumenFiltros.style.display = 'none';
+            resumenFiltros.innerHTML = '';
+        }
+    }
+
+    if (competenciasFiltradas.length === 0) {
+        listContainer.innerHTML = hayFiltro
+            ? '<p style="color:var(--text-secondary);grid-column:1/-1;text-align:center;">' +
+              'No hay competencias que coincidan con los filtros seleccionados.</p>'
+            : '<p style="color:var(--text-secondary);grid-column:1/-1;text-align:center;">No hay competencias registradas.</p>';
+        updateCalendarioToggleButton();
+        return;
+    }
 
     if (calendarioViewMode === 'list') {
         const ul = document.createElement('ul');
