@@ -71,6 +71,15 @@ async function obtenerNombresColeccionesLocales() {
 // ---------------- GUARDAR ----------------
 export async function guardar(storeName, item) {
   // A-5: validación de esquema antes de impactar cualquier persistencia.
+  // El id debe existir ANTES de validar: el validador lo exige y los stores
+  // usan keyPath 'id' con autoIncrement, asi que un registro nuevo llega sin id.
+  // Si se validara antes de generarlo, NINGUN alta nueva se podria guardar.
+  if (!item.id) {
+    item.id = Date.now() + Math.floor(Math.random() * 1000);
+  } else {
+    item.id = Number(item.id);
+  }
+
   const validacion = validarRegistro(storeName, item);
   if (!validacion.ok) {
     console.error(validacion.motivo);
@@ -87,11 +96,6 @@ export async function guardar(storeName, item) {
     item.permisos = limpiarObjetoParaFirebase(item.permisos);
   }
 
-  if (!item.id) {
-    item.id = Date.now() + Math.floor(Math.random() * 1000);
-  } else {
-    item.id = Number(item.id);
-  }
 
   const cache = () => estado()._cache;
 
