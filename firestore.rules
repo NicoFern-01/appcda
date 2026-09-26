@@ -1,0 +1,91 @@
+rules_version = '2';
+
+// ============================================================
+// REGLAS DE FIRESTORE — Control CDA
+// ============================================================
+// La API key de Firebase es publica POR DISENO (va en el bundle). Por eso
+// estas reglas son la UNICA defensa real: sin ellas, cualquiera que abra la
+// consola del navegador puede escribirse `rol: "admin"` y concede acceso total.
+//
+// MODELO DE IDENTIDAD:
+//   Firebase Auth  -> identidad (email). El local-part del email ES el username.
+//   usuarios/{id}  -> perfil (nombre, rol, activo, permisos). El id es el
+//                     username en minusculas.
+//
+// La funcion `esAdmin()` resuelve el rol desde el propio documento de perfil,
+// de modo que el cliente NO puede auto-asignarse admin (eso exigiria escribir
+// primero su propio perfil).
+// ============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Helpers ----------
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function miEmail() {
+      return request.auth.token.email;
+    }
+
+    // Username en minusculas = id de documento.
+    function miId() {
+      return request.auth.token.email.split('@')[0].toLowerCase();
+    }
+
+    function miPerfil() {
+      return get(/databases/$(database)/documents/usuarios/$(miId())).data;
+    }
+
+    function esAdmin() {
+      return signedIn() && miPerfil().rol == 'admin' && miPerfil().activo == true;
+    }
+
+    // Roles que pueden escribir datos operativos. La app tiene perfiles
+    // 'editor' y 'supervisor' que SIfuen editan sus modulos con los permisos
+    // granulares de la matriz: excluirlos de los datos les romperia el uso
+    // diario. 'viewer' queda excluido (solo lectura).
+    function puedeEscribirDatos() {
+      return signedIn()
+          && miPerfil().activo == true
+          && miPerfil().rol in ['admin', 'editor', 'supervisor'];
+    }
+
+    // Regla anti-autoescalada: un usuario NO puede escribirse a si mismo con
+    // permisos distintos a los que ya tiene. Impide que cualquiera se declare
+    // admin. Los admins legitimos si pueden editar a otros.
+    function noAutoescalada() {
+      return request.resource.data.rol == resource.data.rol
+          || esAdmin();
+    }
+
+    // ---------- coleccion usuarios (perfiles) ----------
+    match /usuarios/{userId} {
+      // Cualquier usuario autenticado puede LEER perfiles (necesario para que
+      // el listado y los permisos funcionen en la app).
+      allow read: if signedIn();
+
+      // CREAR: solo un admin, y solo un documento cuyo id coincida con su propio
+      // email (impide crear perfiles arbitrarios en nombre de terceros).
+      allow create: if esAdmin() && userId == miId();
+
+      // EDITAR: solo admin. Un usuario NO puede editar su propio perfil en la nube
+      // (los cambios de permisos los hace el admin; asi se evita la autoescalada).
+      allow update: if esAdmin() && noAutoescalada();
+
+      // BORRAR: solo admin, y nunca el propio perfil (evita quedar sin admin).
+      allow delete: if esAdmin() && userId != miId();
+    }
+
+    // ---------- resto de colecciones ----------
+    // LECTURA: cualquier usuario autenticado.
+    // ESCRITURA: solo roles operativos (admin/editor/supervisor activos).
+    // Antes era un comodin que permitia a CUALQUIER usuario autenticado
+    // (incluidos viewers) escribir en cualquier coleccion.
+    match /{collection}/{docId} {
+      allow read: if signedIn();
+      allow write: if puedeEscribirDatos();
+    }
+  }
+}
