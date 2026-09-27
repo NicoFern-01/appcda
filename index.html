@@ -122,10 +122,21 @@
                 </header>
 
                 <div class="stats-grid">
+                    <div class="stat-card dashboard-link-card" id="stat-gasto-acumulado-card" role="button" tabindex="0" onclick="scrollToDetalleAcumuladoDashboard()" onkeydown="if(event.key==='Enter' || event.key===' ') scrollToDetalleAcumuladoDashboard();" title="Ir al detalle mes a mes del gasto acumulado" aria-controls="dash-acumulado-card">
+                        <div class="stat-info">
+                            <h3 id="stat-gasto-acumulado-label">Gasto Acumulado Anual</h3>
+                            <p id="stat-gasto-acumulado">$0.00</p>
+                            <span class="stat-delta" id="stat-gasto-acumulado-nota"></span>
+                        </div>
+                        <div class="stat-icon stat-icon-red">
+                            <i class="fa-solid fa-chart-line"></i>
+                        </div>
+                    </div>
                     <div class="stat-card dashboard-link-card" role="link" tabindex="0" onclick="navegarDesdeDashboard('gastos')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('gastos')" title="Ir a Control de Gastos">
                         <div class="stat-info">
                             <h3 id="stat-gasto-total-label">Gasto Total Anual</h3>
                             <p id="stat-gasto-total">$0.00</p>
+                            <span class="stat-delta" id="stat-gasto-variacion"></span>
                         </div>
                         <div class="stat-icon">
                             <i class="fa-solid fa-dollar-sign"></i>
@@ -174,14 +185,63 @@
 
                 <div class="charts-grid">
                     <div class="chart-card" style="grid-column: 1 / -1;">
-                        <h3>Distribución de Gastos por Concepto <span id="dash-conc-periodo" style="font-size:0.8rem; color:#94a3b8; font-weight:400;"></span></h3>
-                        <div class="chart-container" style="height: 200px;">
+                        <h3>Top 5 Conceptos de Mayor Gasto <span id="dash-conc-periodo" style="font-size:0.8rem; color:#94a3b8; font-weight:400;"></span></h3>
+                        <div class="chart-container" style="height: 260px;">
                             <canvas id="chart-concepto"></canvas>
                         </div>
                     </div>
                 </div>
-            </section>
 
+                <!-- DRILL-DOWN: detalle de un punto del gráfico de Evolución -->
+                <div class="chart-card" id="dash-drilldown-card" style="display:none;">
+                    <h3>
+                        <i class="fa-solid fa-magnifying-glass-dollar"></i>
+                        Detalle del Gasto — <span id="dash-drilldown-fecha">—</span>
+                        <span id="dash-drilldown-total" style="float:right; color:var(--accent); font-weight:700; font-size:0.95rem;"></span>
+                    </h3>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Tipo</th>
+                                    <th>Fecha</th>
+                                    <th>Concepto</th>
+                                    <th>Descripción</th>
+                                    <th style="text-align:right;">Monto</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dash-drilldown-body">
+                                <tr><td colspan="5" style="text-align:center;color:var(--text-secondary);">Hacé clic en un punto del gráfico de Evolución para ver el desglose.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Detalle mes a mes del Gasto Acumulado (siempre visible) -->
+                <div class="chart-card" id="dash-acumulado-card">
+                    <h3>
+                        <i class="fa-solid fa-layer-group"></i>
+                        Gasto Acumulado Mes a Mes — <span id="dash-acumulado-anio">—</span>
+                        <span id="dash-acumulado-total" style="float:right; color:var(--accent); font-weight:700; font-size:0.95rem;"></span>
+                    </h3>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th style="width:90px;">Mes</th>
+                                    <th style="text-align:right;">Gasto del Mes</th>
+                                    <th style="text-align:right;">Acumulado</th>
+                                    <th style="text-align:right;">vs Mes Anterior</th>
+                                    <th>Peso en el Acumulado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dash-acumulado-body">
+                                <tr><td colspan="5" style="text-align:center;color:var(--text-secondary);">Sin datos para el año seleccionado.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
             <!-- VIEW: CALENDARIO (Google Sheets) -->
             <section id="view-calendario" class="view">
                 <header>

@@ -488,6 +488,43 @@ header {
     background-color: rgba(46, 213, 115, 0.1);
 }
 
+/* Icono con color forzado por clase (la fila de tarjetas del dashboard ahora
+   tiene más elementos, así que el color ya no puede depender de :nth-child). */
+.stat-icon-red {
+    color: var(--accent);
+    background-color: rgba(255, 71, 87, 0.1);
+}
+
+.stat-icon-green {
+    color: var(--accent-green);
+    background-color: rgba(46, 213, 115, 0.1);
+}
+
+.stat-icon-blue {
+    color: var(--accent-blue);
+    background-color: rgba(0, 210, 211, 0.1);
+}
+
+/* Texto secundario dentro de una stat-card: variación % vs mes anterior,
+   acumulado, etc. Mantiene la jerarquía visual sin competir con el monto. */
+.stat-delta {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    color: var(--text-secondary);
+    min-height: 1em;
+}
+
+.stat-delta.is-up {
+    color: var(--accent);
+}
+
+.stat-delta.is-down {
+    color: var(--accent-green);
+}
+
 /* Dashboard Charts Grid */
 .charts-grid {
     display: grid;

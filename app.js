@@ -16,6 +16,17 @@ let chartCategoriasInstance = null;
 let chartMensualInstance = null;
 let chartConceptoInstance = null;
 
+// Contexto del ÚLTIMO render del dashboard. Lo usa el drill-down del gráfico
+// de evolución: al hacer clic en un punto hacen falta los registros originales
+// (gastos simples + detallados) que componen ese total, y el tipo de eje vigente
+// (día o mes) para traducir el índice del punto a una fecha.
+let dashboardContextoActual = null;
+
+// Series mensuales del gasto acumulado, recalculadas en cada render del
+// dashboard. Se guardan aparte (y no se recalculan al hacer clic) para que el
+// detalle mes a mes sea un simple toggle: abrir/cerrar no vuelve a sumar nada.
+let dashboardAcumuladoMensual = null;
+let dashboardAcumuladoAnio = null;
 // Flag para evitar re-renderizar el dashboard si no cambiaron los datos
 let dashboardDirty = true;
 
@@ -439,6 +450,83 @@ async function renderDashboard() {
         if (el) el.textContent = `· ${tituloPeriodo}`;
     });
 
+    // ============ GASTO ACUMULADO ANUAL (hasta el mes en curso) ============
+    // "Mes en curso" = el mes seleccionado en el filtro; si el filtro está en
+    // "Todo el año", se acumula el año completo. Los gastos DETALLADOS se
+    // imputan por la fecha de su detalle o, si no tiene, por la de la rendición.
+    const anioAcum = anioSel ?? new Date().getFullYear();
+    const mesCorte = mesSel ?? 12;
+    const totalDeMesDelAnio = (mes) => {
+        const dentro = (fecha) => {
+            if (!fecha) return false;
+            const f = new Date(fecha);
+            if (isNaN(f.getTime())) return false;
+            return f.getFullYear() === anioAcum && (f.getMonth() + 1) === mes;
+        };
+        return gastos.filter(g => dentro(g.fecha)).reduce((s, g) => s + Number(g.monto || 0), 0)
+             + detalleGastos.filter(d => dentro(fechaDeDetalle(d))).reduce((s, d) => s + Number(d.total || 0), 0);
+    };
+    const sumaHastaMes = (mesLimite) => {
+        let s = 0;
+        for (let m = 1; m <= mesLimite; m++) s += totalDeMesDelAnio(m);
+        return s;
+    };
+
+    // Serie mes a mes (1..mesCorte) con acumulado y variación: es la fuente del
+    // detalle que se despliega al hacer clic en la tarjeta.
+    let corridaAcum = 0;
+    dashboardAcumuladoMensual = [];
+    dashboardAcumuladoAnio = anioAcum;
+    for (let m = 1; m <= mesCorte; m++) {
+        const gastoMes = totalDeMesDelAnio(m);
+        corridaAcum += gastoMes;
+        const gastoPrevio = m > 1 ? totalDeMesDelAnio(m - 1) : null;
+        dashboardAcumuladoMensual.push({ mes: m, gastoMes, acumulado: corridaAcum, gastoPrevio });
+    }
+    const acumulado = corridaAcum;
+    const elAcumulado = document.getElementById('stat-gasto-acumulado');
+    if (elAcumulado) elAcumulado.innerText = formatearMoneda(acumulado);
+    const elAcumLabel = document.getElementById('stat-gasto-acumulado-label');
+    if (elAcumLabel) {
+        elAcumLabel.textContent = mesSel !== null
+            ? `Gasto Acumulado — ${MESES_DASHBOARD[mesCorte - 1]} ${anioAcum}`
+            : `Gasto Acumulado Anual ${anioAcum}`;
+    }
+    const elAcumNota = document.getElementById('stat-gasto-acumulado-nota');
+    if (elAcumNota) {
+        const prevAcum = mesCorte > 1 ? sumaHastaMes(mesCorte - 1) : 0;
+        elAcumNota.textContent = mesCorte > 1
+            ? `Acumulado Ene–${MESES_DASHBOARD[mesCorte - 1].slice(0, 3)} · ${formatearMoneda(prevAcum)} en Ene–${MESES_DASHBOARD[mesCorte - 2].slice(0, 3)}`
+            : 'Acumulado del mes en curso';
+    }
+
+    // ============ VARIACIÓN % VS MES ANTERIOR (en la tarjeta de Gasto Total) ============
+    // Solo tiene sentido cuando hay un mes aislado seleccionado: compara ese
+    // mes contra el mes inmediato anterior del mismo año.
+    const elVariacion = document.getElementById('stat-gasto-variacion');
+    if (elVariacion) {
+        elVariacion.classList.remove('is-up', 'is-down');
+        if (mesSel === null) {
+            elVariacion.textContent = 'Elegí un mes para ver la variación';
+        } else {
+            const anioRef = anioSel ?? new Date().getFullYear();
+            const mesActual = totalDeMesDelAnio(mesSel);
+            const mesPrevio = mesSel > 1 ? totalDeMesDelAnio(mesSel - 1) : null;
+            if (mesPrevio === null) {
+                elVariacion.textContent = 'Sin mes previo para comparar';
+            } else if (mesPrevio === 0) {
+                elVariacion.textContent = mesActual > 0 ? 'Sin base de comparación' : '—';
+            } else {
+                const variacion = ((mesActual - mesPrevio) / mesPrevio) * 100;
+                const signo = variacion > 0 ? '+' : (variacion < 0 ? '' : '');
+                const signoGlifo = variacion > 0 ? '▲' : (variacion < 0 ? '▼' : '=');
+                elVariacion.textContent = `${signoGlifo} ${signo}${variacion.toFixed(1)}% vs ${MESES_DASHBOARD[mesSel - 2]}`;
+                if (variacion > 0) elVariacion.classList.add('is-up');
+                else if (variacion < 0) elVariacion.classList.add('is-down');
+            }
+        }
+    }
+
     // ============ TOTAL GENERAL: Sumar gastos simples + detallados ============
     const totalGastoSimple = gastosPeriodo.reduce((sum, g) => sum + Number(g.monto), 0);
     const totalGastoDetallado = detallePeriodo.reduce((sum, d) => sum + Number(d.total || 0), 0);
@@ -604,6 +692,18 @@ async function renderDashboard() {
         etiquetaSerie = 'Gastos Anuales';
     }
 
+    // El drill-down necesita los registros originales y el tipo de eje vigente.
+    dashboardContextoActual = {
+        interval,
+        anio: anioSel ?? new Date().getFullYear(),
+        mes: mesSel,
+        gastos,
+        detalleGastos,
+        conceptos,
+        rendiciones,
+        fechaDeDetalle
+    };
+
     if (chartMensualInstance) chartMensualInstance.destroy();
     chartMensualInstance = new Chart(document.getElementById('chart-mensual').getContext('2d'), {
         type: 'line',
@@ -621,7 +721,13 @@ async function renderDashboard() {
                 pointBackgroundColor: '#00d2d3'
             }]
         },
-        options: chartLineOptions()
+        options: chartLineOptions(),
+        // DRILL-DOWN: clic sobre un punto → detalle de los registros de ese día/mes.
+        onClick: (_evt, elements) => {
+            if (!elements || elements.length === 0) return;
+            const idx = elements[0].index;
+            _renderDrillDownDashboard(idx);
+        }
     });
 
     // ============ GASTOS POR CONCEPTO ============
@@ -637,29 +743,230 @@ async function renderDashboard() {
         const k = conc ? conc.nombre.trim() : 'Sin concepto';
         gastosPorConcepto[k] = (gastosPorConcepto[k] || 0) + Number(d.total || 0);
     });
-    const top = Object.entries(gastosPorConcepto).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    // Top 5 estricto, ordenado de mayor a menor (de ahí que se ordene en sentido
+    // descendente y se corte en 5: el objetivo es leer rápido qué conceptos
+    // dominan el costo del período).
+    const top = Object.entries(gastosPorConcepto)
+        .filter(([, v]) => Number(v) > 0)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5);
 
     if (chartConceptoInstance) chartConceptoInstance.destroy();
     chartConceptoInstance = new Chart(document.getElementById('chart-concepto').getContext('2d'), {
-        type: 'doughnut',
+        type: 'bar',
         data: {
-            labels: top.length > 0 ? top.map(c => c[0]) : ['Sin Gastos'],
+            // Chart.js dibuja el 1º índice abajo: se invierte el orden para que
+            // el mayor gasto quede arriba.
+            labels: top.length > 0 ? top.map(c => c[0]).reverse() : ['Sin Gastos'],
             datasets: [{
-                data: top.length > 0 ? top.map(c => c[1]) : [0],
-                backgroundColor: ['#ff4757','#00d2d3','#2ed573','#ff9f43','#a55eea','#1e90ff'],
-                borderWidth: 2,
-                borderColor: '#1f2a40'
+                label: 'Gasto',
+                data: top.length > 0 ? top.map(c => c[1]).reverse() : [0],
+                backgroundColor: ['#1e90ff','#a55eea','#ff9f43','#2ed573','#00d2d3'],
+                borderRadius: 6,
+                borderSkipped: false,
+                barThickness: 22
             }]
         },
         options: {
+            indexAxis: 'y',
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: { position: 'right', labels: { color: '#94a3b8', font: { family: 'Outfit' } } },
-                tooltip: { callbacks: { label: (ctx) => ` $${ctx.raw.toLocaleString()}` } }
+                legend: { display: false },
+                tooltip: { callbacks: { label: (ctx) => ` ${formatearMoneda(Number(ctx.raw))}` } }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    ticks: { color: '#94a3b8', callback: (v) => `$${Number(v).toLocaleString('es-AR')}` }
+                },
+                y: {
+                    grid: { display: false },
+                    ticks: { color: '#94a3b8', font: { family: 'Outfit' } }
+                }
             }
         }
     });
+
+    // Cada vez que se re-renderiza el dashboard, el desglose anterior deja de
+    // corresponder al período mostrado: se oculta para no mostrar datos rancios.
+    _ocultarDrillDownDashboard();
+
+    // El detalle mes a mes del acumulado es FIJO: se repinta en cada render
+    // para que siempre coincida con el año/mes seleccionado.
+    _pintarDetalleAcumuladoDashboard();
+}
+
+const MESES_DRILLDOWN = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+/**
+ * DRILL-DOWN del gráfico de evolución.
+ *
+ * Traduce el índice del punto clickeado a una fecha concreta según el eje
+ * vigente ('daily' → día del mes seleccionado; 'monthly' → mes del año) y lista
+ * los registros individuales que componen ese total, de mayor a menor.
+ * Todos los textos se escapan: concepto y descripción son entrada de usuario.
+ */
+function _renderDrillDownDashboard(indice) {
+    const ctx = dashboardContextoActual;
+    if (!ctx) return;
+
+    const card = document.getElementById('dash-drilldown-card');
+    const body = document.getElementById('dash-drilldown-body');
+    const elFecha = document.getElementById('dash-drilldown-fecha');
+    const elTotal = document.getElementById('dash-drilldown-total');
+    if (!card || !body || !elFecha || !elTotal) return;
+
+    let titulo;
+    let coincide;
+    if (ctx.interval === 'daily') {
+        const dia = indice + 1;
+        titulo = `${dia} de ${MESES_DRILLDOWN[(ctx.mes || 1) - 1]} de ${ctx.anio}`;
+        coincide = (f) => {
+            if (!f) return false;
+            const d = new Date(f);
+            if (isNaN(d.getTime())) return false;
+            return d.getFullYear() === ctx.anio && (d.getMonth() + 1) === ctx.mes && d.getDate() === dia;
+        };
+    } else if (ctx.interval === 'monthly') {
+        const mes = indice + 1;
+        titulo = `${MESES_DRILLDOWN[mes - 1]} ${ctx.anio}`;
+        coincide = (f) => {
+            if (!f) return false;
+            const d = new Date(f);
+            if (isNaN(d.getTime())) return false;
+            return d.getFullYear() === ctx.anio && (d.getMonth() + 1) === mes;
+        };
+    } else {
+        // Eje anual: no hay un período mensual clickeable con sentido.
+        return;
+    }
+
+    const filas = [];
+
+    // Gastos simples: el concepto viene como texto libre en el registro.
+    ctx.gastos.forEach(g => {
+        if (!coincide(g.fecha)) return;
+        filas.push({
+            tipo: 'Gasto',
+            fecha: g.fecha,
+            concepto: (g.concepto || '').trim() || 'Sin concepto',
+            descripcion: (g.descripcion || '').trim() || '—',
+            monto: Number(g.monto || 0)
+        });
+    });
+
+    // Gastos detallados: concepto por ID → nombre; descripción del ítem.
+    ctx.detalleGastos.forEach(d => {
+        if (!coincide(ctx.fechaDeDetalle(d))) return;
+        const conc = ctx.conceptos.find(c => c.id === Number(d.conceptoId));
+        filas.push({
+            tipo: 'Detalle',
+            fecha: ctx.fechaDeDetalle(d),
+            concepto: conc ? conc.nombre : 'Sin concepto',
+            descripcion: (d.descripcion || '').trim() || '—',
+            monto: Number(d.total || 0)
+        });
+    });
+
+    filas.sort((a, b) => b.monto - a.monto);
+
+    elFecha.textContent = titulo;
+    elTotal.textContent = formatearMoneda(filas.reduce((s, f) => s + f.monto, 0));
+
+    if (filas.length === 0) {
+        body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-secondary);">Sin gastos registrados en este período.</td></tr>';
+    } else {
+        body.innerHTML = filas.map(f => `
+            <tr>
+                <td><span style="color:var(--accent-blue);font-size:0.75rem;font-weight:600;">${escapeHtml(f.tipo)}</span></td>
+                <td>${escapeHtml(formatearFechaVisual(f.fecha) || '—')}</td>
+                <td style="font-weight:600;">${escapeHtml(f.concepto)}</td>
+                <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(f.descripcion)}">${escapeHtml(f.descripcion)}</td>
+                <td style="text-align:right;font-weight:700;">${escapeHtml(formatearMoneda(f.monto))}</td>
+            </tr>
+        `).join('');
+    }
+
+    card.style.display = 'block';
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function _ocultarDrillDownDashboard() {
+    const card = document.getElementById('dash-drilldown-card');
+    if (card) card.style.display = 'none';
+}
+
+/**
+ * Desplaza la vista hasta el detalle mes a mes del Gasto Acumulado.
+ *
+ * El panel ahora es FIJO (siempre visible, se repinta en cada render del
+ * dashboard), así que la tarjeta no lo abre ni lo cierra: solo lleva la vista
+ * hasta él. Antes de desplazarse se repinta, por si el usuario cambió el
+ * período y quiere ver los números correspondientes sin esperar al render.
+ */
+function scrollToDetalleAcumuladoDashboard() {
+    const card = document.getElementById('dash-acumulado-card');
+    if (!card) return;
+    _pintarDetalleAcumuladoDashboard();
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** Pinta la tabla mes a mes (gasto del mes, acumulado, variación y peso). */
+function _pintarDetalleAcumuladoDashboard() {
+    const body = document.getElementById('dash-acumulado-body');
+    const elAnio = document.getElementById('dash-acumulado-anio');
+    const elTotal = document.getElementById('dash-acumulado-total');
+    if (!body) return;
+
+    const serie = dashboardAcumuladoMensual || [];
+
+    // El mes más caro fija la escala de las barras de peso relativo.
+    const maximo = serie.reduce((m, f) => Math.max(m, f.gastoMes), 0);
+    const totalGasto = serie.length ? serie[serie.length - 1].acumulado : 0;
+
+    if (elAnio) elAnio.textContent = dashboardAcumuladoAnio ?? new Date().getFullYear();
+    if (elTotal) elTotal.textContent = formatearMoneda(totalGasto);
+
+    if (serie.length === 0 || totalGasto === 0) {
+        body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-secondary);">Sin gastos registrados en el año seleccionado.</td></tr>';
+        return;
+    }
+
+    body.innerHTML = serie.map(f => {
+        // Variación vs mes anterior (sin base de comparación → guion).
+        let variacionHtml = '<span style="color:var(--text-secondary);">—</span>';
+        if (f.gastoPrevio !== null && f.gastoPrevio > 0) {
+            const pct = ((f.gastoMes - f.gastoPrevio) / f.gastoPrevio) * 100;
+            if (pct > 0) variacionHtml = `<span style="color:var(--accent);font-weight:600;">▲ +${pct.toFixed(1)}%</span>`;
+            else if (pct < 0) variacionHtml = `<span style="color:var(--accent-green);font-weight:600;">▼ ${pct.toFixed(1)}%</span>`;
+            else variacionHtml = '<span style="color:var(--text-secondary);">= 0%</span>';
+        } else if (f.gastoPrevio === null) {
+            variacionHtml = '<span style="color:var(--text-secondary);">Mes base</span>';
+        } else if (f.gastoMes > 0) {
+            variacionHtml = '<span style="color:var(--text-secondary);">Sin base</span>';
+        }
+
+        const peso = totalGasto > 0 ? (f.gastoMes / totalGasto) * 100 : 0;
+        const ancho = maximo > 0 ? (f.gastoMes / maximo) * 100 : 0;
+
+        return `
+            <tr>
+                <td style="font-weight:600;">${escapeHtml(MESES_DRILLDOWN[f.mes - 1])}</td>
+                <td style="text-align:right;">${escapeHtml(formatearMoneda(f.gastoMes))}</td>
+                <td style="text-align:right;font-weight:700;">${escapeHtml(formatearMoneda(f.acumulado))}</td>
+                <td style="text-align:right;">${variacionHtml}</td>
+                <td>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <div style="flex:1;height:8px;background:rgba(255,255,255,0.06);border-radius:4px;overflow:hidden;">
+                            <div style="width:${ancho.toFixed(1)}%;height:100%;background:var(--accent-blue);border-radius:4px;"></div>
+                        </div>
+                        <span style="min-width:52px;text-align:right;font-size:0.78rem;color:var(--text-secondary);">${peso.toFixed(1)}%</span>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
 }
 
 function chartLineOptions() {
