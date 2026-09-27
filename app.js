@@ -2657,7 +2657,7 @@ async function listarUsuarios() {
             // ANTES: `listarPerfiles()` devolvía [] tanto si la colección estaba
             // vacía como si la lectura fallaba, y la UI caía a IndexedDB mostrando
             // usuarios que ya no existían en Firebase. Ahora el error se muestra.
-            mostrarToast(escapeHtml(res.mensaje || 'Error al leer los usuarios de Firebase.'), 'error');
+            mostrarToast(res.mensaje || 'Error al leer los usuarios de Firebase.', 'error');
             return;
         }
         perfilesNube = res.perfiles;
@@ -3139,7 +3139,7 @@ async function guardarUsuarioFormInterno() {
         // ---- ALTA: primero la identidad en Firebase Auth, luego el perfil ----
         const res = await directorio.crearUsuario({ username, nombre, rol, activo, permisos: usuario.permisos, password });
         if (!res.ok) {
-            mostrarToast(escapeHtml(res.mensaje), 'error');
+            mostrarToast(res.mensaje, 'error');
             return;
         }
         // Sincronizacion a la nube desactivada: el alta quedo solo en este
@@ -3158,14 +3158,16 @@ async function guardarUsuarioFormInterno() {
             usernameAnterior: previo ? previo.username : username
         });
         if (!res.ok) {
-            mostrarToast('No se pudo sincronizar el perfil a la nube: ' + escapeHtml(res.mensaje), 'error');
+            mostrarToast('No se pudo sincronizar el perfil a la nube: ' + res.mensaje, 'error');
             return;
         }
 
         // Un usuario que vive en la nube NO se duplica en IndexedDB: su perfil
         // ya quedó escrito en Firestore. Escribirlo local creaba un registro
         // fantasma con el mismo username y el listado lo duplicaba.
-        mostrarToast(`Usuario actualizado correctamente. Usuario: ${escapeHtml(usuario.username)}${password ? ' | Contraseña actualizada' : ' | Contraseña sin cambios'}`, 'success');
+        // `mostrarToast` renderiza con `textContent`: no necesita `escapeHtml`
+        // (de hecho, escaparlo aqui produciria doble escapado visible).
+        mostrarToast(`Usuario actualizado correctamente. Usuario: ${usuario.username}${password ? ' | Contraseña actualizada' : ' | Contraseña sin cambios'}`, 'success');
         closeModal('modal-usuario');
         await listarUsuarios();
         return;
@@ -3188,7 +3190,9 @@ async function guardarUsuarioFormInterno() {
         renderizarMenuLateral(currentUser);
     }
 
-    mostrarToast(`Usuario guardado correctamente. Usuario: ${escapeHtml(usuario.username)}${password ? ' | Contraseña actualizada' : ' | Contraseña sin cambios'}`, 'success');
+    // `mostrarToast` renderiza con `textContent`: no necesita `escapeHtml`
+    // (de hecho, escaparlo aqui produciria doble escapado visible).
+    mostrarToast(`Usuario guardado correctamente. Usuario: ${usuario.username}${password ? ' | Contraseña actualizada' : ' | Contraseña sin cambios'}`, 'success');
     closeModal('modal-usuario');
     await listarUsuarios();
 }
@@ -3351,7 +3355,7 @@ async function eliminarUsuario(id) {
 
     if (falloNube) {
         mostrarToast('Se eliminó, pero el perfil en la nube no se pudo borrar: ' +
-            escapeHtml(falloNube) + '. Si el nombre no se libera, puede quedar tomado en Firebase.', 'warning');
+            falloNube + '. Si el nombre no se libera, puede quedar tomado en Firebase.', 'warning');
     } else {
         mostrarToast('Usuario eliminado correctamente.', 'success');
     }
@@ -3400,13 +3404,13 @@ async function purgarUsuarios() {
     const res = await directorio.purgarPerfilesExcepto(conservar);
 
     if (res.restantes === null) {
-        mostrarToast('No se pudo verificar la purga: ' + escapeHtml(res.mensaje || 'error desconocido'), 'error');
+        mostrarToast('No se pudo verificar la purga: ' + (res.mensaje || 'error desconocido'), 'error');
     } else if (res.ok) {
         mostrarToast(res.borrados.length
             ? 'Se purgaron ' + res.borrados.length + ' perfil(es). Solo queda(n) los administradores.'
             : 'No había perfiles para purgar.', 'success');
     } else {
-        mostrarToast('Purga incompleta: ' + escapeHtml(res.mensaje || 'quedaron perfiles sin borrar') +
+        mostrarToast('Purga incompleta: ' + (res.mensaje || 'quedaron perfiles sin borrar') +
             '. Fallaron ' + res.fallidos.length + '.', 'error');
     }
 
@@ -3941,7 +3945,9 @@ async function migrarDatosLocalesAFirebase() {
         statusEl.innerHTML = `<span style="color: #2ed573;">✅ Migración completada. ${total} registros subidos a Firebase.</span>`;
     } catch (e) {
         console.error('Error en migración:', e);
-        statusEl.innerHTML = `<span style="color: #ff6b6b;">❌ Error durante la migración: ${e.message || e}</span>`;
+        // XSS (HALLazgo 5): `e.message` puede contener texto de Firestore
+        // controlado por un atacante, que lo inyectaria como HTML. Se escapa.
+        statusEl.innerHTML = `<span style="color: #ff6b6b;">❌ Error durante la migración: ${escapeHtml(e.message || e)}</span>`;
     } finally {
         btnMigrar.disabled = false;
         btnMigrar.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> Subir Datos Locales a la Nube';
@@ -4072,7 +4078,25 @@ function mostrarToast(mensaje, tipo = 'success') {
     }
     const toast = document.createElement('div');
     toast.className = `toast toast-${tipo}`;
-    toast.innerHTML = `<i class="fa-solid ${tipo === 'success' ? 'fa-check-circle' : tipo === 'error' ? 'fa-times-circle' : 'fa-triangle-exclamation'}"></i> ${mensaje}`;
+
+    // ---------- BLINDAJE XSS (HALLazgo 5) ----------
+    // Antes: toast.innerHTML = `<i ...></i> ${mensaje}`.
+    // `mensaje` frecuentemente interpola datos de la base (nombres de articulos,
+    // usuarios, errores de Firebase), por lo que un valor como
+    // `<img src=x onerror=...>` ejecutaba JavaScript. Era un XSS ALMACENADO.
+    //
+    // Se construye el icono y el texto con APIs del DOM: `textContent` NUNCA
+    // interpreta HTML, por lo que el mensaje se muestra literalmente y es
+    // imposible inyectar nodos. La clase `toast toast-<tipo>` y el `<i>` de
+    // Font Awesome se conservan, de modo que el diseno es IDENTICO.
+    const icono = document.createElement('i');
+    icono.className = 'fa-solid ' + (tipo === 'success' ? 'fa-check-circle'
+        : tipo === 'error' ? 'fa-times-circle'
+            : 'fa-triangle-exclamation');
+    toast.appendChild(icono);
+    toast.appendChild(document.createTextNode(' '));
+    toast.appendChild(document.createTextNode(mensaje == null ? '' : String(mensaje)));
+
     container.appendChild(toast);
     setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 3000);
 }
@@ -4332,7 +4356,17 @@ async function verRendicion(id) {
         <div><strong>Fecha:</strong> ${formatearFechaVisual(rendicion.fecha)}</div>
         <div><strong># Rendición:</strong> ${rendicion.id}</div>
     `;
-    document.getElementById('ver-rendicion-observaciones').innerHTML = rendicion.observaciones ? `<i class="fa-solid fa-comment"></i> ${rendicion.observaciones}` : '';
+    // XSS (HALLazgo 5): `observaciones` es texto libre escrito por el operador.
+    // Sin escapar, un `<script>` o un `onerror` en ese campo se ejecutaba al
+    // abrir la rendición (XSS ALMACENADO). El icono y el salto de línea se
+    // conservan, por lo que el aspecto no cambia.
+    const obsEl = document.getElementById('ver-rendicion-observaciones');
+    if (rendicion.observaciones) {
+        obsEl.innerHTML = '<i class="fa-solid fa-comment"></i> ';
+        obsEl.appendChild(document.createTextNode(String(rendicion.observaciones)));
+    } else {
+        obsEl.textContent = '';
+    }
 
     const tbody = document.getElementById('ver-rendicion-detalles-body');
     tbody.innerHTML = '';
@@ -6556,7 +6590,22 @@ async function verArticulo(id) {
         imagenes.forEach(img => {
             const item = document.createElement('div');
             item.className = 'article-gallery-item';
-            item.innerHTML = `<img src="${escapeHtml(img.url)}" alt="Imagen" onerror="this.style.display='none'">`;
+            // XSS (HALLazgo 5): antes se interpolaba `escapeHtml(img.url)` dentro
+            // de una cadena HTML con un manejador `onerror` INLINE. Eso es doble
+            // peligroso: (1) el atributo onerror es un vector de ejecución de
+            // script y (2) un `escapeHtml` no escapa comillas de forma orientada a
+            // contexto de atributo, de modo que una URL con `"` rompiera la
+            // cadena y permitiría inyectar atributos (event handlers) propios.
+            //
+            // Se construye la imagen con propiedades nativas del DOM: la URL viaja
+            // por `img.src` (el navegador la trata como URL, no como HTML) y el
+            // `onerror` se registra con `addEventListener` sobre el objeto, sin
+            // cadena de marcado. Mismo resultado visual, sin superficie de XSS.
+            const imgEl = document.createElement('img');
+            imgEl.alt = 'Imagen';
+            imgEl.addEventListener('error', function () { this.style.display = 'none'; });
+            imgEl.src = img && img.url ? String(img.url) : '';
+            item.appendChild(imgEl);
             gal.appendChild(item);
         });
     }
