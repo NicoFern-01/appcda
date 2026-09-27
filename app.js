@@ -377,9 +377,71 @@ async function renderDashboard() {
         getTodos('detalleGastos')
     ]);
 
+    // ============ FILTRO GLOBAL DE PERÍODO (AÑO / MES) ============
+    // Todo lo que viene a continuación (categorías, evolución, conceptos y el
+    // total) se calcula sobre los datos YA filtrados, de modo que los tres
+    // gráficos son siempre coherentes entre sí y con el período elegido.
+    const MESES_DASHBOARD = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+    // Fecha efectiva de un gasto DETALLADO: la del detalle o, si no tiene, la de
+    // su rendición (misma regla que usa el gráfico de evolución).
+    const fechaDeDetalle = (d) => {
+        if (d && d.fecha) return d.fecha;
+        const rend = rendiciones.find(r => Number(r.id) === Number(d && d.rendicionId));
+        return rend ? rend.fecha : null;
+    };
+
+    // Años presentes en los datos (gastos simples + detallados).
+    const aniosSet = new Set();
+    const registrarAnio = (fecha) => { if (fecha) aniosSet.add(new Date(fecha).getFullYear()); };
+    gastos.forEach(g => registrarAnio(g.fecha));
+    detalleGastos.forEach(d => registrarAnio(fechaDeDetalle(d)));
+    const anios = Array.from(aniosSet).sort((a, b) => b - a);
+    if (anios.length === 0) anios.push(new Date().getFullYear());
+
+    const anioEl = document.getElementById('dashboard-anio');
+    if (anioEl) {
+        const previo = anioEl.value;
+        anioEl.innerHTML = '';
+        anios.forEach(a => {
+            const opt = document.createElement('option');
+            opt.value = String(a);
+            opt.textContent = String(a);
+            anioEl.appendChild(opt);
+        });
+        anioEl.value = anios.includes(Number(previo)) ? previo : String(anios[0]);
+    }
+    const anioSel = anioEl && anioEl.value ? Number(anioEl.value) : null;
+
+    const mesEl = document.getElementById('dashboard-mes');
+    const mesSel = mesEl && mesEl.value !== 'all' ? Number(mesEl.value) : null;
+
+    const enPeriodo = (fecha) => {
+        if (!fecha) return false;
+        const f = new Date(fecha);
+        if (isNaN(f.getTime())) return false;
+        if (anioSel !== null && f.getFullYear() !== anioSel) return false;
+        if (mesSel !== null && (f.getMonth() + 1) !== mesSel) return false;
+        return true;
+    };
+
+    // Datos ya filtrados por período: son la única fuente de los gráficos.
+    const gastosPeriodo = gastos.filter(g => enPeriodo(g.fecha));
+    const detallePeriodo = detalleGastos.filter(d => enPeriodo(fechaDeDetalle(d)));
+
+    const tituloPeriodo = (mesSel !== null)
+        ? `${MESES_DASHBOARD[mesSel - 1]} ${anioSel ?? ''}`.trim()
+        : `Año ${anioSel ?? ''}`.trim();
+    const etiquetaTotal = document.getElementById('stat-gasto-total-label');
+    if (etiquetaTotal) etiquetaTotal.textContent = `Gasto Total — ${tituloPeriodo}`;
+    ['dash-cat-periodo', 'dash-conc-periodo'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = `· ${tituloPeriodo}`;
+    });
+
     // ============ TOTAL GENERAL: Sumar gastos simples + detallados ============
-    const totalGastoSimple = gastos.reduce((sum, g) => sum + Number(g.monto), 0);
-    const totalGastoDetallado = detalleGastos.reduce((sum, d) => sum + Number(d.total || 0), 0);
+    const totalGastoSimple = gastosPeriodo.reduce((sum, g) => sum + Number(g.monto), 0);
+    const totalGastoDetallado = detallePeriodo.reduce((sum, d) => sum + Number(d.total || 0), 0);
     const totalGasto = totalGastoSimple + totalGastoDetallado;
     document.getElementById('stat-gasto-total').innerText = formatearMoneda(totalGasto);
     document.getElementById('stat-competencias-count').innerText = competencias.length;
@@ -393,7 +455,7 @@ async function renderDashboard() {
     gastosPorCat['General / Compartido'] = 0;
 
     // Gastos SIMPLES
-    gastos.forEach(g => {
+    gastosPeriodo.forEach(g => {
         // PRIORIDAD 1: El gasto tiene una categoría deportiva específica asignada → usar directamente (por ID o nombre si es string)
         let catDirecta;
         if (typeof g.categoriaId === 'number' || (typeof g.categoriaId === 'string' && g.categoriaId !== 'general' && !isNaN(Number(g.categoriaId)))) {
@@ -431,7 +493,7 @@ async function renderDashboard() {
     });
 
     // Gastos DETALLADOS: rendicion → competenciaId → categoriasIds
-    detalleGastos.forEach(d => {
+    detallePeriodo.forEach(d => {
         const rendicion = rendiciones.find(r => Number(r.id) === Number(d.rendicionId));
         if (!rendicion) {
             gastosPorCat['General / Compartido'] += Number(d.total || 0);
@@ -480,48 +542,66 @@ async function renderDashboard() {
 
     // ============ EVOLUCIÓN MENSUAL / ANUAL ============
     const intervalEl = document.getElementById('dashboard-gastos-interval');
+    // Cuando hay un mes elegido, la evolución pasa a ser DIARIA dentro de ese
+    // mes (el detalle que pide el filtro). El select refleja ese estado.
+    if (mesSel !== null && intervalEl && !intervalEl.querySelector('option[value="daily"]')) {
+        const opt = document.createElement('option');
+        opt.value = 'daily';
+        opt.textContent = 'Diario';
+        intervalEl.insertBefore(opt, intervalEl.firstChild);
+    }
+    if (mesSel !== null && intervalEl) intervalEl.value = 'daily';
     const interval = intervalEl ? intervalEl.value : 'monthly';
 
     let labels = [];
     let dataPoints = [];
+    let etiquetaSerie = 'Gastos Mensuales';
 
-    if (interval === 'monthly') {
+    if (interval === 'daily') {
+        // Evolución día a día SOLO del mes seleccionado.
+        const anioRef = anioSel ?? new Date().getFullYear();
+        const diasDelMes = new Date(anioRef, mesSel, 0).getDate();
+        const porDia = Array(diasDelMes).fill(0);
+        const sumarDia = (fecha, monto) => {
+            if (!fecha) return;
+            const f = new Date(fecha);
+            if (isNaN(f.getTime())) return;
+            if (f.getFullYear() !== anioRef || (f.getMonth() + 1) !== mesSel) return;
+            porDia[f.getDate() - 1] += Number(monto || 0);
+        };
+        gastosPeriodo.forEach(g => sumarDia(g.fecha, g.monto));
+        detallePeriodo.forEach(d => sumarDia(fechaDeDetalle(d), d.total || 0));
+        labels = porDia.map((_, i) => String(i + 1));
+        dataPoints = porDia;
+        etiquetaSerie = `Gastos Diarios — ${MESES_DASHBOARD[mesSel - 1]} ${anioRef}`;
+    } else if (interval === 'monthly') {
         const mesesNombres = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
         const gastosMensuales = Array(12).fill(0);
         // Gastos simples
-        gastos.forEach(g => {
+        gastosPeriodo.forEach(g => {
             if (g.fecha) gastosMensuales[new Date(g.fecha).getMonth()] += Number(g.monto);
         });
         // Gastos detallados: usar fecha del detalle o fecha de la rendición
-        detalleGastos.forEach(d => {
-            let fecha = d.fecha;
-            if (!fecha) {
-                const rendicion = rendiciones.find(r => Number(r.id) === Number(d.rendicionId));
-                if (rendicion) fecha = rendicion.fecha;
-            }
+        detallePeriodo.forEach(d => {
+            const fecha = fechaDeDetalle(d);
             if (fecha) gastosMensuales[new Date(fecha).getMonth()] += Number(d.total || 0);
         });
         labels = mesesNombres;
         dataPoints = gastosMensuales;
+        etiquetaSerie = 'Gastos Mensuales';
     } else {
         const mapaAnios = {};
         const sumarAlAnio = (fecha, monto) => {
             if (!fecha) return;
             const y = new Date(fecha).getFullYear();
-            mapaAnios[y] = (mapaAnios[y] || 0) + Number(monto);
+            mapaAnios[y] = (mapaAnios[y] || 0) + Number(monto || 0);
         };
-        gastos.forEach(g => sumarAlAnio(g.fecha, g.monto));
-        detalleGastos.forEach(d => {
-            let fecha = d.fecha;
-            if (!fecha) {
-                const rendicion = rendiciones.find(r => Number(r.id) === Number(d.rendicionId));
-                if (rendicion) fecha = rendicion.fecha;
-            }
-            sumarAlAnio(fecha, d.total || 0);
-        });
+        gastosPeriodo.forEach(g => sumarAlAnio(g.fecha, g.monto));
+        detallePeriodo.forEach(d => sumarAlAnio(fechaDeDetalle(d), d.total || 0));
         const sortedAnios = Object.keys(mapaAnios).map(Number).sort((a,b)=>a-b);
         labels = sortedAnios.map(String);
         dataPoints = sortedAnios.map(y => mapaAnios[y] || 0);
+        etiquetaSerie = 'Gastos Anuales';
     }
 
     if (chartMensualInstance) chartMensualInstance.destroy();
@@ -530,7 +610,7 @@ async function renderDashboard() {
         data: {
             labels: labels,
             datasets: [{
-                label: interval === 'monthly' ? 'Gastos Mensuales' : 'Gastos Anuales',
+                label: etiquetaSerie,
                 data: dataPoints,
                 borderColor: '#00d2d3',
                 backgroundColor: 'rgba(0,210,211,0.1)',
@@ -548,11 +628,11 @@ async function renderDashboard() {
     // Gastos simples: usan g.concepto (texto)
     // Gastos detallados: usan d.conceptoId → conceptos.nombre
     const gastosPorConcepto = {};
-    gastos.forEach(g => {
+    gastosPeriodo.forEach(g => {
         const k = g.concepto.trim();
         gastosPorConcepto[k] = (gastosPorConcepto[k] || 0) + Number(g.monto);
     });
-    detalleGastos.forEach(d => {
+    detallePeriodo.forEach(d => {
         const conc = conceptos.find(c => c.id === Number(d.conceptoId));
         const k = conc ? conc.nombre.trim() : 'Sin concepto';
         gastosPorConcepto[k] = (gastosPorConcepto[k] || 0) + Number(d.total || 0);
@@ -1666,6 +1746,7 @@ async function listarStaff() {
     const tbody = document.getElementById('staff-table-body');
     tbody.innerHTML = '';
 
+    const collator = new Intl.Collator('es', { sensitivity: 'base' });
     const filtrado = staffList.filter(s => {
         if (!buscador) return true;
         const compMatches = (s.competenciasIds || []).some(id => {
@@ -1681,7 +1762,10 @@ async function listarStaff() {
                 (s.numeroRegistroGrado || '').toLowerCase().includes(buscador) ||
                 (s.equipos || '').toLowerCase().includes(buscador) ||
                 compMatches;
-    });
+    }).sort((a, b) => collator.compare(
+        `${a.nombre || ''} ${a.apellido || ''}`.trim(),
+        `${b.nombre || ''} ${b.apellido || ''}`.trim()
+    ));
 
     if (filtrado.length === 0) {
         tbody.innerHTML = `<tr><td colspan="${puedeEditar() ? 9 : 8}" style="text-align:center;color:var(--text-secondary);">No hay personal registrado.</td></tr>`;
