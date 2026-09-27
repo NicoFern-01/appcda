@@ -92,6 +92,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     };
                     currentUser = usuario;
                     iniciarSesion(usuario);
+                    // El rol guardado puede estar desactualizado (p. ej. el admin
+                    // fue degradado, o la sesion es de una epoca previa a la
+                    // migracion). Se revalida contra Firebase Auth en segundo
+                    // plano para que la UI no quede con permisos fantasma.
+                    _revalidarSesionContraFirebase(usuario);
                 }
             } catch (e) {
                 console.warn('Error al restaurar sesión:', e);
@@ -105,6 +110,40 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ==================== AUTENTICACIÓN ====================
+
+/**
+ * Revalida en segundo plano la sesión restaurada contra Firebase Auth.
+ *
+ * POR QUE: la sesión guardada en localStorage puede quedar desactualizada
+ * (rol cambiado, usuario desactivado, o simplemente un token viejo). Sin esta
+ * comprobación, la app arrancaba mostrando permisos que ya no correspondían
+ * y ni siquiera exigía volver a iniciar sesión.
+ *
+ * Si Firebase dice que no hay sesión, se cierra la sesión local: la pantalla
+ * de login vuelve a ser la única puerta de entrada.
+ */
+async function _revalidarSesionContraFirebase(usuarioRestaurado) {
+    const auth = (typeof window !== 'undefined' && window.__CDA_MODULES__ &&
+        window.__CDA_MODULES__.auth) || null;
+    if (!auth || typeof auth.revalidarSesion !== 'function') return;
+
+    try {
+        const resultado = await auth.revalidarSesion();
+        if (resultado && resultado.valido === false) {
+            console.warn('[authService] La sesión local fue invalidada por Firebase:', resultado.motivo);
+            if (typeof handleLogout === 'function') await handleLogout();
+            return;
+        }
+        if (resultado && resultado.usuario) {
+            // Se actualizó el rol/nombre: se refresca la UI con los datos reales.
+            currentUser = resultado.usuario;
+            iniciarSesion(resultado.usuario);
+        }
+    } catch (e) {
+        // Fallo de red: se conserva la sesión local (no se cierra la app).
+        console.warn('[authService] No se pudo revalidar la sesión (se mantiene la local):', e);
+    }
+}
 
 function togglePasswordVisibility() {
     const input = document.getElementById('login-password');
