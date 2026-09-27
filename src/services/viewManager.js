@@ -9,6 +9,7 @@ import { CATALOGO_MODULOS, MODULOS_MAP, verificarPermiso as verificarPermisoES }
 
 export const GRUPOS_MENU = [
     { padreId: 'menu-gastos',     submenuId: 'submenu-gastos',     padre: 'gastos',     hijos: ['carga-detallada', 'personal-competencia'] },
+    { padreId: 'menu-personal',   submenuId: 'submenu-personal',   padre: 'staff',      hijos: ['estadisticas-personal'] },
     { padreId: 'menu-inventario', submenuId: 'submenu-inventario', padre: 'inventario', hijos: ['articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario'] }
 ];
 
@@ -187,6 +188,8 @@ export function abrirSubmenuDeVista(viewId) {
     const grupos = {
         'carga-detallada': ['submenu-gastos', 'menu-gastos'],
         'personal-competencia': ['submenu-gastos', 'menu-gastos'],
+        'staff': ['submenu-personal', 'menu-personal'],
+        'estadisticas-personal': ['submenu-personal', 'menu-personal'],
         'articulos': ['submenu-inventario', 'menu-inventario'],
         'movimientos-inventario': ['submenu-inventario', 'menu-inventario'],
         'categorias-inventario': ['submenu-inventario', 'menu-inventario'],

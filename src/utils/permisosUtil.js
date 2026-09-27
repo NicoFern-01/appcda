@@ -21,7 +21,7 @@ export const CATALOGO_MODULOS = Object.freeze([
   { id: 'movimientos-inventario', nombre: 'Movimientos',                   icono: 'fa-right-left',      orden: 9,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'categorias-inventario',  nombre: 'Categorías de Inventario',      icono: 'fa-tags',            orden: 10, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'entregas-inventario',    nombre: 'Entregas',                      icono: 'fa-truck-ramp-box',  orden: 11, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-  { id: 'staff',                  nombre: 'Staff',                         icono: 'fa-user-tie',        orden: 12, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+  { id: 'staff',                  nombre: 'Personal',                      icono: 'fa-user-tie',        orden: 12, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'estadisticas-personal',  nombre: 'Estadísticas de Personal',      icono: 'fa-chart-column',    orden: 13, funciones: ['ver'] },
   { id: 'alojamiento',            nombre: 'Alojamiento',                   icono: 'fa-hotel',           orden: 14, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'categorias-circuitos',   nombre: 'Categorías y Circuitos',        icono: 'fa-flag-checkered',  orden: 15, funciones: ['ver', 'crear', 'editar', 'eliminar'] },

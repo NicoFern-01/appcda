@@ -96,16 +96,35 @@
             <section id="view-dashboard" class="view active">
                 <header style="margin-bottom: 1.2rem;">
                     <div>
-                        <h1 class="page-title">Dashboard General</h1>
+                        <h1 class="page-title">Resumen Ejecutivo</h1>
                         <p class="page-subtitle">Monitoreo de costos y competencias en tiempo real</p>
                     </div>
-                    
+                    <div class="dashboard-filtros" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                        <label for="dashboard-anio" style="font-size:0.85rem; color:#94a3b8;">Año</label>
+                        <select id="dashboard-anio" style="font-size:0.9rem;" onchange="dashboardDirty=true; renderDashboard();"></select>
+                        <label for="dashboard-mes" style="font-size:0.85rem; color:#94a3b8;">Mes</label>
+                        <select id="dashboard-mes" style="font-size:0.9rem;" onchange="dashboardDirty=true; renderDashboard();">
+                            <option value="all">Todo el año</option>
+                            <option value="1">Enero</option>
+                            <option value="2">Febrero</option>
+                            <option value="3">Marzo</option>
+                            <option value="4">Abril</option>
+                            <option value="5">Mayo</option>
+                            <option value="6">Junio</option>
+                            <option value="7">Julio</option>
+                            <option value="8">Agosto</option>
+                            <option value="9">Septiembre</option>
+                            <option value="10">Octubre</option>
+                            <option value="11">Noviembre</option>
+                            <option value="12">Diciembre</option>
+                        </select>
+                    </div>
                 </header>
 
                 <div class="stats-grid">
                     <div class="stat-card dashboard-link-card" role="link" tabindex="0" onclick="navegarDesdeDashboard('gastos')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('gastos')" title="Ir a Control de Gastos">
                         <div class="stat-info">
-                            <h3>Gasto Total Anual</h3>
+                            <h3 id="stat-gasto-total-label">Gasto Total Anual</h3>
                             <p id="stat-gasto-total">$0.00</p>
                         </div>
                         <div class="stat-icon">
@@ -134,7 +153,7 @@
 
                 <div class="charts-grid">
                     <div class="chart-card">
-                        <h3>Gastos por Categoría</h3>
+                        <h3>Gastos por Categoría <span id="dash-cat-periodo" style="font-size:0.8rem; color:#94a3b8; font-weight:400;"></span></h3>
                         <div class="chart-container">
                             <canvas id="chart-categorias"></canvas>
                         </div>
@@ -155,7 +174,7 @@
 
                 <div class="charts-grid">
                     <div class="chart-card" style="grid-column: 1 / -1;">
-                        <h3>Distribución de Gastos por Concepto</h3>
+                        <h3>Distribución de Gastos por Concepto <span id="dash-conc-periodo" style="font-size:0.8rem; color:#94a3b8; font-weight:400;"></span></h3>
                         <div class="chart-container" style="height: 200px;">
                             <canvas id="chart-concepto"></canvas>
                         </div>
@@ -780,7 +799,7 @@
             <section id="view-staff" class="view">
                 <header>
                     <div>
-                        <h1 class="page-title">Personal / Staff</h1>
+                        <h1 class="page-title">Personal</h1>
                         <p class="page-subtitle">Administración de banderilleros, comisarios y asistentes</p>
                     </div>
                     <div class="editor-only">
