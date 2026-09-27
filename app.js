@@ -8,6 +8,37 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+// ==================== COLORES DE VARIACIÓN DE LOS GRÁFICOS ====================
+// Colores semánticos de la app: una BAJA se pinta de rojo y una SUBA de verde.
+// Se usan en el gráfico de evolución (tramo a tramo) y en las variaciones de
+// las tarjetas del dashboard, de modo que ambos se leen con la misma clave.
+const COLOR_VARIACION_BAJA = '#ff4757';
+const COLOR_VARIACION_SUBIDA = '#2ed573';
+
+// ==================== PALETA CATEGÓRICA DE GRÁFICOS ====================
+// Cada categoría o serie recibe un color de matiz DISTINTO: varios tonos del
+// mismo azul (claro/medio/oscuro) son indistinguibles entre sí en una torta o
+// en una barra. El orden arranca en azul -> verde -> ámbar -> violeta ->
+// turquesa para que los sectores más grandes no queden en rojo o amarillo,
+// que se asocian a alerta.
+const PALETA_GRAFICOS = [
+    '#1e90ff', '#2ed573', '#ff9f43', '#a55eea', '#00d2d3',
+    '#ff4757', '#ff6b81', '#f368e0', '#01a3a4', '#54a0ff',
+    '#5f27cd', '#ff9ff3'
+];
+
+/**
+ * Devuelve n colores categóricos para un gráfico.
+ * Si hay más elementos que colores, cicla la paleta: es preferible a inventar
+ * tonos casi idénticos, que dejarían dos sectores indistinguibles.
+ * @param {number} n cantidad de categorías o barras
+ * @returns {string[]} n colores en notación hex
+ */
+function paletaGraficos(n) {
+    const cantidad = Math.max(0, Number(n) || 0);
+    return Array.from({ length: cantidad }, (_, i) => PALETA_GRAFICOS[i % PALETA_GRAFICOS.length]);
+}
+
 // ==================== ESTADO DE SESIÓN ====================
 var currentUser = null;
 
@@ -613,16 +644,21 @@ async function renderDashboard() {
             labels: catKeys.length > 0 ? catKeys : ['Sin Gastos'],
             datasets: [{
                 data: catKeys.length > 0 ? catVals : [0],
-                backgroundColor: ['#ff4757','#00d2d3','#2ed573','#ff9f43','#1e90ff','#a55eea','#ff6b81','#f368e0','#01a3a4'],
+                // Un color por categoría (matiz distinto, no variaciones de un azul).
+                backgroundColor: paletaGraficos(catKeys.length || 1),
                 borderWidth: 2,
-                borderColor: '#1f2a40'
+                borderColor: '#1f2a40',
+                hoverOffset: 6
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            cutout: '62%',
             plugins: {
-                legend: { position: 'right', labels: { color: '#94a3b8', font: { family: 'Outfit' } } },
+                // Punto circular en la leyenda: el color del punto es el mismo
+                // que el del sector, así se cruzan sin leer dos veces.
+                legend: { position: 'right', labels: { color: '#94a3b8', usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 14, font: { family: 'Outfit' } } },
                 tooltip: { callbacks: { label: (ctx) => ` $${ctx.raw.toLocaleString()}` } }
             }
         }
@@ -718,7 +754,20 @@ async function renderDashboard() {
                 tension: 0.3,
                 borderWidth: 3,
                 pointRadius: 4,
-                pointBackgroundColor: '#00d2d3'
+                pointBackgroundColor: '#00d2d3',
+                pointBorderColor: '#1a2332',
+                pointBorderWidth: 2,
+                // Cada tramo se tiñe comparando el período actual con el anterior:
+                // si el valor BAJA, tramo rojo; si SUBE, tramo verde. Permite leer
+                // la tendencia del gasto de un vistazo, sin consultar los ejes.
+                segment: {
+                    borderColor: (ctx) => {
+                        const previo = Number(ctx.p0.parsed.y);
+                        const actual = Number(ctx.p1.parsed.y);
+                        if (previo === actual) return '#00d2d3';
+                        return actual < previo ? COLOR_VARIACION_BAJA : COLOR_VARIACION_SUBIDA;
+                    }
+                }
             }]
         },
         options: chartLineOptions(),
@@ -761,7 +810,10 @@ async function renderDashboard() {
             datasets: [{
                 label: 'Gasto',
                 data: top.length > 0 ? top.map(c => c[1]).reverse() : [0],
-                backgroundColor: ['#1e90ff','#a55eea','#ff9f43','#2ed573','#00d2d3'],
+                // Cada concepto con su propio color: el degradado monocromo
+                // anterior volvía indistinguibles las barras contiguas.
+                backgroundColor: paletaGraficos(top.length || 1),
+                hoverBackgroundColor: '#ffffff',
                 borderRadius: 6,
                 borderSkipped: false,
                 barThickness: 22
@@ -2829,6 +2881,8 @@ function renderizarCalendarioAnual() {
 
     if (!calendarioEventos || calendarioEventos.length === 0) {
         grid.innerHTML = '<div class="calendario-vacio">La planilla no contiene eventos de calendario.</div>';
+        _calTarjetasMeses = [];
+        grid.classList.remove('cal-masonry');
         return;
     }
 
@@ -2853,7 +2907,6 @@ function renderizarCalendarioAnual() {
         // Filtro de mes: si hay uno seleccionado, NO se dibuja el resto, para que
         // la vista muestre unicamente ese mes (en lugar de atenuar los demas).
         if (calendarioFiltroMes !== null && idxMes !== calendarioFiltroMes) return '';
-
         const semanas = porMes[idxMes];
         const domingosOrdenados = Object.keys(semanas).map(Number).sort((a, b) => a - b);
 
@@ -2888,11 +2941,103 @@ function renderizarCalendarioAnual() {
         }
 
         return `
-            <div class="mes-card"${calendarioFiltroMes !== null ? ' style="grid-column:1 / -1;"' : ''}>
+            <div class="mes-card">
                 <h3>${nombreMes}</h3>
                 <div class="mes-semanas">${contenidoSemanas}</div>
             </div>`;
     }).join('');
+
+    // Con un mes seleccionado queda una sola tarjeta: sin acotarla se estiraba a
+    // todo el ancho de la pantalla y los badges quedaban como tiras vacías.
+    grid.classList.toggle('cal-grid-mes-unico', calendarioFiltroMes !== null);
+
+    _calTarjetasMeses = Array.from(grid.querySelectorAll('.mes-card'));
+    _aplicarMasonryCalendario();
+}
+
+/* ---------------------------------------------------------------------------
+ * Masonry del calendario
+ *
+ * El grid por filas igualaba la altura de TODAS las tarjetas de una misma fila
+ * a la de la más alta, así que los meses con pocas competencias (enero,
+ * febrero) dejaban un bloque de espacio negro debajo. Masonry reparte las
+ * tarjetas en columnas,y cada columna mide lo que mide su contenido: si más
+ * adelante la planilla suma competencias, la tarjeta crece y el resto se
+ * acomoda solo, sin recortes ni altura fija que pueda cortar datos.
+ * --------------------------------------------------------------------------- */
+
+let _calMasonryObserver = null;
+// Tarjetas del último render, en orden cronológico. Se guardan en una variable
+// porque tras aplicar el masonry quedan anidadas dentro de .cal-masonry-col y
+// un selector directo sobre el grid ya no las encontraría al recalcular columnas.
+let _calTarjetasMeses = [];
+
+/** Cantidad de columnas según el ancho disponible (mismo mínimo que el grid). */
+function _columnasMasonryCalendario(grid) {
+    const ancho = grid.clientWidth;
+    if (ancho <= 0) return 1;
+    const minimo = window.innerWidth <= 900 ? 230 : 280;
+    return Math.max(1, Math.floor(ancho / minimo));
+}
+
+/** Reparte las tarjetas en columnas, eligiendo siempre la más corta. */
+function _aplicarMasonryCalendario() {
+    const grid = document.getElementById('calendario-anual-grid');
+    if (!grid) return;
+
+    // Con un mes filtrado la tarjeta ya está acotada y centrada: el masonry sólo
+    // tiene sentido en la vista anual.
+    if (calendarioFiltroMes !== null || _calTarjetasMeses.length <= 1) {
+        grid.classList.remove('cal-masonry');
+        // Se reconstruye el contenido desde cero en vez de sólo mover las
+        // tarjetas: si no, los envoltorios .cal-masonry-col vacíos que dejó el
+        // masonry anterior quedaban como ítems del grid y empujaban la tarjeta
+        // hacia abajo, descentrándola.
+        grid.replaceChildren(..._calTarjetasMeses);
+        _observarMasonryCalendario(grid);
+        return;
+    }
+
+    const numColumnas = _columnasMasonryCalendario(grid);
+    grid.classList.add('cal-masonry');
+
+    // Se mide con las tarjetas ya en el DOM: el ancho de columna sólo depende
+    // del contenedor, no de la altura, así que la medición es válida.
+    const alturas = _calTarjetasMeses.map(t => t.getBoundingClientRect().height);
+    const columnas = Array.from({ length: numColumnas }, () => []);
+    const alturasCol = new Array(numColumnas).fill(0);
+
+    _calTarjetasMeses.forEach((tarjeta, i) => {
+        const destino = alturasCol.indexOf(Math.min(...alturasCol));
+        columnas[destino].push(tarjeta);
+        alturasCol[destino] += alturas[i] + 16; // 16px = 1rem de gap vertical
+    });
+
+    const envoltorios = columnas
+        .map(col => {
+            const div = document.createElement('div');
+            div.className = 'cal-masonry-col';
+            col.forEach(t => div.appendChild(t));
+            return div;
+        })
+        .filter(col => col.childElementCount > 0);
+
+    grid.replaceChildren(...envoltorios);
+    _observarMasonryCalendario(grid);
+}
+
+function _observarMasonryCalendario(grid) {
+    if (_calMasonryObserver) _calMasonryObserver.disconnect();
+    if (typeof ResizeObserver === 'undefined' || !grid) return;
+
+    // Al cambiar el tamaño de pantalla recalcula columnas y redistribuye.
+    let anchoPrevio = grid.clientWidth;
+    _calMasonryObserver = new ResizeObserver(() => {
+        if (Math.abs(grid.clientWidth - anchoPrevio) < 2) return;
+        anchoPrevio = grid.clientWidth;
+        _aplicarMasonryCalendario();
+    });
+    _calMasonryObserver.observe(grid);
 }
 
 // Botón de recarga manual: fuerza el fetch (rompe-caché) con spinner + toast informativo.
@@ -6537,35 +6682,48 @@ async function renderDashboardInventario() {
     }
 
     if (chartInvCategorias) chartInvCategorias.destroy();
+    const invCatLabels = Object.keys(articulosPorCat).filter(k => articulosPorCat[k] > 0);
     chartInvCategorias = new Chart(document.getElementById('chart-inv-categorias').getContext('2d'), {
         type: 'doughnut',
         data: {
-            labels: Object.keys(articulosPorCat).filter(k => articulosPorCat[k] > 0),
+            labels: invCatLabels,
             datasets: [{
-                data: Object.values(articulosPorCat).filter(v => v > 0),
-                backgroundColor: ['#ff4757','#00d2d3','#2ed573','#ff9f43','#1e90ff','#a55eea','#ff6b81','#f368e0','#ff9ff3','#54a0ff','#5f27cd','#01a3a4'],
-                borderWidth: 0
+                data: invCatLabels.map(k => articulosPorCat[k]),
+                // Mismo criterio que el dashboard principal: un color por categoría
+                // (matiz distinto, nunca el mismo color en dos luminosidades) y en
+                // el mismo orden azul -> verde -> ambar -> violeta -> turquesa.
+                backgroundColor: paletaGraficos(invCatLabels.length),
+                borderWidth: 2,
+                borderColor: '#1f2a40',
+                hoverOffset: 6
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            cutout: '62%',
             plugins: {
-                legend: { position: 'right', labels: { color: '#94a3b8', font: { size: 11, family: 'Outfit' } } }
+                // Punto circular con el color del sector: se cruza sin releer.
+                legend: { position: 'right', labels: { color: '#94a3b8', usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 12, font: { size: 11, family: 'Outfit' } } }
             }
         }
     });
 
     if (chartInvStock) chartInvStock.destroy();
+    const invStockLabels = Object.keys(stockPorCat).filter(k => stockPorCat[k] > 0);
     chartInvStock = new Chart(document.getElementById('chart-inv-stock').getContext('2d'), {
         type: 'bar',
         data: {
-            labels: Object.keys(stockPorCat).filter(k => stockPorCat[k] > 0),
+            labels: invStockLabels,
             datasets: [{
                 label: 'Unidades',
-                data: Object.values(stockPorCat).filter(v => v > 0),
-                backgroundColor: '#00d2d3',
-                borderRadius: 4
+                data: invStockLabels.map(k => stockPorCat[k]),
+                // Un color por categoría, en el mismo orden que la torta: ambas
+                // vistas del inventario se leen como una sola.
+                backgroundColor: paletaGraficos(invStockLabels.length),
+                hoverBackgroundColor: '#ffffff',
+                borderRadius: 6,
+                borderSkipped: false
             }]
         },
         options: {

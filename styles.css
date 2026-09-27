@@ -201,6 +201,35 @@ header {
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 1rem;
     padding: 0.25rem 0 1.5rem;
+    align-items: start;
+}
+
+/* Con un mes filtrado queda una sola tarjeta. Sin este tope la única celda
+   ocupaba todo el ancho disponible y las categorías se leían como tiras
+   vacías de 1.500px en lugar de una lista legible. */
+#calendario-anual-grid.cal-grid-mes-unico {
+    grid-template-columns: minmax(0, 430px);
+    justify-content: center;
+    margin-top: 80px;
+    position: relative;
+    left: -100px;
+}
+
+/* Vista anual en masonry: las columnas se reparten desde JS y cada una mide
+   lo que mide su contenido, de modo que un mes con 1 competencia no deja un
+   bloque de espacio negro debajo. La altura NO es fija: si la planilla suma
+   eventos, la tarjeta crece y empuja a las siguientes sin recortar nada. */
+#calendario-anual-grid.cal-masonry {
+    display: flex;
+    align-items: flex-start;
+}
+
+.cal-masonry-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    flex: 1 1 0;
+    min-width: 0;
 }
 
 .mes-card {
@@ -429,6 +458,9 @@ header {
 
 .dashboard-link-card {
     cursor: pointer;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
 }
 
 .dashboard-link-card.dashboard-link-disabled {
@@ -517,12 +549,15 @@ header {
     min-height: 1em;
 }
 
+/* Regla de color del dashboard: lo que SUBE se marca en verde y lo que BAJA en
+   rojo. El color comunica la dirección del movimiento (gasto, ganancia o
+   ingreso por igual), no si el movimiento es bueno o malo. */
 .stat-delta.is-up {
-    color: var(--accent);
+    color: #2ed573;
 }
 
 .stat-delta.is-down {
-    color: var(--accent-green);
+    color: #ff4757;
 }
 
 /* Dashboard Charts Grid */
@@ -1810,43 +1845,53 @@ input[type="file"]:hover {
     margin-bottom: 2rem;
 }
 
+/* Tarjetas de inventario: misma anatomía que las del dashboard principal
+   (rótulo en mayúsculas + valor grande a la izquierda, ícono en cuadro de
+   color a la derecha). El estado lo comunica el ícono, no el número. */
 .inv-stat-card {
     background-color: var(--bg-card);
     border: 1px solid var(--border-color);
-    border-radius: 12px;
-    padding: 1.25rem;
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
     display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
     transition: var(--transition);
 }
 
 .inv-stat-card:hover {
     transform: translateY(-2px);
     border-color: var(--border-hover);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+}
+
+.inv-stat-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
 }
 
 .inv-stat-card .stat-label {
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     color: var(--text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.4px;
 }
 
 .inv-stat-card .stat-value {
-    font-size: 1.8rem;
+    font-size: 1.4rem;
     font-weight: 700;
+    margin-top: 0.35rem;
 }
 
-.inv-stat-card .stat-icon {
-    font-size: 1.5rem;
-    opacity: 0.6;
+/* Variante ámbar para "Stock Bajo": es una advertencia previa al faltante, así
+   no debe usar el mismo rojo que "Sin Stock". */
+.stat-icon-amber {
+    color: #ff9f43;
+    background-color: rgba(255, 159, 67, 0.1);
 }
-
-.inv-stat-card.danger .stat-value { color: var(--accent); }
-.inv-stat-card.success .stat-value { color: var(--accent-green); }
-.inv-stat-card.info .stat-value { color: var(--accent-blue); }
-.inv-stat-card.warning .stat-value { color: #ff9f43; }
 
 /* Size Matrix Grid (Talles) */
 .size-matrix {

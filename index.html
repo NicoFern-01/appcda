@@ -599,39 +599,58 @@
                     </div>
                 </header>
 
+                <!-- Misma anatomía que las tarjetas del dashboard principal: rótulo
+                     en mayúsculas a la izquierda, valor grande y el ícono en un
+                     cuadro de color a la derecha. El color lo lleva el ícono y no
+                     el número: el valor es un dato, no un estado. -->
                 <div class="inv-stats-grid" id="inv-dashboard-stats">
-                    <div class="inv-stat-card info">
-                        <span class="stat-label"><i class="fa-solid fa-box"></i> Total Artículos</span>
-                        <span class="stat-value" id="inv-stat-total-articulos">0</span>
+                    <div class="inv-stat-card">
+                        <div class="inv-stat-info">
+                            <span class="stat-label">Total Artículos</span>
+                            <span class="stat-value" id="inv-stat-total-articulos">0</span>
+                        </div>
+                        <div class="stat-icon stat-icon-blue"><i class="fa-solid fa-box"></i></div>
                     </div>
-                    <div class="inv-stat-card success">
-                        <span class="stat-label"><i class="fa-solid fa-cubes"></i> Total Unidades</span>
-                        <span class="stat-value" id="inv-stat-total-unidades">0</span>
+                    <div class="inv-stat-card">
+                        <div class="inv-stat-info">
+                            <span class="stat-label">Total Unidades</span>
+                            <span class="stat-value" id="inv-stat-total-unidades">0</span>
+                        </div>
+                        <div class="stat-icon stat-icon-green"><i class="fa-solid fa-cubes"></i></div>
                     </div>
-                    <div class="inv-stat-card warning">
-                        <span class="stat-label"><i class="fa-solid fa-triangle-exclamation"></i> Stock Bajo</span>
-                        <span class="stat-value" id="inv-stat-stock-bajo">0</span>
+                    <div class="inv-stat-card">
+                        <div class="inv-stat-info">
+                            <span class="stat-label">Stock Bajo</span>
+                            <span class="stat-value" id="inv-stat-stock-bajo">0</span>
+                        </div>
+                        <div class="stat-icon stat-icon-amber"><i class="fa-solid fa-triangle-exclamation"></i></div>
                     </div>
-                    <div class="inv-stat-card danger">
-                        <span class="stat-label"><i class="fa-solid fa-circle-exclamation"></i> Sin Stock</span>
-                        <span class="stat-value" id="inv-stat-sin-stock">0</span>
+                    <div class="inv-stat-card">
+                        <div class="inv-stat-info">
+                            <span class="stat-label">Sin Stock</span>
+                            <span class="stat-value" id="inv-stat-sin-stock">0</span>
+                        </div>
+                        <div class="stat-icon stat-icon-red"><i class="fa-solid fa-circle-exclamation"></i></div>
                     </div>
-                    <div class="inv-stat-card info">
-                        <span class="stat-label"><i class="fa-solid fa-arrow-right-arrow-left"></i> Últimos Movimientos</span>
-                        <span class="stat-value" id="inv-stat-ultimos-mov">0</span>
+                    <div class="inv-stat-card">
+                        <div class="inv-stat-info">
+                            <span class="stat-label">Últimos Movimientos</span>
+                            <span class="stat-value" id="inv-stat-ultimos-mov">0</span>
+                        </div>
+                        <div class="stat-icon stat-icon-blue"><i class="fa-solid fa-arrow-right-arrow-left"></i></div>
                     </div>
                 </div>
 
                 <div class="inv-charts-grid">
                     <div class="chart-card">
                         <h3>Artículos por Categoría</h3>
-                        <div class="chart-container" style="height:250px;">
+                        <div class="chart-container" style="height:280px;">
                             <canvas id="chart-inv-categorias"></canvas>
                         </div>
                     </div>
                     <div class="chart-card">
                         <h3>Stock por Categoría</h3>
-                        <div class="chart-container" style="height:250px;">
+                        <div class="chart-container" style="height:280px;">
                             <canvas id="chart-inv-stock"></canvas>
                         </div>
                     </div>
