@@ -238,6 +238,33 @@ export const userDirectoryService = {
     try {
       const rt = runtime();
       await rt.deleteDoc(rt.doc(rt.dbFirebase, 'usuarios', id));
+
+      // VERIFICACIÓN ESTRICTA: la relectura debe ser EXITOSA y sin el documento.
+      // Antes, si la relectura fallaba, `sigueExistiendo` quedaba en false y se
+      // informaba "eliminado correctamente" sin haberlo borrado: el error quedaba
+      // oculto y el usuario seguia apareciendo en la lista.
+      await new Promise((r) => setTimeout(r, 250));
+      try {
+        const leer = typeof rt.getDocsFromServer === 'function' ? rt.getDocsFromServer : rt.getDocs;
+        const snap = await leer(rt.collection(rt.dbFirebase, 'usuarios'));
+        const sigueExistiendo = !!(snap && snap.docs && snap.docs.some((d) => d.id === id));
+        if (sigueExistiendo) {
+          console.error('[usuarios] El documento "' + id + '" sigue existiendo tras deleteDoc.');
+          return {
+            ok: false,
+            mensaje: 'Firestore rechazó el borrado o el documento no se eliminó. Revisá las reglas de seguridad (allow delete).',
+            codigo: 'no-eliminado'
+          };
+        }
+      } catch (eVerif) {
+        console.error('[usuarios] No se pudo verificar la baja de "' + id + '":', eVerif && eVerif.code);
+        return {
+          ok: false,
+          mensaje: 'no se pudo verificar el borrado en el servidor (' +
+            ((eVerif && (eVerif.code || eVerif.message)) || 'error desconocido') + ')',
+          codigo: 'verificacion-fallida'
+        };
+      }
       return { ok: true, borrado: true };
     } catch (error) {
       console.error('[usuarios] No se pudo eliminar el perfil de la nube:', {
@@ -267,7 +294,11 @@ export const userDirectoryService = {
       return [];
     }
     try {
-      const snap = await rt.getDocs(rt.collection(rt.dbFirebase, 'usuarios'));
+      // Se lee DIRECTO del servidor (sin la caché de Firestore): con caché, un
+      // usuario recién borrado o editado seguía apareciendo con los datos viejos
+      // y la app parecía no haber guardado nada.
+      const leer = typeof rt.getDocsFromServer === 'function' ? rt.getDocsFromServer : rt.getDocs;
+      const snap = await leer(rt.collection(rt.dbFirebase, 'usuarios'));
       if (!snap || snap.empty) return [];
       return snap.docs.map((d) => {
         const data = d.data() || {};
@@ -302,6 +333,117 @@ export const userDirectoryService = {
     } catch (e) {
       return false;
     }
+  },
+
+  /**
+   * Igual que `listarPerfiles()` pero DISTINGUE "colección vacía" de "falló la
+   * lectura". Sin esto, un error de red o de permisos devolvía `[]` y la UI caía
+   * silenciosamente a IndexedDB, mostrando usuarios viejos ya borrados de la
+   * nube (el síntoma clásico de "borré y sigue apareciendo").
+   *
+   * @returns {Promise<{ok: boolean, perfiles: Array, mensaje: string|null}>}
+   */
+  async listarPerfilesConEstado() {
+    const rt = runtime();
+    if (!firestoreDisponible() || typeof rt.getDocs !== 'function') {
+      return { ok: true, perfiles: [], mensaje: null, sinNube: true };
+    }
+    if (!rt.auth || !rt.auth.currentUser) {
+      return { ok: true, perfiles: [], mensaje: null, sinSesion: true };
+    }
+    try {
+      const leer = typeof rt.getDocsFromServer === 'function' ? rt.getDocsFromServer : rt.getDocs;
+      const snap = await leer(rt.collection(rt.dbFirebase, 'usuarios'));
+      const docs = (snap && snap.docs) ? snap.docs : [];
+      return { ok: true, perfiles: docs.map((d) => {
+        const data = d.data() || {};
+        return {
+          id: d.id,
+          username: data.username || d.id,
+          nombre: data.nombre || data.username || d.id,
+          rol: data.rol || 'viewer',
+          activo: data.activo !== false,
+          email: data.email || null,
+          permisos: (data.permisos && typeof data.permisos === 'object')
+            ? JSON.parse(JSON.stringify(data.permisos))
+            : null,
+          origen: 'nube'
+        };
+      }), mensaje: null };
+    } catch (e) {
+      const mensaje = 'No se pudieron leer los perfiles de Firebase: ' +
+        ((e && (e.code || e.message)) || 'error desconocido');
+      console.error('[usuarios] ' + mensaje, e);
+      return { ok: false, perfiles: [], mensaje };
+    }
+  },
+
+  /**
+   * PURGA MASIVA: elimina TODOS los perfiles de Firestore excepto los indicados
+   * en `conservar` (normalmente el admin ancla). Útil para limpiar la colección
+   * cuando quedaron documentos huérfanos o duplicados que el borrado individual
+   * no alcanza a remover.
+   *
+   * Reporta qué se borró y qué falló, y verifica con una relectura FINAL que
+   * solo queden los conservados.
+   *
+   * @param {string[]} conservar usernames (o ids de documento) a preservar.
+   * @returns {Promise<{ok, borrados, fallidos, restantes, mensaje}>}
+   */
+  async purgarPerfilesExcepto(conservar) {
+    const conservarIds = new Set((Array.isArray(conservar) ? conservar : [])
+      .map((u) => idDocumento(typeof u === 'object' && u ? (u.username || u.id) : u))
+      .filter(Boolean));
+    if (!firestoreDisponible()) {
+      return { ok: false, borrados: [], fallidos: [], restantes: [], mensaje: 'Firestore no está disponible.' };
+    }
+    const rt = runtime();
+    if (!rt.auth || !rt.auth.currentUser) {
+      return { ok: false, borrados: [], fallidos: [], restantes: [], mensaje: 'Sin sesión activa.' };
+    }
+
+    let ids = [];
+    try {
+      const leer = typeof rt.getDocsFromServer === 'function' ? rt.getDocsFromServer : rt.getDocs;
+      const snap = await leer(rt.collection(rt.dbFirebase, 'usuarios'));
+      ids = (snap && snap.docs) ? snap.docs.map((d) => d.id) : [];
+    } catch (e) {
+      return { ok: false, borrados: [], fallidos: [], restantes: [],
+        mensaje: 'No se pudo leer la colección para purgar: ' + ((e && (e.code || e.message)) || 'error') };
+    }
+
+    const objetivo = ids.filter((id) => !conservarIds.has(idDocumento(id)));
+    const borrados = [];
+    const fallidos = [];
+
+    for (const id of objetivo) {
+      try {
+        await rt.deleteDoc(rt.doc(rt.dbFirebase, 'usuarios', id));
+        borrados.push(id);
+      } catch (e) {
+        console.error('[usuarios] Purga: no se pudo borrar "' + id + '":', e && (e.code || e.message));
+        fallidos.push({ id, error: (e && (e.code || e.message)) || 'error desconocido' });
+      }
+    }
+
+    // Verificación final con relectura EXITOSA del servidor.
+    let restantes = null;
+    try {
+      const leer = typeof rt.getDocsFromServer === 'function' ? rt.getDocsFromServer : rt.getDocs;
+      const snap = await leer(rt.collection(rt.dbFirebase, 'usuarios'));
+      restantes = (snap && snap.docs) ? snap.docs.map((d) => d.id).filter((id) => !conservarIds.has(idDocumento(id))) : [];
+    } catch (e) {
+      return { ok: false, borrados, fallidos, restantes: null,
+        mensaje: 'No se pudo verificar la purga: ' + ((e && (e.code || e.message)) || 'error') };
+    }
+
+    return {
+      ok: restantes.length === 0 && fallidos.length === 0,
+      borrados, fallidos, restantes,
+      mensaje: restantes.length === 0 && fallidos.length === 0
+        ? null
+        : 'Quedaron ' + restantes.length + ' perfil(es) sin borrar.',
+    };
   },
 
   /**

@@ -18,6 +18,33 @@
 export const DOMINIO_AUTH_POR_DEFECTO = 'controlcda.com';
 
 /**
+ * ===================== CUENTAS ADMINISTRADORAS ANCLA =====================
+ * Lista de emails que SIEMPRE son admin, exista o no un documento de perfil.
+ *
+ * POR QUE ES NECESARIA (problema de arranque / bootstrap):
+ *   El rol se resuelve LEYENDO el documento `usuarios/{username}` de Firestore.
+ *   Si ese documento no existe, nadie es admin. Y las reglas de seguridad
+ *   necesitan un admin existente para permitir la CREACION de perfiles. Eso
+ *   dejaba la app en un deadlock: sin documento inicial no hay admin, y sin
+ *   admin no se puede crear el documento inicial.
+ *
+ *   Con esta lista de anclas, esas cuentas resuelven admin desde el mismimo
+ *   login y pueden crear/editar los perfiles del resto. Es el patron estandar
+ *   para romper ese deadlock en el cliente.
+ *
+ * SEGUIRIDAD: no abre la puerta a la autoescalada, porque el resto de los
+ * usuarios NO estan en esta lista: su perfil se crea con rol `viewer` y solo
+ * un admin puede promoverlos. La lista debe mantenerse en `firestore.rules`
+ * (mismo contenido): si se agrega un email aca, hay que agregarlo alli tambien.
+ */
+export const ADMINS_ANCLA = Object.freeze(['admin@controlcda.com']);
+
+/** true si este email es una cuenta administradora ancla. */
+export function esAdminAncla(email) {
+  return ADMINS_ANCLA.includes(String(email || '').trim().toLowerCase());
+}
+
+/**
  * Caracteres no permitidos en la parte local de un email.
  * Debe ser GLOBAL: se aplica sobre todo el texto, no solo la primera coincidencia.
  */

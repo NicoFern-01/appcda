@@ -1012,7 +1012,12 @@
                 <div class="table-card admin-only" style="margin-bottom: 2rem;">
                     <div class="table-header-tools">
                         <h3><i class="fa-solid fa-shield-halved" style="color: var(--accent);"></i> Gestión de Usuarios</h3>
-                        <button class="btn" onclick="openModalUsuario()"><i class="fa-solid fa-user-plus"></i> Nuevo Usuario</button>
+                        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                            <button class="btn btn-danger" onclick="purgarUsuarios()" title="Eliminar todos los perfiles de Firebase salvo el administrador ancla">
+                                <i class="fa-solid fa-broom"></i> Purgar usuarios
+                            </button>
+                            <button class="btn" onclick="openModalUsuario()"><i class="fa-solid fa-user-plus"></i> Nuevo Usuario</button>
+                        </div>
                     </div>
                     <div class="table-responsive">
                         <table>
@@ -2426,7 +2431,18 @@
     <!-- Scripts -->
     <!-- Módulos ES modernos: proveen bridges, servicios de auth, persistencia, permisos y vistas -->
     <script type="module" src="/src/main.js"></script>
-    <script src="db.js"></script>
-    <script src="app.js"></script>
+    <!--
+      db.js y app.js son scripts CLASICOS copiados tal cual a dist/ (sin hash en
+      el nombre). Sin un versionado, el navegador los sirve desde su caché para
+      siempre: el bundle de módulos ES se actualizaba (tiene hash) pero app.js
+      quedaba en la versión vieja. Eso producía síntomas muy confusos: la
+      consola mostrando el bundle nuevo mientras el código classical era el
+      anterior (por eso los fixes de listar/borrar usuarios no se aplicaban).
+
+      El `?v=` se inyecta en build con la fecha, de modo que cada deploy
+      invalida la caché de estos dos archivos.
+    -->
+    <script src="db.js?v=__CDA_BUILD__"></script>
+    <script src="app.js?v=__CDA_BUILD__"></script>
 </body>
 </html>

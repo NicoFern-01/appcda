@@ -23,6 +23,7 @@ import validarRegistro from './services/schemaValidator.js';
 import authService from './services/authService.js';
 import persistenceService from './services/persistenceService.js';
 import userDirectoryService from './services/userDirectoryService.js';
+import { ADMINS_ANCLA } from './services/authCredentials.js';
 import viewManager from './services/viewManager.js';
 import { views } from './views/index.js';
 
@@ -46,6 +47,9 @@ if (typeof window !== 'undefined') {
     persistencia: persistenceService,
     vistas: viewManager,
     usuarios: userDirectoryService,
+    // Lista de cuentas administradoras ancla. app.js la usa para la purga de
+    // perfiles (siempre debe conservar al admin ancla).
+    credenciales: { ADMINS_ANCLA },
     router: { registerView, navigate, VIEW_IDS },
   });
 }

@@ -134,6 +134,7 @@ let storageFirebase = null;
 
 // Variables de módulo de Firebase Auth
 let getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword;
+let getDocsFromServer = null;
 let deleteApp = null;
 let authFirebase = null;
 let firebaseConfigActiva = null;
@@ -247,6 +248,7 @@ async function inicializarFirebase() {
         query = fsMod.query;
         where = fsMod.where;
         enableIndexedDbPersistence = fsMod.enableIndexedDbPersistence;
+        getDocsFromServer = fsMod.getDocsFromServer;
         getStorage = storageMod.getStorage;
         refStorage = storageMod.ref;
         uploadBytes = storageMod.uploadBytes;
@@ -314,6 +316,10 @@ async function inicializarFirebase() {
                 doc,
                 setDoc,
                 getDocs,
+                // Lectura SIN caché: imprescindible para el listado de usuarios.
+                // Con la caché de Firestore activada, un documento borrado
+                // seguía apareciendo en pantalla (dato obsoleto local).
+                getDocsFromServer,
                 getDoc,
                 deleteDoc,
                 query,

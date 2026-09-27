@@ -92,6 +92,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     };
                     currentUser = usuario;
                     iniciarSesion(usuario);
+                    // El rol guardado puede estar desactualizado (p. ej. el admin
+                    // fue degradado, o la sesion es de una epoca previa a la
+                    // migracion). Se revalida contra Firebase Auth en segundo
+                    // plano para que la UI no quede con permisos fantasma.
+                    _revalidarSesionContraFirebase(usuario);
                 }
             } catch (e) {
                 console.warn('Error al restaurar sesión:', e);
@@ -105,6 +110,40 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ==================== AUTENTICACIÓN ====================
+
+/**
+ * Revalida en segundo plano la sesión restaurada contra Firebase Auth.
+ *
+ * POR QUE: la sesión guardada en localStorage puede quedar desactualizada
+ * (rol cambiado, usuario desactivado, o simplemente un token viejo). Sin esta
+ * comprobación, la app arrancaba mostrando permisos que ya no correspondían
+ * y ni siquiera exigía volver a iniciar sesión.
+ *
+ * Si Firebase dice que no hay sesión, se cierra la sesión local: la pantalla
+ * de login vuelve a ser la única puerta de entrada.
+ */
+async function _revalidarSesionContraFirebase(usuarioRestaurado) {
+    const auth = (typeof window !== 'undefined' && window.__CDA_MODULES__ &&
+        window.__CDA_MODULES__.auth) || null;
+    if (!auth || typeof auth.revalidarSesion !== 'function') return;
+
+    try {
+        const resultado = await auth.revalidarSesion();
+        if (resultado && resultado.valido === false) {
+            console.warn('[authService] La sesión local fue invalidada por Firebase:', resultado.motivo);
+            if (typeof handleLogout === 'function') await handleLogout();
+            return;
+        }
+        if (resultado && resultado.usuario) {
+            // Se actualizó el rol/nombre: se refresca la UI con los datos reales.
+            currentUser = resultado.usuario;
+            iniciarSesion(resultado.usuario);
+        }
+    } catch (e) {
+        // Fallo de red: se conserva la sesión local (no se cierra la app).
+        console.warn('[authService] No se pudo revalidar la sesión (se mantiene la local):', e);
+    }
+}
 
 function togglePasswordVisibility() {
     const input = document.getElementById('login-password');
@@ -2612,7 +2651,17 @@ async function listarUsuarios() {
     // la nube. Si no, se usa IndexedDB (app sin Firebase o primer arranque).
     const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
     let perfilesNube = [];
-    if (directorio && typeof directorio.listarPerfiles === 'function') {
+    if (directorio && typeof directorio.listarPerfilesConEstado === 'function') {
+        const res = await directorio.listarPerfilesConEstado();
+        if (!res.ok) {
+            // ANTES: `listarPerfiles()` devolvía [] tanto si la colección estaba
+            // vacía como si la lectura fallaba, y la UI caía a IndexedDB mostrando
+            // usuarios que ya no existían en Firebase. Ahora el error se muestra.
+            mostrarToast(escapeHtml(res.mensaje || 'Error al leer los usuarios de Firebase.'), 'error');
+            return;
+        }
+        perfilesNube = res.perfiles;
+    } else if (directorio && typeof directorio.listarPerfiles === 'function') {
         perfilesNube = await directorio.listarPerfiles();
     }
 
@@ -3306,6 +3355,61 @@ async function eliminarUsuario(id) {
     } else {
         mostrarToast('Usuario eliminado correctamente.', 'success');
     }
+    await listarUsuarios();
+}
+
+// ==================== PURGA DE USUARIOS (SOLO ADMIN) ====================
+
+/**
+ * Borra TODOS los perfiles de Firebase salvo los administradores ancla
+ * (admin@controlcda.com), más el usuario local actual.
+ *
+ * Es la herramienta de recuperación cuando quedan documentos huérfanos o
+ * duplicados que el borrado individual no logra limpiar. NO toca las cuentas
+ * de Firebase Authentication: eso requiere una Cloud Function con Admin SDK
+ * (el cliente web no puede administrar usuarios de Auth).
+ */
+async function purgarUsuarios() {
+    if (!esAdmin()) return;
+
+    const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
+    if (!directorio || typeof directorio.purgarPerfilesExcepto !== 'function') {
+        mostrarToast('La purga no está disponible en esta versión.', 'error');
+        return;
+    }
+
+    const confirmado = await mostrarConfirmacion(
+        'Purgar usuarios',
+        'Se eliminarán TODOS los perfiles de Firebase salvo el administrador ancla (admin@controlcda.com). ' +
+        'Las cuentas de Firebase Authentication (emails) NO se borran. ¿Continuar?',
+        'warning'
+    );
+    if (!confirmado) return;
+
+    // Se conservan los admins ancla (importados del módulo de credenciales) y,
+    // por si acaso, el propio usuario conectado.
+    const modulos = (typeof window !== 'undefined' && window.__CDA_MODULES__) || {};
+    const ancla = ((modulos.credenciales && modulos.credenciales.ADMINS_ANCLA) || ['admin@controlcda.com'])
+        .map((email) => String(email).split('@')[0].toLowerCase());
+    const conservar = ancla.slice();
+    if (currentUser && currentUser.username) {
+        const yo = String(currentUser.username).toLowerCase();
+        if (ancla.indexOf(yo) === -1) conservar.push(yo);
+    }
+
+    const res = await directorio.purgarPerfilesExcepto(conservar);
+
+    if (res.restantes === null) {
+        mostrarToast('No se pudo verificar la purga: ' + escapeHtml(res.mensaje || 'error desconocido'), 'error');
+    } else if (res.ok) {
+        mostrarToast(res.borrados.length
+            ? 'Se purgaron ' + res.borrados.length + ' perfil(es). Solo queda(n) los administradores.'
+            : 'No había perfiles para purgar.', 'success');
+    } else {
+        mostrarToast('Purga incompleta: ' + escapeHtml(res.mensaje || 'quedaron perfiles sin borrar') +
+            '. Fallaron ' + res.fallidos.length + '.', 'error');
+    }
+
     await listarUsuarios();
 }
 

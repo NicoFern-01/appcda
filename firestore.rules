@@ -26,20 +26,46 @@ service cloud.firestore {
     }
 
     function miEmail() {
-      return request.auth.token.email;
+      // `lower()` y NO `toLowerCase()`: los metodos de las reglas de
+      // Firestore se escriben en minuscula. Usar el nombre de JavaScript
+      // produce "Invalid function name" y la consola rechaza TODO el archivo.
+      return request.auth.token.email.lower();
     }
 
     // Username en minusculas = id de documento.
     function miId() {
-      return request.auth.token.email.split('@')[0].toLowerCase();
+      return request.auth.token.email.split('@')[0].lower();
     }
 
     function miPerfil() {
       return get(/databases/$(database)/documents/usuarios/$(miId())).data;
     }
 
+    // ============================================================
+    // CUENTAS ADMINISTRADORAS ANCLA
+    // ============================================================
+    // Estas cuentas son admin INDEPENDIENTIENTE de si tienen documento de perfil.
+    //
+    // MOTIVO (rompe el deadlock de arranque): el rol se resuelve leyendo el
+    // documento `usuarios/{id}`. Sin ese documento, nadie es admin. Pero las
+    // reglas exigen un admin existente para crear documentos. Resultado: sin
+    // documento inicial no hay admin, y sin admin no se puede crear el
+    // documento inicial -> la app queda inutilizable (nadie puede administrar
+    // usuarios). Estas cuentas ancla pueden crear su propio perfil y asi
+    // desbloquear el sistema.
+    //
+    // DEBE MANTENERSE SINCRONIZADA con ADMINS_ANCLA en
+    // src/services/authCredentials.js. Si se agrega un email acá, agregalo
+    // también en el JS (o el usuario no podrá crear su perfil).
+    function esAdminAncla() {
+      return signedIn() && miEmail() in [
+        'admin@controlcda.com'
+      ];
+    }
+
     function esAdmin() {
-      return signedIn() && miPerfil() != null && miPerfil().rol == 'admin' && miPerfil().activo == true;
+      return esAdminAncla() ||
+             (signedIn() && miPerfil() != null && miPerfil().rol == 'admin' && miPerfil().activo == true);
     }
 
     // Roles que pueden escribir datos operativos. La app tiene perfiles
@@ -67,9 +93,17 @@ service cloud.firestore {
       // el listado y los permisos funcionen en la app).
       allow read: if signedIn();
 
-      // CREAR: solo un admin, y solo un documento cuyo id coincida con su propio
-      // email (impide crear perfiles arbitrarios en nombre de terceros).
-      allow create: if esAdmin() && userId == miId();
+      // CREAR: cualquier admin legitimo puede crear el perfil de OTRO usuario
+      // (alta normal desde Configuracion). Antes exigia `userId == miId()`, lo
+      // que hacia IMPOSIBLE dar de alta a otra persona: el admin podia crear
+      // unicamente su propio documento. Ademas se exige que el documento sea
+      // coherente con su id (username = local-part del email) para que las
+      // reglas puedan resolver el perfil por email.
+      allow create: if esAdmin()
+                    && request.resource.data.rol in ['admin', 'editor', 'viewer', 'supervisor']
+                    && request.resource.data.email is string
+                    && request.resource.data.email.split('@')[0].lower() == userId
+                    && request.resource.data.username == userId;
 
       // EDITAR: solo admin. Un usuario NO puede editar su propio perfil en la nube
       // (los cambios de permisos los hace el admin; asi se evita la autoescalada).

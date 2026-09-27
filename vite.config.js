@@ -31,6 +31,22 @@ export default defineConfig({
         { src: 'db.js', dest: '.' },
       ],
     }),
+
+    // ---------- INVALIDACIÓN DE CACHÉ DE LOS SCRIPTS CLÁSICOS ----------
+    // db.js y app.js se publican con nombre fijo (sin hash), así que el
+    // navegador los servía desde caché indefinidamente. Resultado: el bundle
+    // de módulos se actualizaba pero app.js seguía siendo el viejo, y los
+    // arreglos no tomaban efecto (el sintoma más confuso de toda la
+    // migración). Este plugin reemplaza `?v=__CDA_BUILD__` por un timestamp
+    // de build, de modo que cada deploy fuerza la descarga de ambos.
+    {
+      name: 'cda-version-scripts-classicos',
+      enforce: 'post',
+      transformIndexHtml(html) {
+        const stamp = Date.now().toString(36);
+        return html.replaceAll('__CDA_BUILD__', stamp);
+      },
+    },
   ],
 
   resolve: {

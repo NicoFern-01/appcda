@@ -28,7 +28,7 @@
 //     window.__CDA_FIREBASE_RUNTIME__ (bridge aditivo).
 // ============================================================
 
-import { construirIdentidadLogin } from './authCredentials.js';
+import { construirIdentidadLogin, esAdminAncla, extraerUsernameDeEmail } from './authCredentials.js';
 
 /**
  * ID de documento en `usuarios`: el username en minusculas (misma clave que
@@ -133,11 +133,27 @@ export async function intentarLoginLocal(usernameInput, passwordInput) {
     const valida = await verificar(passwordInput, match.passwordHash);
     if (!valida) return false;
 
+    // ---------- LÍMITE DE CONFIANZA DEL FALLBACK LOCAL ----------
+    // Este camino valida contra IndexedDB, que es un almacen LOCAL y modificable.
+    // Por eso NO se concede `admin` desde acá cuando Firebase Auth esta
+    // disponible: un perfil local con rol admin otorgaria control total sin
+    // pasar por la nube.
+    // El rol local se respeta SOLO si Firebase Auth no esta disponible (modo
+    // degradado real: CDN caido / sin conexion), que es su unico proposito.
+    const rt = firebaseRuntime();
+    const firebaseDisponible = !!(rt.auth && typeof rt.signInWithEmailAndPassword === 'function');
+    let rolEfectivo = match.rol || 'viewer';
+    if (firebaseDisponible && rolEfectivo === 'admin') {
+      console.warn('[authService] Login local degradado: se ignora el rol admin local ' +
+        'porque Firebase Auth esta disponible (el rol real viene de Firestore).');
+      rolEfectivo = 'viewer';
+    }
+
     const usuario = {
       id: Number(match.id) || match.id,
       username: match.username,
       nombre: match.nombre || 'Usuario',
-      rol: match.rol || 'viewer',
+      rol: rolEfectivo,
       permisos: (match.permisos && typeof match.permisos === 'object')
         ? JSON.parse(JSON.stringify(match.permisos))
         : null,
@@ -275,6 +291,97 @@ function _sincronizarTrasLogin(rt) {
   } catch (e) {
     console.warn('[authService] No se pudo disparar la sincronización post-login:', e);
   }
+}
+
+/**
+ * Crea el documento de perfil de una cuenta administradora ancla si no existe.
+ *
+ * Es la pieza que desbloquea la app: sin documento de perfil el rol se resuelve
+ * como `viewer`, y sin admin las reglas de Firestore no permiten crear ningún
+ * documento. Las cuentas de `ADMINS_ANCLA` están autorizadas en las reglas
+ * justamente para poder crear su propio perfil.
+ *
+ * @returns {Promise<object|null>} el perfil creado, o null si no se pudo.
+ */
+async function _asegurarPerfilAdminAncla(rt, username, email) {
+  if (!rt || !rt.dbFirebase || typeof rt.setDoc !== 'function' || typeof rt.doc !== 'function') {
+    return null;
+  }
+  const id = idDocumento(username);
+  if (!id) return null;
+  try {
+    const doc = {
+      username: id,
+      nombre: 'Administrador',
+      rol: 'admin',
+      activo: true,
+      email,
+      permisos: null,
+      actualizadoEn: new Date().toISOString()
+    };
+    await rt.setDoc(rt.doc(rt.dbFirebase, 'usuarios', id), doc, { merge: true });
+    console.log('[authService] Perfil de administrador ancla creado en Firestore:', email);
+    return normalizarPerfil(doc, id);
+  } catch (e) {
+    console.error('[authService] No se pudo crear el perfil del administrador ancla:', {
+      codigo: e && e.code,
+      mensaje: e && e.message,
+      email,
+      id
+    });
+    return null;
+  }
+}
+
+// ---------------- Revalidación de sesión ----------------
+/**
+ * Comprueba que la sesión guardada en localStorage siga siendo válida según
+ * Firebase Auth, y devuelve el perfil ACTUALIZADO (rol, nombre, permisos).
+ *
+ * Motivo: la sesión local guarda el rol en el momento del login. Si un admin
+ * cambió ese rol después, la app seguía mostrando los permisos viejos, y al
+ * recargar ni siquiera exigía volver a iniciar sesión.
+ *
+ * @returns {Promise<{valido:boolean, usuario?:object, motivo?:string}>}
+ */
+export async function revalidarSesion() {
+  const rt = firebaseRuntime();
+  if (!rt.auth) return { valido: true, usuario: null };
+
+  // Sin Firebase disponible (offline / CDN caído): no se invalida nada.
+  const firebaseUser = rt.auth.currentUser;
+  if (!firebaseUser) {
+    return { valido: false, motivo: 'sin-sesion-firebase' };
+  }
+
+  const email = firebaseUser.email || '';
+  const username = extraerUsernameDeEmail(email) || String(email).split('@')[0];
+
+  let perfil = await resolverPerfilEnFirestore(username, email);
+  if (!perfil && esAdminAncla(email)) {
+    perfil = await _asegurarPerfilAdminAncla(rt, username, email);
+  }
+
+  const usuario = {
+    id: perfil ? perfil.id : (firebaseUser.uid || username),
+    username: perfil ? perfil.username : username,
+    nombre: perfil ? perfil.nombre : username,
+    rol: perfil ? perfil.rol : (esAdminAncla(email) ? 'admin' : 'viewer'),
+    permisos: perfil ? perfil.permisos : null,
+    activo: true,
+    email,
+    firebaseUid: firebaseUser.uid || null,
+    origen: 'revalidado'
+  };
+
+  // Se persiste el rol real: la próxima carga ya arranca con el dato correcto.
+  try {
+    guardarSesion(usuario);
+  } catch (e) {
+    console.warn('[authService] No se pudo actualizar la sesión revalidada:', e);
+  }
+
+  return { valido: true, usuario };
 }
 
 // ---------------- Migracion de cuentas locales a Firebase Auth ----------------
@@ -425,7 +532,16 @@ export async function handleLogin(event) {
       const uid = (firebaseUser && firebaseUser.uid) ? firebaseUser.uid : null;
 
       // ---------- CAPA 2: perfil y rol desde Firestore ----------
-      const perfil = await resolverPerfilEnFirestore(identidad.username, email);
+      let perfil = await resolverPerfilEnFirestore(identidad.username, email);
+
+      // ---------- PERFIL ANCLA: rompe el deadlock de arranque ----------
+      // Si la cuenta es administradora ancla y aun NO tiene documento de perfil,
+      // se lo crea con rol admin. Sin esto, la app quedaba inutilizable: el rol
+      // se lee del documento, y sin documento nadie era admin; a su vez, las
+      // reglas exigian un admin existente para crear documentos. Deadlock total.
+      if (!perfil && esAdminAncla(email)) {
+        perfil = await _asegurarPerfilAdminAncla(rt, identidad.username, email);
+      }
 
       // Si la autenticación fue correcta pero NO hay perfil en Firestore, el rol
       // caería a 'viewer' en silencio y el usuario perdería sus permisos sin
@@ -433,10 +549,8 @@ export async function handleLogin(event) {
       if (!perfil) {
         console.warn('[authService] El usuario "' + identidad.username +
           '" se autenticó pero NO tiene perfil en la colección `usuarios` de Firestore. ' +
-          'Se asigna rol viewer. Creá el perfil desde Configuración > Usuarios para ' +
-          'restaurar sus permisos.');
+          'Se asigna rol viewer. Un administrador debe crearlo desde Configuración > Usuarios.');
       }
-
       const usuario = {
         id: perfil ? (Number(perfil.id) || perfil.id) : (uid || identidad.username),
         username: perfil ? perfil.username : identidad.username,
@@ -550,6 +664,7 @@ export const authService = {
   intentarLoginLocal,
   iniciarSesion,
   handleLogout,
+  revalidarSesion,
   getUsuarioActual() {
     return typeof globalThis !== 'undefined' ? (globalThis.currentUser ?? null) : null;
   },
