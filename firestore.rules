@@ -79,6 +79,23 @@ service cloud.firestore {
           && miPerfil().rol in ['admin', 'editor', 'supervisor'];
     }
 
+    // LECTURA operativa de datos sensibles: cualquier usuario ACTIVO.
+    // Se exige `activo == true` para que un perfil desactivado (por ejemplo tras
+    // una baja o un robo de credenciales) pierda el acceso aunque conserve su
+    // sesion de Firebase Auth abierta. 'viewer' si puede leer, por definicion.
+    function puedeLeerOperativo() {
+      return signedIn()
+          && miPerfil() != null
+          && miPerfil().activo == true
+          && miPerfil().rol in ['admin', 'editor', 'viewer', 'supervisor'];
+    }
+
+    // ESCRITURA operativa: la misma condicion de `puedeEscribirDatos`, expuesta
+    // con nombre explicito para las colecciones sensibles.
+    function puedeEscribirOperativo() {
+      return puedeEscribirDatos();
+    }
+
     // Regla anti-autoescalada: un usuario NO puede escribirse a si mismo con
     // permisos distintos a los que ya tiene. Impide que cualquiera se declare
     // admin. Los admins legitimos si pueden editar a otros.
@@ -88,39 +105,92 @@ service cloud.firestore {
     }
 
     // ---------- coleccion usuarios (perfiles) ----------
+    // ACCESO ESTRICTAMENTE ADMINISTRATIVO (HALLazgo 6).
+    //
+    // Antes: `allow read: if signedIn()` exponia el directorio completo de
+    // usuarios (nombres, emails, roles) a CUALQUIER cuenta, incluso viewers.
+    //
+    // Ahora:
+    //   - listar / leer perfiles AJENOS  -> solo admin.
+    //   - leer el PROPIO perfil           -> permitido, y es IMPRESCINDIBLE:
+    //     `authService` resuelve aqui el rol y los permisos de la sesion al
+    //     iniciar sesion. Sin esta excepcion, ningun usuario que no sea admin
+    //     podria loguearse y la app quedaria inutilizable.
+    //   - escribir / borrar               -> solo admin, y nunca sobre el
+    //     propio documento (impide el auto-bloqueo y la autoescalada).
     match /usuarios/{userId} {
-      // Cualquier usuario autenticado puede LEER perfiles (necesario para que
-      // el listado y los permisos funcionen en la app).
-      allow read: if signedIn();
+      // Listado del directorio: solo admin.
+      // Explicito y separado del `get` propio para no abrir de mas.
+      allow list: if esAdmin();
+      allow get: if esAdmin() || userId == miId();
 
       // CREAR: cualquier admin legitimo puede crear el perfil de OTRO usuario
-      // (alta normal desde Configuracion). Antes exigia `userId == miId()`, lo
-      // que hacia IMPOSIBLE dar de alta a otra persona: el admin podia crear
-      // unicamente su propio documento. Ademas se exige que el documento sea
+      // (alta normal desde Configuracion). Ademas se exige que el documento sea
       // coherente con su id (username = local-part del email) para que las
       // reglas puedan resolver el perfil por email.
       allow create: if esAdmin()
                     && request.resource.data.rol in ['admin', 'editor', 'viewer', 'supervisor']
                     && request.resource.data.email is string
                     && request.resource.data.email.split('@')[0].lower() == userId
-                    && request.resource.data.username == userId;
+                    && request.resource.data.username == userId
+                    // El documento no puede llevar material sensible.
+                    && !('passwordHash' in request.resource.data)
+                    && !('password' in request.resource.data);
 
       // EDITAR: solo admin. Un usuario NO puede editar su propio perfil en la nube
       // (los cambios de permisos los hace el admin; asi se evita la autoescalada).
-      allow update: if esAdmin() && noAutoescalada();
+      allow update: if esAdmin()
+                    && noAutoescalada()
+                    && !('passwordHash' in request.resource.data)
+                    && !('password' in request.resource.data);
 
       // BORRAR: solo admin, y nunca el propio perfil (evita quedar sin admin).
       allow delete: if esAdmin() && userId != miId();
     }
 
+    // ---------- colecciones operativas sensibles ----------
+    // Colecciones que el encargo pide endurecer. Se exige `activo == true` y un
+    // rol con capacidad operativa, cerrando el hueco por el que un perfil
+    // desactivado seguia leyendo/escribiendo con su sesion abierta.
+    match /gastos/{docId} {
+      allow read:  if puedeLeerOperativo();
+      allow write: if puedeEscribirOperativo();
+    }
+
+    match /rendiciones/{docId} {
+      allow read:  if puedeLeerOperativo();
+      allow write: if puedeEscribirOperativo();
+    }
+
+    match /inventario/{docId} {
+      allow read:  if puedeLeerOperativo();
+      allow write: if puedeEscribirOperativo();
+    }
+
     // ---------- resto de colecciones ----------
+    // NOTA CRITICA DE PRECEDENCIA: en las reglas de Firestore NO existe la
+    // "herencia" entre `match`. Cada `match` se evalua por separado y un comodin
+    // como este SIEMPRE concede tambien sobre las colecciones nombradas arriba
+    // (los comodines tienen la misma prioridad y el acceso se autoriza si
+    // CUALQUIER regla coincide). Por eso este comodin NO incluye `usuarios`,
+    // `gastos`, `rendiciones` ni `inventario`: si los incluyera, dejaria sin
+    // efecto el endurecimiento aplicado mas arriba.
+    //
     // LECTURA: cualquier usuario autenticado.
     // ESCRITURA: solo roles operativos (admin/editor/supervisor activos).
     // Antes era un comodin que permitia a CUALQUIER usuario autenticado
     // (incluidos viewers) escribir en cualquier coleccion.
     match /{collection}/{docId} {
-      allow read: if signedIn();
-      allow write: if puedeEscribirDatos();
+      allow read: if collection != 'usuarios'
+                  && collection != 'gastos'
+                  && collection != 'rendiciones'
+                  && collection != 'inventario'
+                  && signedIn();
+      allow write: if collection != 'usuarios'
+                   && collection != 'gastos'
+                   && collection != 'rendiciones'
+                   && collection != 'inventario'
+                   && puedeEscribirDatos();
     }
   }
 }

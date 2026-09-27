@@ -162,13 +162,60 @@ async function crearUsuarioEnAppSecundaria(email, password) {
 }
 
 // ==================== CREDENCIALES POR DEFECTO DEL ADMIN ====================
-// Fuente única de verdad del usuario administrador inicial. Se crea de forma
-// silenciosa (sin alert) cuando el store `usuarios` está vacío, con credenciales
-// fijas y predecibles de desarrollo. Coincide con el harness E2E (tests/app.spec.js).
+// Usuario administrador inicial. Se crea de forma silenciosa (sin alert) cuando
+// el store `usuarios` está vacío.
+//
+// SEGURIDAD: NO existe ninguna contraseña fija en el código. Se eliminó la
+// credencial que antes estaba hardcodeada, porque al vivir en un archivo público
+// (db.js se copia tal cual a dist/) era legible por cualquiera y, combinado con
+// `esAdminAncla()` (que concede admin por email sin consultar el perfil),
+// entregaba acceso total a un atacante que solo abriera el repositorio.
+//
+// La contraseña del admin LOCAL ahora se genera en runtime con
+// `crypto.getRandomValues()` (CSPRNG del navegador), hasheada con salt aleatorio
+// y mostrada una unica vez por consola. No se persiste en claro en ningun sitio.
+//
+// En PRODUCCIÓN el admin se autentica contra Firebase Auth (ver authService.js):
+// la cuenta real ya esta creada y autorizada en la nube, y su hash local nunca se
+// usa. Este store local es unicamente el bootstrap/fallback offline.
 const ADMIN_POR_DEFECTO = Object.freeze({
-    username: 'admin',
-    password: 'Admin123!'
+    username: 'admin'
 });
+
+// Alfabeto sin caracteres ambiguos (0/O, 1/l/I) para evitar confusiones al
+// transcribir una contraseña mostrada por consola.
+const ALFABETO_SEED_SEGURO = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+
+/**
+ * Genera una contraseña criptográficamente segura usando la CSPRNG nativa.
+ * Rechaza números inseguros y usa rechazo por sesgo para distribución uniforme.
+ *
+ * @param {number} longitud Número de caracteres (mínimo 20).
+ * @returns {string} Contraseña aleatoria.
+ */
+function generarPasswordSeguro(longitud = 24) {
+    const n = Math.max(20, longitud);
+    // Rechazo por sesgo: se descarta el ultimo sector incompleto del rango 0..255
+    // para que ningun caracter tenga mas probabilidad que otro.
+    const limite = Math.floor(256 / ALFABETO_SEED_SEGURO.length) * ALFABETO_SEED_SEGURO.length;
+    const simbolos = '!@#$%&*?-_';
+    let salida = '';
+
+    while (salida.length < n) {
+        const buffer = new Uint8Array(Math.max(16, n));
+        crypto.getRandomValues(buffer);
+        for (let i = 0; i < buffer.length && salida.length < n; i++) {
+            if (buffer[i] < limite) {
+                salida += ALFABETO_SEED_SEGURO[buffer[i] % ALFABETO_SEED_SEGURO.length];
+            }
+        }
+    }
+
+    // Garantizar al menos un simbolo en una posicion fija (no al final) para
+    // cumplir la composicion tipica de contrasenas, sin anadir ambiguedad.
+    const posSimbolo = 1 + Math.floor(Math.random() * (n - 2));
+    return salida.slice(0, posSimbolo) + simbolos[Math.floor(Math.random() * simbolos.length)] + salida.slice(posSimbolo);
+}
 
 // ==================== HASH DE CONTRASEÑAS SEGURO (Web Crypto API) ====================
 // Usa SHA-256 con salt aleatorio. No almacena la contraseña en texto plano.
@@ -703,20 +750,44 @@ async function inicializarDatosPorDefecto() {
         }
     }
     // Comprobar si hay usuarios - crear admin por defecto si no existe ninguno.
-    // Silencioso y determinista: credenciales fijas de desarrollo (admin / Admin123!),
-    // unificadas con el harness E2E de Playwright (tests/app.spec.js). Sin alert().
+    // Silencioso y determinista: la contraseña se GENERA en runtime con la CSPRNG
+    // (`generarPasswordSeguro`) y se muestra una única vez por consola. Ya NO hay
+    // ninguna credencial fija en el código.
+    //
+    // GARANTÍA DE ACCESO DEL ADMIN REAL: la condición es doble.
+    //   1. Solo se crea si el store `usuarios` está completamente vacío.
+    //   2. Dentro de ese caso, se vuelve a comprobar que no exista YA un documento
+    //      con el username del admin. Es una salvaguarda extra: aunque el store
+    //      este vacio nunca se regenera ni se SOBREESCRIBE un hash existente, con
+    //      lo que el administrador real nunca pierde su contrasena.
     const usuarios = await getTodos('usuarios');
     if (usuarios.length === 0) {
-        const passwordHash = await hashPassword(ADMIN_POR_DEFECTO.password);
-        await guardar('usuarios', {
-            username: ADMIN_POR_DEFECTO.username,
-            passwordHash,
-            nombre: 'Administrador',
-            rol: 'admin', // 'admin' | 'editor' | 'viewer'
-            activo: true,
-            requiereCambioPassword: true
-        });
-        console.info('[db] Usuario admin por defecto creado (admin / Admin123!). Cambie la contraseña desde Configuración > Usuarios.');
+        // Doble verificación defensiva: si el store fuese populado entre la
+        // consulta y este punto, abortamos sin tocar nada.
+        const existentes = await getTodos('usuarios');
+        const adminYaExiste = existentes.some(
+            (u) => String(u && u.username || '').toLowerCase() === ADMIN_POR_DEFECTO.username
+        );
+
+        if (!adminYaExiste) {
+            const passwordTemporal = generarPasswordSeguro(24);
+            const passwordHash = await hashPassword(passwordTemporal);
+            await guardar('usuarios', {
+                username: ADMIN_POR_DEFECTO.username,
+                passwordHash,
+                nombre: 'Administrador',
+                rol: 'admin', // 'admin' | 'editor' | 'viewer'
+                activo: true,
+                requiereCambioPassword: true
+            });
+            console.warn(
+                '[db] Admin local inicial creado con contraseña aleatoria de un solo uso.\n' +
+                '      Usuario: admin\n' +
+                `      Contraseña temporal: ${passwordTemporal}\n` +
+                '      Guardala ahora: no se vuelve a mostrar. En producción se autentica\n' +
+                '      contra Firebase Auth; cambiala desde Configuración > Usuarios.'
+            );
+        }
     }
 
     // ==================== DATOS POR DEFECTO DE INVENTARIO ====================
