@@ -2664,7 +2664,7 @@ async function imprimirListadoPersonal() {
     contenedor.innerHTML = `
         <div class="reporte-contenido">
             <h1>Listado de Personal</h1>
-            <p class="reporte-sub">Administración de banderilleros, comisarios y asistentes</p>
+            <p class="reporte-sub">Comisión Deportiva Automovilística</p>
             <div class="reporte-filtros">
                 <strong>Registros:</strong> ${totalFiltrado} de ${totalGeneral} &nbsp;|&nbsp;
                 <strong>Filtro aplicado:</strong> ${buscador ? escapeHtml(buscador) : 'Sin filtro'}
