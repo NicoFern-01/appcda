@@ -2212,7 +2212,25 @@ async function guardarStaffForm(e) {
 
 async function eliminarStaff(id) {
     if (!puedeEditar()) return;
-    if (!confirm('¿Eliminar este miembro del personal?')) return;
+    // Modal de confirmación propio de la app (hereda el CSS y la paleta del
+    // sistema) en lugar del confirm() nativo del navegador.
+    // Nombre legible de la persona para que la alerta no sea genérica
+    let nombreStaff = 'este miembro del personal';
+    const persona = await obtenerPorId('staff', id);
+    if (persona) {
+        const nombreCompleto = `${persona.nombre || ''} ${persona.apellido || ''}`.trim();
+        if (nombreCompleto) nombreStaff = nombreCompleto;
+    }
+
+    // mostrarConfirmacion() asigna el mensaje con textContent, por lo que el
+    // nombre ya queda a salvo de inyección: no debe escaparse aquí o se
+    // mostrarían entidades literales (ej. "A&amp;B").
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar personal',
+        `¿Eliminar a ${nombreStaff}? Se quitará también de las competencias en las que esté asignado. Esta acción no se puede deshacer.`,
+        'warning'
+    );
+    if (!confirmado) return;
     await eliminar('staff', id);
     await quitarStaffDeCompetencias(id);
     listarStaff();
