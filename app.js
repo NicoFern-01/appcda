@@ -2557,6 +2557,150 @@ async function imprimirReporteAsistencia() {
     }
 }
 
+// ==================== REPORTE IMPRESIBLE: LISTADO DE PERSONAL ====================
+
+/**
+ * Construye el listado de personal que se imprime/exporta a PDF.
+ * Respeta el texto del buscador de la vista (#buscar-staff) para que lo
+ * impreso coincida exactamente con lo que el usuario está viendo en pantalla.
+ * Devuelve { registros, totalGeneral } con los datos ya escapados y formateados.
+ */
+async function obtenerListadoPersonalParaImpresion() {
+    const [staffList, competencias] = await Promise.all([
+        getTodos('staff'),
+        getTodos('competencias')
+    ]);
+
+    const inputBuscador = document.getElementById('buscar-staff');
+    const buscador = (inputBuscador ? inputBuscador.value : '').toLowerCase().trim();
+
+    // Misma lógica de filtrado/orden que listarStaff() para no divergir en pantalla
+    const collator = new Intl.Collator('es', { sensitivity: 'base' });
+    const filtrado = staffList.filter(s => {
+        if (!buscador) return true;
+        const compMatches = (s.competenciasIds || []).some(id => {
+            const comp = competencias.find(c => c.id === Number(id));
+            return comp ? comp.nombre.toLowerCase().includes(buscador) : false;
+        });
+        return `${s.nombre || ''} ${s.apellido || ''}`.toLowerCase().includes(buscador) ||
+            (s.dni || '').toLowerCase().includes(buscador) ||
+            (s.funcion || '').toLowerCase().includes(buscador) ||
+            (s.matricula || '').toLowerCase().includes(buscador) ||
+            (s.mail || '').toLowerCase().includes(buscador) ||
+            (s.mail2 || '').toLowerCase().includes(buscador) ||
+            (s.numeroRegistroGrado || '').toLowerCase().includes(buscador) ||
+            (s.equipos || '').toLowerCase().includes(buscador) ||
+            compMatches;
+    }).sort((a, b) => collator.compare(
+        `${a.nombre || ''} ${a.apellido || ''}`.trim(),
+        `${b.nombre || ''} ${b.apellido || ''}`.trim()
+    ));
+
+    const valor = (v) => (v && String(v).trim() ? escapeHtml(v) : '-');
+
+    const registros = filtrado.map(s => ({
+        nombre: `${s.nombre || ''} ${s.apellido || ''}`.trim(),
+        dni: valor(s.dni),
+        funcion: valor(s.funcion),
+        matricula: valor(s.matricula),
+        mail: valor(s.mail),
+        mail2: valor(s.mail2),
+        numeroRegistroGrado: valor(s.numeroRegistroGrado),
+        equipos: valor(s.equipos),
+        competencias: (s.competenciasIds || []).length
+    }));
+
+    return { registros, totalGeneral: staffList.length, totalFiltrado: filtrado.length, buscador };
+}
+
+/**
+ * Imprime el listado de personal y habilita "Guardar como PDF" en el diálogo
+ * de impresión del navegador. Reutiliza el mismo patrón que el reporte de
+ * estadísticas: se arma un contenedor oculto, se marca el body con una clase
+ * que el CSS @media print usa para ocultar la app, y se limpia al terminar.
+ */
+async function imprimirListadoPersonal() {
+    const contenedor = document.getElementById('reporte-impresion-personal');
+    if (!contenedor) return;
+
+    const fechaFormateada = formatearFechaHoraReporte(new Date());
+    const { registros, totalGeneral, totalFiltrado, buscador } = await obtenerListadoPersonalParaImpresion();
+
+    if (registros.length === 0) {
+        mostrarToast('No hay personal para imprimir con el filtro actual.', 'warning');
+        return;
+    }
+
+    const filasHtml = registros.map(r => `<tr>
+        <td style="font-weight:600;">${escapeHtml(r.nombre)}</td>
+        <td>${r.dni}</td>
+        <td>${r.funcion}</td>
+        <td>${r.matricula}</td>
+        <td>${r.mail}</td>
+        <td>${r.mail2}</td>
+        <td>${r.numeroRegistroGrado}</td>
+        <td>${r.equipos}</td>
+        <td style="text-align:center;">${r.competencias}</td>
+    </tr>`).join('');
+
+    contenedor.innerHTML = `
+        <div class="reporte-contenido">
+            <h1>Listado de Personal</h1>
+            <p class="reporte-sub">Administración de banderilleros, comisarios y asistentes</p>
+            <div class="reporte-filtros">
+                <strong>Registros:</strong> ${totalFiltrado} de ${totalGeneral} &nbsp;|&nbsp;
+                <strong>Filtro aplicado:</strong> ${buscador ? escapeHtml(buscador) : 'Sin filtro'}
+            </div>
+            <table class="reporte-tabla">
+                <thead>
+                    <tr>
+                        <th>Nombre y Apellido</th>
+                        <th>DNI</th>
+                        <th>Función/Rol</th>
+                        <th>Matrícula</th>
+                        <th>Mail Laboral</th>
+                        <th>Mail Personal</th>
+                        <th>Nro Registro - Grado</th>
+                        <th>Equipos</th>
+                        <th style="text-align:center;">Competencias</th>
+                    </tr>
+                </thead>
+                <tbody>${filasHtml}</tbody>
+            </table>
+        </div>
+        <footer class="reporte-footer">${escapeHtml(fechaFormateada)}</footer>
+    `;
+
+    // El listado tiene 9 columnas: se imprime en horizontal para que ninguna
+    // se corte. La regla @page se inyecta sólo durante esta impresión para no
+    // alterar la orientación del reporte de estadísticas de asistencia.
+    const stylePagina = document.createElement('style');
+    stylePagina.setAttribute('data-cda-print-personal', 'true');
+    stylePagina.textContent = '@page { size: landscape; margin: 0.5in; }';
+    document.head.appendChild(stylePagina);
+
+    document.body.classList.add('imprimiendo-personal');
+    window.print();
+
+    const limpiar = () => {
+        document.body.classList.remove('imprimiendo-personal');
+        contenedor.innerHTML = '';
+        stylePagina.remove();
+    };
+    if (typeof window.onafterprint !== 'undefined') {
+        window.onafterprint = limpiar;
+    } else {
+        // Firefox no soporta onafterprint
+        setTimeout(limpiar, 1000);
+    }
+}
+
+// Atajo explícito para "Guardar PDF": mismo reporte, el usuario elige
+// "Guardar como PDF" como destino en el diálogo de impresión del navegador.
+function exportarPDFListadoPersonal() {
+    imprimirListadoPersonal();
+}
+
 // ==================== CONFIGURACIÓN: CATEGORÍAS & CIRCUITOS ====================
 
 async function listarConfiguraciones() {

@@ -2816,6 +2816,29 @@ input[type="file"]:hover {
 #reporte-impresion-estadisticas .reporte-tabla tbody tr:nth-child(even) { background: #f9f9f9; }
 #reporte-impresion-estadisticas .reporte-footer { display: none; }
 
+/* ==================== REPORTE LISTADO DE PERSONAL (IMPRESIÓN) ==================== */
+/* Mismas bases visuales que el reporte de estadísticas (mismo encabezado,
+   encabezado de tabla oscuro, filas alternadas y pie de página) para que
+   ambos reportes se vean como parte del mismo sistema. */
+#reporte-impresion-personal {
+    display: none;
+    font-family: Arial, Helvetica, sans-serif;
+    color: #222;
+    padding: 1.5rem;
+    box-sizing: border-box;
+}
+#reporte-impresion-personal h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+#reporte-impresion-personal .reporte-sub { color: #666; font-size: 0.9rem; margin: 0 0 1rem; }
+#reporte-impresion-personal .reporte-filtros { font-size: 0.8rem; color: #444; margin-bottom: 1rem; background: #f7f7f7; padding: 0.5rem 0.7rem; border-radius: 4px; }
+#reporte-impresion-personal .reporte-tabla { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.75rem; }
+#reporte-impresion-personal .reporte-tabla th { background: #1f2a40; color: #fff; padding: 0.4rem 0.45rem; text-align: left; border: 1px solid #ddd; }
+#reporte-impresion-personal .reporte-tabla td { padding: 0.32rem 0.45rem; border: 1px solid #e0e0e0; word-break: break-word; }
+#reporte-impresion-personal .reporte-tabla tbody tr:nth-child(even) { background: #f9f9f9; }
+/* Evitar que una fila se parta entre dos páginas */
+#reporte-impresion-personal .reporte-tabla tr { page-break-inside: avoid; break-inside: avoid; }
+#reporte-impresion-personal thead { display: table-header-group; }
+#reporte-impresion-personal .reporte-footer { display: none; }
+
 @media print {
     /* Ocultar la interfaz del software; mostrar sólo el reporte de estadísticas */
     body.imprimiendo-estadisticas #app-main,
@@ -2849,4 +2872,38 @@ input[type="file"]:hover {
     }
 
     @page { margin-bottom: 1in; }
+
+    /* Listado de personal: se oculta la app y se muestra sólo el reporte.
+       La orientación horizontal la inyecta imprimirListadoPersonal() mediante
+       una etiqueta <style> temporal (@page landscape) para no afectar
+       al reporte de estadísticas, que se mantiene en vertical. */
+    body.imprimiendo-personal #app-main,
+    body.imprimiendo-personal #login-screen,
+    body.imprimiendo-personal .modal-overlay,
+    body.imprimiendo-personal #reporte-impresion-estadisticas {
+        display: none !important;
+    }
+
+    body.imprimiendo-personal #reporte-impresion-personal {
+        display: block;
+        padding: 0;
+    }
+
+    body.imprimiendo-personal #reporte-impresion-personal .reporte-contenido {
+        margin-bottom: 2.5rem; /* espacio reservado para el pie de página fijo */
+    }
+
+    body.imprimiendo-personal #reporte-impresion-personal .reporte-footer {
+        display: block;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        text-align: center;
+        font-size: 0.7rem;
+        color: #777;
+        border-top: 1px solid #bbb;
+        padding: 0.5rem 0;
+        box-sizing: border-box;
+    }
 }
