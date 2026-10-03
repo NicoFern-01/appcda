@@ -10,6 +10,7 @@ import { CATALOGO_MODULOS, MODULOS_MAP, verificarPermiso as verificarPermisoES }
 export const GRUPOS_MENU = [
     { padreId: 'menu-gastos',     submenuId: 'submenu-gastos',     padre: 'gastos',     hijos: ['carga-detallada', 'personal-competencia'] },
     { padreId: 'menu-personal',   submenuId: 'submenu-personal',   padre: 'staff',      hijos: ['estadisticas-personal'] },
+    { padreId: 'menu-pilotos',    submenuId: 'submenu-pilotos',    padre: 'pilotos',    hijos: ['listado-pilotos'] },
     { padreId: 'menu-inventario', submenuId: 'submenu-inventario', padre: 'inventario', hijos: ['articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario'] }
 ];
 
@@ -17,7 +18,7 @@ export const VIEWS = [
     'dashboard', 'calendario', 'competencias', 'gastos', 'carga-detallada',
     'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario',
     'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal',
-    'alojamiento', 'categorias-circuitos', 'configuracion'
+    'pilotos', 'listado-pilotos', 'alojamiento', 'categorias-circuitos', 'configuracion'
 ];
 
 function getCurrentUser() {
@@ -185,11 +186,20 @@ export function toggleSubmenu(submenuId) {
 
 export function abrirSubmenuDeVista(viewId) {
     if (typeof document === 'undefined') return;
+    const gruposMenu = (typeof window !== 'undefined' && window.GRUPOS_MENU) || GRUPOS_MENU;
+
+    // Los PADRES del menú (Gastos, Personal, Inventario) ya alternan su submenú
+    // con su propio toggle al hacer clic. Forzarles la apertura los dejaba
+    // imposibles de contraer: el clic cerraba el submenú y esta función (invocada
+    // por switchView -> ejecutarSwitchView con la MISMA vista padre) lo volvía a
+    // abrir. Por eso la apertura automática solo aplica a vistas HIJAS.
+    if (gruposMenu.some(g => g.padre === viewId)) return;
+
     const grupos = {
         'carga-detallada': ['submenu-gastos', 'menu-gastos'],
         'personal-competencia': ['submenu-gastos', 'menu-gastos'],
-        'staff': ['submenu-personal', 'menu-personal'],
         'estadisticas-personal': ['submenu-personal', 'menu-personal'],
+        'listado-pilotos': ['submenu-pilotos', 'menu-pilotos'],
         'articulos': ['submenu-inventario', 'menu-inventario'],
         'movimientos-inventario': ['submenu-inventario', 'menu-inventario'],
         'categorias-inventario': ['submenu-inventario', 'menu-inventario'],
@@ -331,6 +341,12 @@ export async function cargarDatosVista(viewId) {
             break;
         case 'estadisticas-personal':
             await invocarGlobal('listarEstadisticasPersonal');
+            break;
+        case 'pilotos':
+        case 'listado-pilotos':
+            // PLACEHOLDER (módulo Pilotos): aún no hay cargador de datos.
+            // El diseño del listado se implementará en una próxima iteración
+            // (ver .context/activeContext.md).
             break;
         case 'alojamiento':
             await invocarGlobal('listarAlojamientos');

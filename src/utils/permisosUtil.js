@@ -23,9 +23,11 @@ export const CATALOGO_MODULOS = Object.freeze([
   { id: 'entregas-inventario',    nombre: 'Entregas',                      icono: 'fa-truck-ramp-box',  orden: 11, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'staff',                  nombre: 'Personal',                      icono: 'fa-user-tie',        orden: 12, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'estadisticas-personal',  nombre: 'Estadísticas de Personal',      icono: 'fa-chart-column',    orden: 13, funciones: ['ver'] },
-  { id: 'alojamiento',            nombre: 'Alojamiento',                   icono: 'fa-hotel',           orden: 14, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-  { id: 'categorias-circuitos',   nombre: 'Categorías y Circuitos',        icono: 'fa-flag-checkered',  orden: 15, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-  { id: 'configuracion',          nombre: 'Configuración',                 icono: 'fa-gear',            orden: 16, funciones: ['ver'], soloAdmin: true }
+  { id: 'pilotos',                nombre: 'Pilotos',                       icono: 'fa-id-card',         orden: 14, funciones: ['ver'] },
+  { id: 'listado-pilotos',        nombre: 'Listado de Pilotos',            icono: 'fa-list-ul',         orden: 15, funciones: ['ver'] },
+  { id: 'alojamiento',            nombre: 'Alojamiento',                   icono: 'fa-hotel',           orden: 16, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+  { id: 'categorias-circuitos',   nombre: 'Categorías y Circuitos',        icono: 'fa-flag-checkered',  orden: 17, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+  { id: 'configuracion',          nombre: 'Configuración',                 icono: 'fa-gear',            orden: 18, funciones: ['ver'], soloAdmin: true }
 ]);
 
 export const MODULOS_MAP = Object.freeze(

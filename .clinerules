@@ -1,0 +1,59 @@
+# .clinerules — Instrucciones obligatorias para el agente (Memory Bank)
+
+Este proyecto usa un **Memory Bank** en `.context/`. Estas reglas son
+OBLIGATORIAS y tienen prioridad sobre la improvisación.
+
+## 1. Al INICIAR una tarea compleja
+
+Antes de editar cualquier código en tareas que cumplan ALGUNO de estos
+criterios (nueva vista/módulo, refactor, bug en navegación/permisos/auth,
+cambios en `app.js`, `db.js`, `firestore.rules` o migración a ESM), DEBES:
+
+1. Leer, como mínimo: `.context/activeContext.md` y `.context/systemPatterns.md`.
+2. Si la tarea toca la pila, el build o los comandos → leer `.context/techContext.md`.
+3. Si la tarea cambia el alcance/propósito del producto → leer
+   `.context/projectbrief.md` y `.context/productContext.md`.
+4. Solo después de leer el contexto relevante, planificar y ejecutar.
+
+En tareas triviales (typo, una línea, formato) basta con leer `activeContext.md`.
+
+## 2. Al FINALIZAR cada sesión de código
+
+DEBES actualizar `.context/activeContext.md` con:
+
+- Qué se hizo en la sesión (archivos tocados y por qué).
+- Estado de git relevante (`M`, `??`, commit si se creó).
+- Validaciones ejecutadas (build/tests) y su resultado.
+- Próximos pasos lógicos (reemplazar la lista anterior, no acumular basura).
+- Cualquier advertencia operativa nueva derivada del trabajo hecho.
+
+Si la sesión cambió patrones, estructura o tecnología, actualizar también
+`systemPatterns.md` / `techContext.md` respectivamente. Nunca borrar
+información útil sin haberla reemplazado con la versión vigente.
+
+## 3. Reglas estrictas derivadas del contexto
+
+- **Leer el código real siempre manda**: el Memory Bank es un mapa, no el
+  territorio. Si algo difiere del código, corregir el archivo del Memory Bank.
+- Respetar los patrones existentes: comentarios en español, cabeceras de
+  sección `// ====`, delegación vía `window.__CDA_MODULES__`, permisos por
+  `verificarPermiso`, escapado con `escapeHtml()` en todo `innerHTML`.
+- No eliminar código legacy en `app.js`/`db.js`/`index.html` sin confirmar la
+  estrategia de migración aditiva (los proxies delegan; nada se rompe).
+- Al agregar una vista: `CATÁLOGO_MODULOS` + `VIEWS`/`GRUPOS_MENU` en
+  `src/services/viewManager.js` + sección `#view-*` en `index.html` +
+  entrada en `cargarDatosVista()`.
+- Comandos de validación: `npx vite build` y `npx playwright test --workers=1`.
+- Seguridad: no subir `.env`; no correr tests de login contra Firebase de
+  producción; no escribir en Firestore sin reglas publicadas.
+
+## 4. Estructura del Memory Bank
+
+```
+.context/
+├── projectbrief.md    # propósito, objetivos, arquitectura
+├── productContext.md  # cómo funciona la app para el usuario
+├── systemPatterns.md  # patrones, estructura de carpetas, librerías críticas
+├── techContext.md     # pila exacta, comandos, variables de entorno
+└── activeContext.md   # trabajo actual, validaciones, próximos pasos  ← SIEMPRE ACTUALIZADO
+```

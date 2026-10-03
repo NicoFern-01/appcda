@@ -15,7 +15,7 @@
 // regresión). Simplemente queda listo y expuesto para la migración.
 // ============================================================
 
-/** IDs de las 16 vistas + la pantalla de login. Coinciden con const `views` de app.js. */
+/** IDs de las 18 vistas + la pantalla de login. Coinciden con const `views` de app.js. */
 export const VIEW_IDS = [
   'login',
   'dashboard',
@@ -31,6 +31,8 @@ export const VIEW_IDS = [
   'entregas-inventario',
   'staff',
   'estadisticas-personal',
+  'pilotos',
+  'listado-pilotos',
   'alojamiento',
   'categorias-circuitos',
   'configuracion'
