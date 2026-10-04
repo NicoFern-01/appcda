@@ -13,9 +13,10 @@ Proyecto Firebase por defecto: `controlcda-e5f97`.
 
 ## Objetivos
 
-1. **Operar todo el negocio en una sola SPA**: 16 vistas (dashboard, calendario,
+1. **Operar todo el negocio en una sola SPA**: 19 vistas (dashboard, calendario,
    competencias, gastos, carga detallada/rendiciones, personal por competencia,
-   inventario con 5 subvistas, staff, estadísticas de personal, alojamiento,
+   inventario con 5 subvistas, staff, estadísticas de personal, pilotos con
+   listado de pilotos y penalidades, alojamiento,
    categorías/circuitos, configuración).
 2. **Funcionar offline-first**: IndexedDB local (db.js + persistenceService) con
    sincronización opcional a Firestore, más migración local → nube.

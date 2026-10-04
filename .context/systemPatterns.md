@@ -4,10 +4,10 @@
 
 ```
 appcda/
-├── index.html          # 18 vistas estáticas + login (markup dueño del DOM)
-├── app.js              # monolito legacy ~10.866 líneas: UI, vistas, menú, gráficos
+├── index.html          # 19 vistas estáticas + login (markup dueño del DOM)
+├── app.js              # monolito legacy ~11.340 líneas: UI, vistas, menú, gráficos
 ├── db.js               # legacy ~1.460 líneas: IndexedDB, hash, puentes Firebase
-├── styles.css          # ~2.909 líneas, variables CSS, responsive
+├── styles.css          # ~2.956 líneas, variables CSS, responsive
 ├── src/
 │   ├── main.js         # entrada ES: expone window.__CDA_MODULES__ (bridge)
 │   ├── core/
@@ -24,7 +24,7 @@ appcda/
 │   ├── utils/permisosUtil.js       # CATÁLOGO_MODULOS, roles, verificarPermiso
 │   └── views/                      # adaptadores (login, dashboard, index)
 ├── tests/app.spec.js   # E2E Playwright (login navega + regresión XSS)
-├── tests/menu.spec.js  # E2E sin credenciales: submenús del menú lateral
+├── tests/menu.spec.js  # E2E sin credenciales: submenús, layout del menú, Penalidades
 ├── firestore.rules     # única defensa real de escritura
 └── technical_analysis.md  # auditoría seguridad/consistencia
 ```
@@ -72,11 +72,18 @@ appcda/
    Todo dato de usuario en `innerHTML` pasa por `escapeHtml()`; toast y modales
    propios en vez de `alert/confirm`. Hash de password `sha256$salt$hash`.
 
-9. **Vite plugin propio `cda-version-scripts-classicos`**
-   Reemplaza `?v=__CDA_BUILD__` por timestamp en `transformIndexHtml` para
-   invalidar caché de `app.js`/`db.js` (nombres fijos sin hash).
+9. **Capas de modales y menú (styles.css)**
+    Todos los modales son `.modal-overlay` (`z-index: 1000`). Los que deben quedar
+    SIEMPRE encima (edición sobre otro modal, y **siempre** `#modal-alerta`) se
+    suman a la regla con `z-index: 2000 !important`. El sidebar NO tiene overflow:
+    el `overflow-y:auto` vive en `.menu-list`, y los ítems de primer nivel usan
+    `white-space:nowrap` + `text-overflow:ellipsis` (una fila por ítem).
 
-10. **Test E2E aislado de producción**
+10. **Vite plugin propio `cda-version-scripts-classicos`**
+    Reemplaza `?v=__CDA_BUILD__` por timestamp en `transformIndexHtml` para
+    invalidar caché de `app.js`/`db.js` (nombres fijos sin hash).
+
+11. **Test E2E aislado de producción**
     Credenciales de test viven en `.env` SIN prefijo `VITE_` (nunca llegan al
     bundle). El test de login está desactivado porque mutaba la cuenta real;
     los tests nuevos evitan Firebase con stubs de `cargarDatosVista`.

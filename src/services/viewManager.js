@@ -10,7 +10,7 @@ import { CATALOGO_MODULOS, MODULOS_MAP, verificarPermiso as verificarPermisoES }
 export const GRUPOS_MENU = [
     { padreId: 'menu-gastos',     submenuId: 'submenu-gastos',     padre: 'gastos',     hijos: ['carga-detallada', 'personal-competencia'] },
     { padreId: 'menu-personal',   submenuId: 'submenu-personal',   padre: 'staff',      hijos: ['estadisticas-personal'] },
-    { padreId: 'menu-pilotos',    submenuId: 'submenu-pilotos',    padre: 'pilotos',    hijos: ['listado-pilotos'] },
+    { padreId: 'menu-pilotos',    submenuId: 'submenu-pilotos',    padre: 'pilotos',    hijos: ['listado-pilotos', 'penalidades'] },
     { padreId: 'menu-inventario', submenuId: 'submenu-inventario', padre: 'inventario', hijos: ['articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario'] }
 ];
 
@@ -18,7 +18,7 @@ export const VIEWS = [
     'dashboard', 'calendario', 'competencias', 'gastos', 'carga-detallada',
     'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario',
     'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal',
-    'pilotos', 'listado-pilotos', 'alojamiento', 'categorias-circuitos', 'configuracion'
+    'pilotos', 'listado-pilotos', 'penalidades', 'alojamiento', 'categorias-circuitos', 'configuracion'
 ];
 
 function getCurrentUser() {
@@ -200,6 +200,7 @@ export function abrirSubmenuDeVista(viewId) {
         'personal-competencia': ['submenu-gastos', 'menu-gastos'],
         'estadisticas-personal': ['submenu-personal', 'menu-personal'],
         'listado-pilotos': ['submenu-pilotos', 'menu-pilotos'],
+        'penalidades': ['submenu-pilotos', 'menu-pilotos'],
         'articulos': ['submenu-inventario', 'menu-inventario'],
         'movimientos-inventario': ['submenu-inventario', 'menu-inventario'],
         'categorias-inventario': ['submenu-inventario', 'menu-inventario'],
@@ -347,6 +348,9 @@ export async function cargarDatosVista(viewId) {
             // PLACEHOLDER (módulo Pilotos): aún no hay cargador de datos.
             // El diseño del listado se implementará en una próxima iteración
             // (ver .context/activeContext.md).
+            break;
+        case 'penalidades':
+            await invocarGlobal('listarPenalidades');
             break;
         case 'alojamiento':
             await invocarGlobal('listarAlojamientos');

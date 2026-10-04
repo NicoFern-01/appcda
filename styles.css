@@ -82,23 +82,42 @@ aside {
 
 .menu-list {
     list-style: none;
-    padding: 1.5rem 0.75rem;
+    padding: 1rem 0.75rem;
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 0.4rem;
+    /* El menú crece con la pantalla y, si algún día no cabe, hace scroll en
+       lugar de recortar los últimos ítems (el <aside> no tiene overflow). */
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .menu-item {
     display: flex;
     align-items: center;
     gap: 1rem;
-    padding: 0.75rem 1rem;
+    padding: 0.65rem 1rem;
     color: var(--text-secondary);
     text-decoration: none;
     border-radius: 8px;
     font-weight: 500;
     cursor: pointer;
     transition: var(--transition);
+}
+
+/* Nivel 1 del menú: cada ítem ocupa UNA sola fila (nada de partir el texto
+   en dos renglones). Si la etiqueta es larga se recorta con "…".
+   Los ítems de SUBMENÚ conservan el ajuste de línea porque sus etiquetas
+   son más largas ("Carga Detallada (Rendiciones)") y van más indentados. */
+.menu-item:not(.submenu-item) {
+    white-space: nowrap;
+}
+
+.menu-item:not(.submenu-item) > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .menu-item:hover, .menu-item.active {
@@ -1066,7 +1085,9 @@ tr:hover td {
 
 /* Ensure edit modals always appear on top of view modals */
 #modal-editar-total-gastos,
-#modal-editar-total-gastos.active {
+#modal-editar-total-gastos.active,
+#modal-alerta,
+#modal-alerta.active {
     z-index: 2000 !important;
 }
 
@@ -1978,6 +1999,32 @@ input[type="file"]:hover {
     align-items: center;
 }
 .input-con-gear select {
+    flex: 1;
+    min-width: 0;
+}
+/* ===== PENALIDADES: los 8 campos básicos de la planilla en UN solo renglón =====
+   (.form-grid por defecto usa minmax(200px,1fr): a ese ancho solo entraban 7
+   columnas y "Fecha de Fin" se iba a una segunda fila). Motivo y Adjuntos
+   conservan .full-width => grid-column: 1 / -1. */
+#form-penalidad .form-grid {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 1rem 0.75rem;
+}
+/* Tablet:4 columnas por renglón */
+@media (max-width: 1200px) {
+    #form-penalidad .form-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
+/* Móvil: 2 columnas por renglón */
+@media (max-width: 760px) {
+    #form-penalidad .form-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+/* Campo de texto libre + ruedita (p. ej. Sanción de Penalidades con datalist) */
+.input-con-gear input {
     flex: 1;
     min-width: 0;
 }

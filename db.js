@@ -7,7 +7,12 @@ const DB_NAME = 'ControlAutomovilismoDB';
 // a V11 el navegador se ve OBLIGADO a ejecutar la migración y a crear la tabla faltante.
 // V12: agrega el store 'configuracionGlobal' (documento único de ajustes de la app, p.ej. el
 // enlace CSV de Google Sheets del módulo Calendario). La creación con .contains() es idempotente.
-const DB_VERSION = 12;
+// V13: agrega el store 'penalidades' (planilla de sanciones a pilotos del módulo Pilotos).
+// Los PDFs adjuntos NO viven acá: se guardan en el store existente 'adjuntos' referenciados
+// con penalidadId (mismo patrón que detalleGastoId de la Carga Detallada).
+// V14: agrega el store 'tiposSancion' (catálogo EDITABLE de tipos de sanción de la planilla
+// de Penalidades), sembrado con los 5 valores por defecto en migrarTiposSancionV14().
+const DB_VERSION = 14;
 
 let dbInstance = null;
 
@@ -656,6 +661,23 @@ function openDB() {
                 db.createObjectStore('configuracionGlobal', { keyPath: 'id', autoIncrement: true });
             }
 
+            // ============ NUEVO EN DB_VERSION 13: PENALIDADES A PILOTOS ============
+            // Registros de sanciones (nombre, apellido, dni, nroAuto, categoria, sancion,
+            // motivo). Los PDFs se persisten en 'adjuntos' con la clave foránea penalidadId.
+            // Guard .contains() idempotente, igual que el resto de las creaciones.
+            if (!db.objectStoreNames.contains('penalidades')) {
+                db.createObjectStore('penalidades', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // ============ NUEVO EN DB_VERSION 14: CATÁLOGO DE TIPOS DE SANCIÓN ============
+            // Lista editable (ruedita de la planilla de Penalidades) con los tipos de
+            // sanción que ofrece el datalist. El índice único en 'valor' evita duplicados
+            // (la deduplicación se valida además en agregarTipoSancion()).
+            if (!db.objectStoreNames.contains('tiposSancion')) {
+                const tiposSancionStore = db.createObjectStore('tiposSancion', { keyPath: 'id', autoIncrement: true });
+                tiposSancionStore.createIndex('valor', 'valor', { unique: true });
+            }
+
             // ============ DB_VERSION 11: REPARACIÓN DEFINITIVA DE ESQUEMAS INCONSISTENTES ============
             // MOTIVO DEL BUMP: en V10 la base pudo abrirse bajo una build que no materializó
             // 'tiposMovimiento'. Como ya se estaba en la versión objetivo, el evento
@@ -959,6 +981,31 @@ async function migrarTiposMovimientoV10() {
         }
     } catch (e) {
         console.warn('Migración V10 no pudo completarse (se reintentará en el próximo arranque):', e);
+    }
+}
+
+// ============ MIGRACIÓN V14: SEED DEL CATÁLOGO DE TIPOS DE SANCIÓN ============
+// Seed IDEMPOTENTE de los 5 tipos de sanción por defecto de la planilla de Penalidades.
+// El usuario puede agregar/quitar tipos desde la ruedita (#subModalTiposSancion); si el
+// catálogo queda vacío, obtenerTiposSancion() en app.js vuelve a ofrecer estos valores.
+const SEED_TIPOS_SANCION_V14 = ['Advertencia', 'Amonestación', 'Multa', 'Suspensión', 'Descalificación'];
+
+async function migrarTiposSancionV14() {
+    try {
+        const existentes = await getTodos('tiposSancion', { soloLocal: true });
+        const valoresExistentes = new Set((existentes || []).map(t => String(t.valor).toLowerCase()));
+        let agregados = 0;
+        for (const label of SEED_TIPOS_SANCION_V14) {
+            if (valoresExistentes.has(label.toLowerCase())) continue;
+            await guardar('tiposSancion', { valor: label, label, activo: true });
+            agregados++;
+        }
+        invalidarCache('tiposSancion');
+        if (agregados > 0) {
+            console.log(`Migración V14 OK: catálogo de tipos de sanción sembrado (${agregados} agregados).`);
+        }
+    } catch (e) {
+        console.warn('Migración V14 no pudo completarse (se reintentará en el próximo arranque):', e);
     }
 }
 
@@ -1432,7 +1479,7 @@ async function sincronizarLocalAFirebase() {
 async function importarTodo(datos) {
     limpiarCacheCompleto(); // limpiar todo el caché antes de importar
     const db = await openDB();
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos', 'ubicacionesInventario', 'tiposMovimiento'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos', 'ubicacionesInventario', 'tiposMovimiento', 'penalidades', 'tiposSancion'];
     
     for (const storeName of stores) {
         if (datos[storeName]) {

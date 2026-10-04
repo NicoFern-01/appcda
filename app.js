@@ -61,7 +61,7 @@ let dashboardAcumuladoAnio = null;
 // Flag para evitar re-renderizar el dashboard si no cambiaron los datos
 let dashboardDirty = true;
 
-const views = ['dashboard', 'calendario', 'competencias', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal', 'pilotos', 'listado-pilotos', 'alojamiento', 'categorias-circuitos', 'configuracion'];
+const views = ['dashboard', 'calendario', 'competencias', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal', 'pilotos', 'listado-pilotos', 'penalidades', 'alojamiento', 'categorias-circuitos', 'configuracion'];
 
 // ==================== RENDERIZADO ASÍNCRONO DE LA INTERFAZ ====================
 // Escucha el evento disparado por db.js cuando la sincronización con Firestore
@@ -114,6 +114,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             await migrarInventarioV9();
             await migrarTiposMovimientoV10();
+            await migrarTiposSancionV14();
         } catch (err) {
             console.warn('La migración V9 no pudo completarse en este arranque:', err);
         }
@@ -2719,6 +2720,477 @@ function exportarPDFListadoPersonal() {
     imprimirListadoPersonal();
 }
 
+// ==================== PILOTOS: PENALIDADES ====================
+// Planilla de sanciones a pilotos con documentación adjunta (PDF).
+// Persistencia: los registros viven en el store 'penalidades' (DB_VERSION 13) y
+// los PDFs en el store existente 'adjuntos', referenciados con `penalidadId`
+// (mismo patrón que `detalleGastoId` de la Carga Detallada). Así el backup/
+// importación de adjuntos y la sincronización con Firestore siguen iguales.
+
+// PDFs elegidos en la planilla y aún NO guardados (temporales en memoria).
+let penalidadAdjuntosTemporales = [];
+// Cache { idPenalidad -> adjuntos } para abrir PDFs desde el listado sin
+// pegar data URLs gigantes en atributos HTML.
+let penalidadPdfsCache = {};
+// Límite por archivo: la app guarda los PDFs como data URL (≈1,33x del original).
+const PENALIDAD_MAX_PDF_BYTES = 10 * 1024 * 1024;
+
+/** Agrega uno o más PDFs seleccionados a la lista temporal de adjuntos. */
+function agregarAdjuntoPenalidad() {
+    const fileInput = document.getElementById('penalidad-adjuntos');
+    const files = fileInput ? fileInput.files : null;
+    if (!files || files.length === 0) {
+        mostrarToast('Seleccioná al menos un archivo PDF.', 'warning');
+        return;
+    }
+
+    for (const file of files) {
+        // El `accept` del input NO es una validación real: se refuerza acá.
+        if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+            mostrarToast(`"${file.name}" no es un PDF y fue omitido.`, 'error');
+            continue;
+        }
+        if (file.size > PENALIDAD_MAX_PDF_BYTES) {
+            mostrarToast(`"${file.name}" supera los 10MB y fue omitido.`, 'error');
+            continue;
+        }
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            penalidadAdjuntosTemporales.push({
+                nombre: file.name,
+                archivo: e.target.result,
+                tipoArchivo: file.type || 'application/pdf'
+            });
+            renderizarAdjuntosPenalidad();
+        };
+        reader.readAsDataURL(file);
+    }
+    fileInput.value = '';
+}
+
+/** Pinta la lista de PDFs elegidos en la planilla (nombre como texto, nunca HTML). */
+function renderizarAdjuntosPenalidad() {
+    const container = document.getElementById('penalidad-adjuntos-list');
+    if (!container) return;
+    const adjuntos = penalidadAdjuntosTemporales;
+
+    if (adjuntos.length === 0) {
+        container.innerHTML = '<span style="color:var(--text-secondary);font-size:0.85rem;">Sin archivos adjuntos.</span>';
+        return;
+    }
+
+    container.innerHTML = '';
+    adjuntos.forEach((adj, idx) => {
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:0.5rem;padding:0.35rem 0.5rem;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:4px;';
+
+        const izq = document.createElement('span');
+        izq.style.cssText = 'display:flex;align-items:center;gap:0.4rem;min-width:0;';
+        izq.innerHTML = '<i class="fa-regular fa-file-pdf" style="color:#e74c3c;"></i>';
+
+        const nombre = document.createElement('span');
+        nombre.textContent = adj.nombre; // texto plano: sin posibilidad de XSS
+        nombre.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;';
+        nombre.title = 'Haga clic para abrir';
+        nombre.onclick = () => abrirArchivoAdjunto(adj.nombre, adj.archivo);
+        izq.appendChild(nombre);
+
+        const btnQuitar = document.createElement('button');
+        btnQuitar.type = 'button';
+        btnQuitar.className = 'btn btn-secondary';
+        btnQuitar.style.cssText = 'padding:0.15rem 0.5rem;font-size:0.8rem;';
+        btnQuitar.title = 'Quitar adjunto';
+        btnQuitar.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+        btnQuitar.onclick = () => eliminarAdjuntoPenalidad(idx);
+
+        div.append(izq, btnQuitar);
+        container.appendChild(div);
+    });
+}
+
+/** Quita un PDF de la lista temporal (antes de guardar). */
+function eliminarAdjuntoPenalidad(idx) {
+    penalidadAdjuntosTemporales.splice(Number(idx), 1);
+    renderizarAdjuntosPenalidad();
+}
+
+/** Restablece la planilla y vacía los adjuntos temporales. */
+function limpiarFormularioPenalidad() {
+    const form = document.getElementById('form-penalidad');
+    if (form) form.reset();
+    penalidadAdjuntosTemporales = [];
+    renderizarAdjuntosPenalidad();
+}
+
+/** Carga las categorías existentes en el datalist de la planilla (autocompletado). */
+async function poblarCategoriasPenalidad() {
+    const datalist = document.getElementById('categorias-penalidad');
+    if (!datalist) return;
+    try {
+        const categorias = await getTodos('categorias');
+        datalist.innerHTML = categorias
+            .map(c => `<option value="${escapeHtml(c.nombre || '')}"></option>`)
+            .join('');
+    } catch (e) {
+        // Sin categorías cargadas la planilla sigue siendo usable (campo libre).
+    }
+}
+
+// ---------------- Catálogo editable de tipos de sanción ----------------
+// El datalist del campo "Sanción" se llena desde la store 'tiposSancion' (DB_VERSION 14),
+// que el usuario administra con la ruedita (#subModalTiposSancion). El campo en sí es un
+// <input> libre: se puede escribir cualquier texto aunque no esté en el catálogo.
+
+const TIPOS_SANCION_DEFECTO = ['Advertencia', 'Amonestación', 'Multa', 'Suspensión', 'Descalificación'];
+
+// Modo edición del sub-modal: id del tipo que se está renombrando (null = modo alta).
+let tipoSancionEditandoId = null;
+
+/** Catálogo de tipos de sanción (store editable, con fallback a los valores por defecto). */
+async function obtenerTiposSancion() {
+    try {
+        const tipos = await getTodos('tiposSancion');
+        if (Array.isArray(tipos) && tipos.length > 0) return tipos;
+    } catch (e) {
+        // Store aún no creada (primer arranque): se usa el fallback de abajo.
+    }
+    return TIPOS_SANCION_DEFECTO.map(v => ({ valor: v, label: v }));
+}
+
+/** Rellena el <datalist> del campo Sanción con el catálogo vigente. */
+async function poblarTiposSancion() {
+    const datalist = document.getElementById('tipos-sancion');
+    if (!datalist) return;
+    const tipos = await obtenerTiposSancion();
+    datalist.innerHTML = tipos
+        .map(t => `<option value="${escapeHtml(t.label || t.valor || '')}"></option>`)
+        .join('');
+}
+
+/** Abre el sub-modal de gestión de tipos de sanción (solo Admin). */
+function abrirModalTiposSancion() {
+    if (!esAdmin()) {
+        mostrarToast('Solo un administrador puede editar los tipos de sanción.', 'error');
+        return;
+    }
+    renderizarListaTiposSancion();
+    openModal('subModalTiposSancion');
+}
+
+/** Lista de tipos con botón de eliminar (nombres SIEMPRE vía textContent). */
+async function renderizarListaTiposSancion() {
+    const container = document.getElementById('lista-tipos-sancion');
+    if (!container) return;
+    const tipos = await obtenerTiposSancion();
+    container.innerHTML = '';
+
+    if (!tipos.length) {
+        container.innerHTML = '<span style="color:var(--text-secondary);font-size:0.85rem;text-align:center;padding:0.5rem;">No hay tipos registrados.</span>';
+        return;
+    }
+
+    tipos.forEach(t => {
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0.75rem;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border-color);';
+
+        const span = document.createElement('span');
+        span.textContent = t.label || t.valor || '';
+        span.style.cssText = 'font-weight:500;';
+        div.appendChild(span);
+
+        // Sin id = es el fallback en memoria (catálogo todavía no sembrado): sin botones.
+        // Con id (INCLUYENDO los 5 tipos por defecto sembrados en V14) se puede
+        // editar y eliminar cualquier tipo.
+        if (typeof t.id !== 'undefined') {
+            const btns = document.createElement('span');
+            btns.style.cssText = 'display:flex;align-items:center;gap:0.3rem;';
+
+            const btnEditar = document.createElement('button');
+            btnEditar.type = 'button';
+            btnEditar.className = 'action-btn';
+            btnEditar.title = 'Editar tipo';
+            btnEditar.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
+            btnEditar.onclick = () => editarTipoSancion(t.id);
+            btns.appendChild(btnEditar);
+
+            const btnEliminar = document.createElement('button');
+            btnEliminar.type = 'button';
+            btnEliminar.className = 'action-btn';
+            btnEliminar.title = 'Eliminar tipo';
+            btnEliminar.innerHTML = '<i class="fa-solid fa-trash"></i>';
+            btnEliminar.onclick = () => eliminarTipoSancion(t.id, t.label || t.valor);
+            btns.appendChild(btnEliminar);
+
+            div.appendChild(btns);
+        }
+        container.appendChild(div);
+    });
+}
+
+/** Pone el sub-modal en modo "Editar" con el tipo precargado en el input. */
+async function editarTipoSancion(id) {
+    if (!esAdmin()) return;
+    const tipo = await obtenerPorId('tiposSancion', Number(id));
+    if (!tipo) return;
+
+    tipoSancionEditandoId = Number(id);
+    const input = document.getElementById('nuevo-tipo-sancion');
+    const label = document.getElementById('nuevo-tipo-sancion-label');
+    const btn = document.getElementById('nuevo-tipo-sancion-btn');
+    const cancel = document.getElementById('nuevo-tipo-sancion-cancel');
+
+    input.value = tipo.label || tipo.valor || '';
+    if (label) label.textContent = 'Editar tipo de sanción';
+    if (btn) { btn.title = 'Guardar cambios'; btn.innerHTML = '<i class="fa-solid fa-check"></i>'; }
+    if (cancel) cancel.style.display = '';
+    input.focus();
+    input.select();
+}
+
+/** Vuelve el sub-modal al modo "Agregar" y limpia el input. */
+function cancelarEdicionTipoSancion() {
+    tipoSancionEditandoId = null;
+    const input = document.getElementById('nuevo-tipo-sancion');
+    const label = document.getElementById('nuevo-tipo-sancion-label');
+    const btn = document.getElementById('nuevo-tipo-sancion-btn');
+    const cancel = document.getElementById('nuevo-tipo-sancion-cancel');
+
+    if (input) input.value = '';
+    if (label) label.textContent = 'Nombre del tipo';
+    if (btn) { btn.title = 'Agregar tipo'; btn.innerHTML = '<i class="fa-solid fa-plus"></i>'; }
+    if (cancel) cancel.style.display = 'none';
+}
+
+/** Alta o edición (según `tipoSancionEditandoId`) del tipo en el sub-modal. */
+async function guardarTipoSancionModal() {
+    if (!esAdmin()) return;
+    const input = document.getElementById('nuevo-tipo-sancion');
+    if (!input) return;
+
+    const nombre = input.value.trim();
+    if (!nombre) { mostrarToast('Ingresá el nombre del tipo de sanción.', 'warning'); return; }
+
+    const tipos = await obtenerTiposSancion();
+
+    // ---------- MODO EDICIÓN ----------
+    if (tipoSancionEditandoId !== null) {
+        const duplicado = tipos.some(t =>
+            Number(t.id) !== tipoSancionEditandoId &&
+            String(t.label || t.valor).toLowerCase() === nombre.toLowerCase()
+        );
+        if (duplicado) { mostrarToast('Ese tipo de sanción ya existe.', 'error'); return; }
+
+        const tipo = await obtenerPorId('tiposSancion', tipoSancionEditandoId);
+        if (!tipo) { cancelarEdicionTipoSancion(); return; }
+
+        // 'valor' tiene índice único: el duplicado ya se validó arriba.
+        tipo.valor = nombre;
+        tipo.label = nombre;
+        await guardar('tiposSancion', tipo);
+        invalidarCache('tiposSancion');
+
+        cancelarEdicionTipoSancion();
+        await renderizarListaTiposSancion();
+        await poblarTiposSancion();
+        mostrarToast(`Tipo de sanción actualizado a "${nombre}".`);
+        return;
+    }
+
+    // ---------- MODO ALTA ----------
+    if (tipos.some(t => String(t.label || t.valor).toLowerCase() === nombre.toLowerCase())) {
+        mostrarToast('Ese tipo de sanción ya existe.', 'error');
+        return;
+    }
+
+    await guardar('tiposSancion', { valor: nombre, label: nombre, activo: true });
+    invalidarCache('tiposSancion');
+    input.value = '';
+    await renderizarListaTiposSancion();
+    await poblarTiposSancion();
+    mostrarToast(`Tipo de sanción "${nombre}" agregado.`);
+}
+
+/** Elimina un tipo del catálogo (las penalidades ya guardadas conservan su texto). */
+async function eliminarTipoSancion(id, label) {
+    if (!esAdmin()) return;
+    if (typeof id === 'undefined' || id === null) return;
+
+    // mostrarConfirmacion() asigna el mensaje con textContent: no hace falta escapar.
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar tipo de sanción',
+        `¿Eliminar el tipo "${label}"? Las penalidades ya registradas conservan su sanción.`,
+        'warning'
+    );
+    if (!confirmado) return;
+
+    await eliminar('tiposSancion', id);
+    invalidarCache('tiposSancion');
+    // Si el tipo eliminado era el que estaba en edición, volver al modo alta.
+    if (tipoSancionEditandoId !== null && Number(tipoSancionEditandoId) === Number(id)) {
+        cancelarEdicionTipoSancion();
+    }
+    await renderizarListaTiposSancion();
+    await poblarTiposSancion();
+    mostrarToast('Tipo de sanción eliminado.');
+}
+
+/** Guarda la penalidad + sus PDFs y refresca el listado. */
+async function guardarPenalidadForm(e) {
+    e.preventDefault();
+    if (!puedeEditar()) return;
+
+    const nombre = document.getElementById('penalidad-nombre').value.trim();
+    const apellido = document.getElementById('penalidad-apellido').value.trim();
+    const dni = document.getElementById('penalidad-dni').value.trim();
+    const nroAuto = document.getElementById('penalidad-auto').value;
+    const categoria = document.getElementById('penalidad-categoria').value.trim();
+    const sancion = document.getElementById('penalidad-sancion').value.trim();
+    const motivo = document.getElementById('penalidad-motivo').value.trim();
+    const fechaInicio = document.getElementById('penalidad-fecha-inicio').value;
+    const fechaFin = document.getElementById('penalidad-fecha-fin').value;
+
+    if (!nombre || !apellido || !dni || !nroAuto || !categoria || !sancion || !motivo || !fechaInicio) {
+        mostrarToast('Completá todos los campos obligatorios (*).', 'error');
+        return;
+    }
+
+    // La fecha de fin es opcional (sanción aún vigente), pero si existe no puede
+    // ser anterior al inicio. Las fechas 'YYYY-MM-DD' se comparan como texto.
+    if (fechaFin && fechaInicio && fechaFin < fechaInicio) {
+        mostrarToast('La fecha de fin no puede ser anterior a la fecha de inicio.', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('penalidad-btn-guardar');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Guardando...';
+
+    try {
+        const id = await guardar('penalidades', {
+            nombre, apellido, dni,
+            nroAuto: Number(nroAuto),
+            categoria, sancion, motivo,
+            fechaInicio,
+            fechaFin,
+            usuarioCreacion: currentUser ? currentUser.id : null,
+            fechaCreacion: new Date().toISOString()
+        });
+        if (!id) {
+            mostrarToast('No se pudo guardar la penalidad (validación de esquema).', 'error');
+            return;
+        }
+
+        // Los PDFs van al store 'adjuntos' con la referencia penalidadId
+        // (mismo patrón que detalleGastoId en la Carga Detallada).
+        for (const adj of penalidadAdjuntosTemporales) {
+            await guardar('adjuntos', {
+                penalidadId: Number(id),
+                nombre: adj.nombre,
+                archivo: adj.archivo,
+                tipoArchivo: adj.tipoArchivo,
+                usuarioCarga: currentUser ? currentUser.id : null,
+                fechaCarga: new Date().toISOString()
+            });
+        }
+
+        mostrarToast(`Penalidad de ${nombre} ${apellido} registrada correctamente.`);
+        limpiarFormularioPenalidad();
+        await listarPenalidades();
+    } catch (err) {
+        console.error(err);
+        mostrarToast('Error al guardar la penalidad: ' + (err && err.message ? err.message : err), 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Guardar Penalidad';
+    }
+}
+
+/** Renderiza el listado de penalidades (+ buscador y contador de PDFs). */
+async function listarPenalidades() {
+    const tbody = document.getElementById('penalidades-table-body');
+    if (!tbody) return;
+
+    await poblarCategoriasPenalidad();
+    await poblarTiposSancion();
+
+    const [penalidades, adjuntos] = await Promise.all([getTodos('penalidades'), getTodos('adjuntos')]);
+
+    const busqueda = (document.getElementById('buscar-penalidad')?.value || '').trim().toLowerCase();
+    let filtradas = [...penalidades].sort((a, b) => Number(b.id) - Number(a.id));
+    if (busqueda) {
+        filtradas = filtradas.filter(p =>
+            [p.nombre, p.apellido, p.dni, p.nroAuto, p.categoria, p.sancion]
+                .some(v => String(v === null || v === undefined ? '' : v).toLowerCase().includes(busqueda))
+        );
+    }
+
+    penalidadPdfsCache = {};
+    if (filtradas.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">${busqueda ? 'Sin resultados para la búsqueda.' : 'No hay penalidades registradas.'}</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = filtradas.map(p => {
+        const pdfs = adjuntos.filter(a => Number(a.penalidadId) === Number(p.id));
+        penalidadPdfsCache[Number(p.id)] = pdfs;
+
+        const piloto = `${escapeHtml(p.nombre || '')} ${escapeHtml(p.apellido || '')}`.trim();
+        const pdfsHtml = pdfs.length === 0
+            ? '<span style="color:var(--text-secondary);">—</span>'
+            : pdfs.map((a, i) =>
+                `<button type="button" class="btn btn-secondary" style="padding:0.2rem 0.45rem;font-size:0.75rem;" title="Abrir PDF ${i + 1}" onclick="abrirPdfPenalidad(${Number(p.id)}, ${i})"><i class="fa-solid fa-file-pdf"></i> ${i + 1}</button>`
+            ).join(' ');
+
+        return `<tr>
+            <td style="font-weight:600;">${piloto}</td>
+            <td>${escapeHtml(String(p.dni === undefined || p.dni === null ? '' : p.dni))}</td>
+            <td>${escapeHtml(String(p.nroAuto === undefined || p.nroAuto === null ? '' : p.nroAuto))}</td>
+            <td>${escapeHtml(String(p.categoria || ''))}</td>
+            <td><span class="tag">${escapeHtml(String(p.sancion || ''))}</span></td>
+            <td style="white-space:nowrap;">${escapeHtml(formatearFechaVisual(p.fechaInicio) || '—')}</td>
+            <td style="white-space:nowrap;">${escapeHtml(formatearFechaVisual(p.fechaFin) || '—')}</td>
+            <td style="max-width:280px;white-space:pre-wrap;">${escapeHtml(String(p.motivo || ''))}</td>
+            <td style="text-align:center;white-space:nowrap;">${pdfsHtml}</td>
+            <td class="editor-only" style="text-align:right;white-space:nowrap;">
+                <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.6rem;" title="Eliminar penalidad" onclick="eliminarPenalidad(${Number(p.id)})"><i class="fa-solid fa-trash"></i></button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+/** Abre un PDF adjunto de una penalidad (gestionado por clic de usuario). */
+function abrirPdfPenalidad(id, indice) {
+    const pdfs = penalidadPdfsCache[Number(id)] || [];
+    const pdf = pdfs[Number(indice)];
+    if (!pdf) { mostrarToast('El archivo adjunto no está disponible.', 'error'); return; }
+    abrirArchivoAdjunto(pdf.nombre, pdf.archivo);
+}
+
+/** Elimina una penalidad y sus PDFs, con el modal de confirmación de la app. */
+async function eliminarPenalidad(id) {
+    if (!puedeEditar()) return;
+    const penalidad = await obtenerPorId('penalidades', id);
+    const etiqueta = penalidad
+        ? `${penalidad.nombre || ''} ${penalidad.apellido || ''}`.trim()
+        : '';
+
+    // mostrarConfirmacion() asigna el mensaje con textContent: no hay que escapar nada.
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar penalidad',
+        `¿Eliminar la penalidad ${etiqueta ? 'de ' + etiqueta : 'seleccionada'}? Se quitarán también sus archivos PDF adjuntos. Esta acción no se puede deshacer.`,
+        'warning'
+    );
+    if (!confirmado) return;
+
+    const adjuntos = await getTodos('adjuntos');
+    for (const adj of adjuntos.filter(a => Number(a.penalidadId) === Number(id))) {
+        await eliminar('adjuntos', adj.id);
+    }
+    await eliminar('penalidades', id);
+    mostrarToast('Penalidad eliminada correctamente.');
+    await listarPenalidades();
+}
+
 // ==================== CONFIGURACIÓN: CATEGORÍAS & CIRCUITOS ====================
 
 async function listarConfiguraciones() {
@@ -4141,7 +4613,9 @@ async function exportarDatos() {
         detalleEntregas: await getTodos('detalleEntregas'),
         imagenesArticulo: await getTodos('imagenesArticulo'),
         personalCompetencia: await getTodos('personalCompetencia'),
-        ubicacionesInventario: await getTodos('ubicacionesInventario')
+        ubicacionesInventario: await getTodos('ubicacionesInventario'),
+        penalidades: await getTodos('penalidades'),
+        tiposSancion: await getTodos('tiposSancion')
     };
     const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(backup, null, 2))}`;
     const a = document.createElement('a');

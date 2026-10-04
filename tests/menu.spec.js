@@ -137,4 +137,163 @@ test.describe('Menú lateral — submenús desplegables', () => {
     await page.locator('#menu-pilotos').click();
     await expect(page.locator('#submenu-pilotos')).toHaveClass(/collapsed/);
   });
+
+  test('El menú principal dibuja cada ítem en una sola fila y no queda cortado', async ({ page }) => {
+    await prepararMenu(page);
+
+    // 1) Cada ítem de NIVEL 1 se renderiza en un único renglón (1 line box):
+    //    antes, etiquetas largas ("Categorías y Circuitos") se partían en dos.
+    const renglones = await page.locator('#menu-list .menu-item:not(.submenu-item) > span').evaluateAll(
+      (spans) => spans.map((s) => s.getClientRects().length)
+    );
+    expect(renglones.length).toBeGreaterThan(0);
+    expect(Math.max(...renglones), 'Algún ítem del menú principal ocupa más de un renglón').toBe(1);
+
+    // 2) Con el menú COLAPSADO (estado inicial) ningún ítem de nivel 1 queda cortado.
+    const colapsado = await page.evaluate(() => {
+      const items = [...document.querySelectorAll('#menu-list > li > .menu-item, #menu-list > .menu-item')]
+        .filter((el) => el.offsetHeight > 0);
+      const ultimo = items[items.length - 1];
+      return {
+        items: items.length,
+        fondo: Math.round(ultimo.getBoundingClientRect().bottom),
+        ventana: window.innerHeight,
+      };
+    });
+    expect(colapsado.fondo, `El último ítem del menú (${colapsado.fondo}px) supera la ventana (${colapsado.ventana}px)`).toBeLessThanOrEqual(colapsado.ventana);
+
+    // 3) Al desplegar TODOS los grupos el contenido puede pasar de la ventana,
+    //    pero el sidebar debe hacer SCROLL en lugar de recortar los ítems.
+    for (const grupo of GRUPOS) {
+      await page.locator(`#${grupo.padre}`).click();
+      await expect(page.locator(`#${grupo.submenu}`)).not.toHaveClass(/collapsed/);
+    }
+
+    const listado = await page.locator('#menu-list').evaluate((el) => ({
+      overflowY: getComputedStyle(el).overflowY,
+      scrollable: el.scrollHeight > el.clientHeight,
+      puedoBajar: el.scrollHeight - el.clientHeight,
+    }));
+    if (listado.scrollable) {
+      expect(['auto', 'scroll'], 'El menú recorta su contenido en vez de hacer scroll').toContain(listado.overflowY);
+    }
+
+    // Los ítems de nivel 1 siguen en una sola fila aun con todo desplegado.
+    const renglonesAbiertos = await page.locator('#menu-list .menu-item:not(.submenu-item) > span').evaluateAll(
+      (spans) => spans.map((s) => s.getClientRects().length)
+    );
+    expect(Math.max(...renglonesAbiertos)).toBe(1);
+  });
+
+  test('Pilotos > Penalidades: submenú, planilla y alta de registro con PDF adjunto', async ({ page }) => {
+    const erroresPagina = [];
+    page.on('pageerror', (err) => erroresPagina.push(err.message));
+    await prepararMenu(page);
+
+    // 1) El submenú de Pilotos ahora tiene DOS hijos.
+    const items = await page.locator('#submenu-pilotos .submenu-item').allTextContents();
+    expect(items).toEqual(['Listado de Pilotos', 'Penalidades']);
+
+    // 2) Navegación a la vista y campos esperados de la planilla.
+    await page.locator('#menu-pilotos').click();
+    await page.locator('.submenu-item[data-view="penalidades"]').click();
+    await expect(page.locator('#view-penalidades')).toHaveClass(/active/);
+    await expect(page.locator('#view-penalidades .page-title')).toHaveText('Penalidades');
+
+    const campos = [
+      'penalidad-nombre', 'penalidad-apellido', 'penalidad-dni', 'penalidad-auto',
+      'penalidad-categoria', 'penalidad-sancion', 'penalidad-motivo',
+      'penalidad-fecha-inicio', 'penalidad-fecha-fin', 'penalidad-adjuntos',
+    ];
+    for (const id of campos) {
+      await expect(page.locator(`#${id}`), `Falta el campo #${id}`).toHaveCount(1);
+    }
+    // Sanción: input de TEXTO LIBRE con datalist (ya no es un <select> cerrado).
+    await expect(page.locator('#penalidad-sancion')).toHaveAttribute('list', 'tipos-sancion');
+    await expect(page.locator('#tipos-sancion option')).not.toHaveCount(0);
+    await expect(page.locator('#penalidad-adjuntos')).toHaveAttribute('multiple', /.?/);
+    await expect(page.locator('#penalidad-adjuntos')).toHaveAttribute('accept', /pdf/);
+
+    // Layout: los 8 campos básicos deben caber en UN solo renglón.
+    const tops = await page.evaluate(() => {
+      const ids = [
+        'penalidad-nombre', 'penalidad-apellido', 'penalidad-dni', 'penalidad-auto',
+        'penalidad-categoria', 'penalidad-sancion', 'penalidad-fecha-inicio', 'penalidad-fecha-fin',
+      ];
+      return ids.map((id) => Math.round(document.getElementById(id).getBoundingClientRect().top));
+    });
+    expect(new Set(tops).size, `Los campos no quedaron en un solo renglón (tops: ${tops.join(', ')})`).toBe(1);
+
+    // 3) Ruedita: gestión del catálogo de tipos de sanción (alta).
+    await page.locator('#form-penalidad .gear-btn').click();
+    await expect(page.locator('#subModalTiposSancion')).toHaveClass(/active/);
+    await page.fill('#nuevo-tipo-sancion', 'Prueba de tipo X');
+    await page.locator('#form-nuevo-tipo-sancion button[type="submit"]').click();
+    await expect(page.locator('#lista-tipos-sancion')).toContainText('Prueba de tipo X');
+    await expect(page.locator('#tipos-sancion option[value="Prueba de tipo X"]')).toHaveCount(1);
+
+    // 3b) Edición (mismo camino que siguen los tipos por defecto del catálogo).
+    await page.locator('#lista-tipos-sancion > div', { hasText: 'Prueba de tipo X' })
+      .locator('button[title="Editar tipo"]').click();
+    await expect(page.locator('#nuevo-tipo-sancion')).toHaveValue('Prueba de tipo X');
+    await expect(page.locator('#nuevo-tipo-sancion-cancel')).toBeVisible();
+    await page.fill('#nuevo-tipo-sancion', 'Prueba de tipo X renombrado');
+    await page.locator('#form-nuevo-tipo-sancion button[type="submit"]').click();
+    await expect(page.locator('#lista-tipos-sancion')).toContainText('Prueba de tipo X renombrado');
+    await expect(page.locator('#tipos-sancion option[value="Prueba de tipo X renombrado"]')).toHaveCount(1);
+
+    // 3c) Los tipos POR DEFECTO (seed V14) también vienen con Editar y Eliminar.
+    const opciones = await page.locator('#tipos-sancion option').allTextContents();
+    if (opciones.includes('Advertencia')) {
+      const filaPorDefecto = page.locator('#lista-tipos-sancion > div', { hasText: 'Advertencia' });
+      await expect(filaPorDefecto.locator('button[title="Editar tipo"]')).toHaveCount(1);
+      await expect(filaPorDefecto.locator('button[title="Eliminar tipo"]')).toHaveCount(1);
+    }
+
+    // 3d) Eliminación con el modal de confirmación propio de la app.
+    await page.locator('#lista-tipos-sancion > div', { hasText: 'Prueba de tipo X renombrado' })
+      .locator('button[title="Eliminar tipo"]').click();
+    await expect(page.locator('#modal-alerta')).toHaveClass(/active/);
+    await page.locator('#alerta-btn-confirmar').click();
+    await expect(page.locator('#lista-tipos-sancion')).not.toContainText('Prueba de tipo X renombrado');
+    await expect(page.locator('#tipos-sancion option[value="Prueba de tipo X renombrado"]')).toHaveCount(0);
+
+    await page.locator('#subModalTiposSancion .modal-close').click();
+    await expect(page.locator('#subModalTiposSancion')).not.toHaveClass(/active/);
+
+    // 4) Completar la planilla (Sanción con TEXTO LIBRE, fuera del catálogo).
+    await page.fill('#penalidad-nombre', 'Juan');
+    await page.fill('#penalidad-apellido', 'Pérez');
+    await page.fill('#penalidad-dni', '30123456');
+    await page.fill('#penalidad-auto', '12');
+    await page.fill('#penalidad-categoria', 'TC2000');
+    await page.fill('#penalidad-sancion', 'Suspensión de 2 fechas');
+    await page.fill('#penalidad-motivo', 'Causó un contacto en la salida y dañó a un tercero.');
+    await page.fill('#penalidad-fecha-inicio', '2026-04-10');
+    await page.fill('#penalidad-fecha-fin', '2026-04-20');
+
+    // 5) Adjuntar un PDF (se valida tipo y se previsualiza en la lista).
+    await page.setInputFiles('#penalidad-adjuntos', {
+      name: 'acta-infraccion.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF'),
+    });
+    await page.locator('#form-penalidad button:has-text("Adjuntar")').click();
+    await expect(page.locator('#penalidad-adjuntos-list')).toContainText('acta-infraccion.pdf');
+
+    // 6) Guardar: el registro debe aparecer en el listado con su PDF y fechas.
+    await page.locator('#penalidad-btn-guardar').click();
+    await expect(page.locator('#penalidades-table-body tr')).toHaveCount(1);
+    await expect(page.locator('#penalidades-table-body')).toContainText('Juan Pérez');
+    await expect(page.locator('#penalidades-table-body')).toContainText('Suspensión de 2 fechas');
+    await expect(page.locator('#penalidades-table-body')).toContainText('10/04/2026');
+    await expect(page.locator('#penalidades-table-body')).toContainText('20/04/2026');
+    await expect(page.locator('#penalidades-table-body button[title^="Abrir PDF"]')).toHaveCount(1);
+
+    // 7) El formulario se limpia para la próxima carga.
+    await expect(page.locator('#penalidad-nombre')).toHaveValue('');
+    await expect(page.locator('#penalidad-adjuntos-list')).toContainText('Sin archivos adjuntos.');
+
+    expect(erroresPagina, `Excepciones JS:\n${erroresPagina.join('\n')}`).toEqual([]);
+  });
 });

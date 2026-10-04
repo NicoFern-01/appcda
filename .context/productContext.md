@@ -21,7 +21,7 @@ o editar cada cosa.
    Hay 4 grupos desplegables (Gastos, Personal, Pilotos, Inventario) definidos
    en `GRUPOS_MENU` (`src/services/viewManager.js`).
 3. **Navegación SPA**: clic en el menú → `switchView(viewId)` → alterna
-   `.view.active` en las 16 secciones, sincroniza la URL por el router y
+   `.view.active` en las 19 secciones, sincroniza la URL por el router y
    dispara `cargarDatosVista(viewId)` (render del dashboard, listados, etc.).
    Sin recarga de página.
 4. **Vistas principales**:
@@ -38,6 +38,14 @@ o editar cada cosa.
      categorías, entregas, ubicaciones/sectores con stock por ubicación;
      edición/eliminación de movimientos solo admin con rollback.
    - *Alojamiento*, *Categorías y Circuitos*, *Configuración* (solo admin).
+   - *Pilotos*: grupo con dos hijos — "Listado de Pilotos" (placeholder) y
+     "Penalidades" (planilla de sanciones: nombre, apellido, DNI, nro. de auto,
+     categoría, **sanción de texto libre con sugerencias editables vía ruedita**,
+     **fecha de inicio (obligatoria) y fecha de fin (opcional)**, motivo ampliado
+     y adjuntos PDF; alta, listado con buscador + columnas Inicio/Fin y
+     eliminación con confirmación). La **ruedita** abre el catálogo de tipos de
+     sanción, donde se pueden **agregar, renombrar y borrar TODOS los tipos**
+     (incluidos los 5 que vienen por defecto).
 5. **Roles**: admin (acceso total), editor (carga/edición), viewer (solo lectura),
    supervisor (dashboard) y permisos "personalizados" por módulo con las
    funciones `ver/crear/editar/eliminar`.
@@ -50,8 +58,13 @@ o editar cada cosa.
 
 - Los menús padre navegan a su vista **y** alternan su submenú (recién corregido
   para que las vistas padre no reabran el submenú forzadamente).
+- **Menú lateral legible**: cada ítem de primer nivel ocupa una sola fila (las
+  etiquetas largas se recortan con "…" en vez de partirse en dos renglones) y la
+  lista hace scroll interno si el contenido supera el alto de la pantalla. La
+  planilla de Penalidades muestra sus 8 campos básicos en un único renglón.
 - Confirmaciones y alertas usan un modal propio (`mostrarConfirmacion` /
-  `mostrarToast`) en lugar de `alert()` nativo.
+  `mostrarToast`) en lugar de `alert()` nativo, y **siempre se dibujan por encima
+  de cualquier sub-modal abierto** (z-index 2000).
 - Protección de "cambios sin guardar" al salir del editor de rendiciones.
 - Todo dato insertado en `innerHTML` debe pasar por `escapeHtml()` (regla
   derivada de la auditoría `technical_analysis.md`, hallazgos S1/S2).

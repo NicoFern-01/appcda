@@ -2,7 +2,7 @@
 // ============================================================
 // ENRUTADOR / SISTEMA DE CARGA DINÁMICA DE VISTAS (FASE 2).
 //
-// El index.html actual  contiene las 16 vistas estáticas (secciones
+// El index.html actual  contiene las 19 vistas estáticas (secciones
 // <div id="view-...">) y la pantalla de login. En lugar de romper ese
 // DOM (regla de oro), este router define el CONTRATO de desacople:
 //   1) Se registran "adapters" por id de vista (módulos en /src/views/).
@@ -15,7 +15,7 @@
 // regresión). Simplemente queda listo y expuesto para la migración.
 // ============================================================
 
-/** IDs de las 18 vistas + la pantalla de login. Coinciden con const `views` de app.js. */
+/** IDs de las 19 vistas + la pantalla de login. Coinciden con const `views` de app.js. */
 export const VIEW_IDS = [
   'login',
   'dashboard',
@@ -33,6 +33,7 @@ export const VIEW_IDS = [
   'estadisticas-personal',
   'pilotos',
   'listado-pilotos',
+  'penalidades',
   'alojamiento',
   'categorias-circuitos',
   'configuracion'
