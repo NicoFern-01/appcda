@@ -37,9 +37,12 @@ de fechas incl. "vence hoy" y fechas inválidas, parseo sin corrimiento UTC).
 
 ### Estado de git
 
-Modificados sin commitear: `app.js`, `index.html`, `styles.css`,
-`src/services/viewManager.js`, `tests/menu.spec.js`,
-`.context/activeContext.md`, `.context/productContext.md`.
+Commiteado y pusheado en `df84126` "pilotos: dashboard de la vista padre
+(KPIs, barras por categoria, sancionados y alerta ACTC)" (`main` =
+`origin/main`, árbol limpio). Archivos del commit: `app.js`, `index.html`,
+`styles.css`, `src/services/viewManager.js`, `tests/menu.spec.js`,
+`.context/activeContext.md`, `.context/productContext.md` (7 archivos,
++653/−16).
 
 ### Sesión previa (conservada por referencia)
 
