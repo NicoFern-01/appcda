@@ -344,10 +344,10 @@ export async function cargarDatosVista(viewId) {
             await invocarGlobal('listarEstadisticasPersonal');
             break;
         case 'pilotos':
+            // Overview del módulo (placeholder histórico, sin tabla propia).
+            break;
         case 'listado-pilotos':
-            // PLACEHOLDER (módulo Pilotos): aún no hay cargador de datos.
-            // El diseño del listado se implementará en una próxima iteración
-            // (ver .context/activeContext.md).
+            await invocarGlobal('listarPilotos');
             break;
         case 'penalidades':
             await invocarGlobal('listarPenalidades');

@@ -21,8 +21,8 @@ const CARGADORES = [
   'renderDashboard', 'cargarYParsearCalendario', 'listarCompetencias', 'listarGastos',
   'listarRendiciones', 'cargarPersonalCompetencia', 'renderDashboardInventario',
   'listarArticulos', 'listarMovimientosInventario', 'listarCategoriasInventario',
-  'listarEntregas', 'listarStaff', 'listarEstadisticasPersonal', 'listarAlojamientos',
-  'listarCategoriasCircuitos', 'listarConfiguraciones',
+  'listarEntregas', 'listarStaff', 'listarEstadisticasPersonal', 'listarPilotos',
+  'listarAlojamientos', 'listarCategoriasCircuitos', 'listarConfiguraciones',
 ];
 
 /** Carga la app, muestra el shell y pinta el menú con un admin de prueba. */
@@ -127,11 +127,20 @@ test.describe('Menú lateral — submenús desplegables', () => {
     await expect(page.locator('#submenu-pilotos')).not.toHaveClass(/collapsed/);
     await expect(page.locator('#view-pilotos')).toHaveClass(/active/);
 
-    // 4) El hijo "Listado de Pilotos" navega a su placeholder.
+    // 4) El hijo "Listado de Pilotos" navega a la vista con su formulario y tabla.
     await page.locator('.submenu-item[data-view="listado-pilotos"]').click();
     await expect(page.locator('#view-listado-pilotos')).toHaveClass(/active/);
     await expect(page.locator('#view-listado-pilotos .page-title')).toHaveText('Listado de Pilotos');
     await expect(page.locator('.submenu-item[data-view="listado-pilotos"]')).toHaveClass(/active/);
+    // Formulario de alta manual: 4 inputs + botón "Agregar Piloto".
+    for (const id of ['piloto-nombre', 'piloto-apellido', 'piloto-dni', 'piloto-categoria']) {
+      await expect(page.locator(`#${id}`), `Falta el campo #${id}`).toHaveCount(1);
+    }
+    await expect(page.locator('#piloto-btn-guardar')).toContainText('Agregar Piloto');
+    // Tabla inferior: columnas Nombre y Apellido / Documento / Categoría / Acciones.
+    const columnas = await page.locator('#view-listado-pilotos thead th').allTextContents();
+    expect(columnas.map((t) => t.trim())).toEqual(['Nombre y Apellido', 'Documento', 'Categoría', 'Acciones']);
+    await expect(page.locator('#pilotos-table-body')).toHaveCount(1);
 
     // 5) El grupo también se puede contraer (misma regla que los demás).
     await page.locator('#menu-pilotos').click();
@@ -293,6 +302,106 @@ test.describe('Menú lateral — submenús desplegables', () => {
     // 7) El formulario se limpia para la próxima carga.
     await expect(page.locator('#penalidad-nombre')).toHaveValue('');
     await expect(page.locator('#penalidad-adjuntos-list')).toContainText('Sin archivos adjuntos.');
+
+    expect(erroresPagina, `Excepciones JS:\n${erroresPagina.join('\n')}`).toEqual([]);
+  });
+
+  test('Pilotos > Listado: importar padrón HTML parsea filas y guarda en local', async ({ page }) => {
+    const erroresPagina = [];
+    page.on('pageerror', (err) => erroresPagina.push(err.message));
+    await page.goto('/');
+    await page.waitForFunction(() => typeof window.__CDA_MODULES__?.vistas?.renderizarMenuLateral === 'function');
+
+    // Stubs: todo real salvo persistencia local (IndexedDB fake) y toast capturado.
+    // Se mantiene el `listarPilotos` REAL (no se incluye en los stubs).
+    await page.evaluate((cargadores) => {
+      cargadores.forEach((fn) => { window[fn] = async () => {}; });
+      window.__CDA_TOASTS__ = [];
+      window.mostrarToast = (msg, tipo) => { window.__CDA_TOASTS__.push(String(msg || '')); };
+      window.puedeEditar = () => true;
+      window.invalidarCache = () => {};
+      window.__CDA_PUTS__ = [];
+      // OJO: el stub es global (todas las stores pasan por acá, incluidos los
+      // seeds de arranque como circuitos). Se registra el store para filtrar.
+      window.abrirTransaccionDefensiva = (_db, storeName, _modo) => {
+        const tx = {
+          objectStore: () => ({
+            put: (item) => { window.__CDA_PUTS__.push({ store: storeName, item: Object.assign({}, item) }); },
+          }),
+          oncomplete: null, onerror: null, onabort: null,
+        };
+        // La promesa de la transacción observa `oncomplete`: resolverlo en microtarea.
+        setTimeout(() => { if (typeof tx.oncomplete === 'function') tx.oncomplete(); }, 0);
+        return tx;
+      };
+      window.openDB = async () => ({});
+      window.getTodos = async (store) => {
+        if (store === 'categorias') return [{ nombre: 'TC2000' }];
+        if (store === 'pilotos') return window.__CDA_PUTS__.filter((p) => p.store === 'pilotos').map((p) => p.item);
+        return [];
+      };
+
+      document.getElementById('app-main').style.display = 'flex';
+      const login = document.getElementById('login-screen');
+      if (login) login.style.display = 'none';
+      const usuario = { id: 'e2e-menu', nombre: 'E2E', rol: 'admin', permisos: null };
+      window.currentUser = usuario;
+      window.__CDA_MODULES__.vistas.renderizarMenuLateral(usuario);
+    }, CARGADORES.filter((fn) => fn !== 'listarPilotos'));
+
+    // Navegar al Listado de Pilotos: botón de importar + input oculto.
+    await page.locator('#menu-pilotos').click();
+    await page.locator('.submenu-item[data-view="listado-pilotos"]').click();
+    await expect(page.locator('#view-listado-pilotos')).toHaveClass(/active/);
+    await expect(page.locator('#piloto-btn-importar')).toBeVisible();
+    await expect(page.locator('#piloto-btn-importar')).toContainText('Importar Padrón');
+    await expect(page.locator('#piloto-import-file')).toBeHidden();
+
+    // Parser puro: cabecera se salta, fila sin DNI se salta, DNI se sanitiza.
+    const parseo = await page.evaluate(() => {
+      const ok = window.parsearFilaPadron([
+        '1', 'Pérez', 'Juan', '30.123.456', 'x', 'x', 'x', 'x', 'x', 'x',
+        'x', 'x', 'x', 'x', 'x', 'x', 'TC2000',
+      ]);
+      const cabecera = window.parsearFilaPadron([
+        'Tipo', 'Apellido', 'Nombre', 'Auditoría', 'x', 'x', 'x', 'x', 'x', 'x',
+        'x', 'x', 'x', 'x', 'x', 'x', 'x',
+      ]);
+      const sinDni = window.parsearFilaPadron([
+        '2', 'Gómez', 'Ana', '', 'x', 'x', 'x', 'x', 'x', 'x',
+        'x', 'x', 'x', 'x', 'x', 'x', 'TC2000',
+      ]);
+      return { ok, cabecera, sinDni };
+    });
+    expect(parseo.cabecera).toBeNull();
+    expect(parseo.sinDni).toBeNull();
+    expect(parseo.ok.dni).toBe('30123456');
+    expect(parseo.ok.nombre).toBe('JUAN');
+    expect(parseo.ok.apellido).toBe('PÉREZ');
+    expect(parseo.ok.categoria).toBe('TC2000');
+
+    // Archivo sintético del padrón: 1 cabecera + 2 filas válidas.
+    const celdas = (vals) => `<tr>${vals.map((v) => `<td>${v}</td>`).join('')}</tr>`;
+    const htmlPadron = `<html><body><table>` +
+      `<tr><th>Tipo</th><th>Apellido</th><th>Nombre</th><th>Auditoría</th></tr>` +
+      celdas(['1', 'Pérez', 'Juan', '30.123.456', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'TC2000']) +
+      celdas(['2', 'Gómez', 'Ana', '27-654-321', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'TN']) +
+      `</table></body></html>`;
+
+    await page.setInputFiles('#piloto-import-file', {
+      name: 'padron.html',
+      mimeType: 'text/html',
+      buffer: Buffer.from(htmlPadron, 'utf-8'),
+    });
+
+    // Toast final con la cantidad + 2 puts en el store 'pilotos' + filas en la tabla.
+    // (El stub de puts es global: se filtra por store, que también recibe seeds.)
+    await expect.poll(async () => page.evaluate(() => window.__CDA_TOASTS__.join(' | '))).toContain('2 pilotos');
+    await expect.poll(async () => page.evaluate(() => window.__CDA_PUTS__.filter((p) => p.store === 'pilotos').length)).toBe(2);
+    const dnis = await page.evaluate(() => window.__CDA_PUTS__.filter((p) => p.store === 'pilotos').map((p) => p.item.dni).sort());
+    expect(dnis).toEqual(['27654321', '30123456']);
+    await expect(page.locator('#pilotos-table-body')).toContainText('JUAN PÉREZ');
+    await expect(page.locator('#pilotos-table-body')).toContainText('ANA GÓMEZ');
 
     expect(erroresPagina, `Excepciones JS:\n${erroresPagina.join('\n')}`).toEqual([]);
   });

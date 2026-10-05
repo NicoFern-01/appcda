@@ -15,7 +15,7 @@
 //   - openDB()/abrirTransaccionDefensiva() siguen en db.js (schema + dbInstance).
 // ============================================================
 
-import { validarRegistro, esMasReciente, esStoreSincronizable } from './schemaValidator.js';
+import { validarRegistro, esMasReciente, esStoreSincronizable, clavePrimariaStore } from './schemaValidator.js';
 
 // Estado de caché compartido con db.js (mismo objeto en ambos lados).
 function estado() {
@@ -74,7 +74,13 @@ export async function guardar(storeName, item) {
   // El id debe existir ANTES de validar: el validador lo exige y los stores
   // usan keyPath 'id' con autoIncrement, asi que un registro nuevo llega sin id.
   // Si se validara antes de generarlo, NINGUN alta nueva se podria guardar.
-  if (!item.id) {
+  // EXCEPCIÓN: 'pilotos' usa 'dni' (string) como clave primaria (doc ID
+  // `/pilotos/{dni}`): NO se genera id numérico, el DNI llega ya sanitizado
+  // desde el formulario y actúa como clave.
+  const clave = clavePrimariaStore(storeName);
+  if (storeName === 'pilotos') {
+    item.dni = String(item.dni ?? '').trim();
+  } else if (!item.id) {
     item.id = Date.now() + Math.floor(Math.random() * 1000);
   } else {
     item.id = Number(item.id);
@@ -110,9 +116,14 @@ export async function guardar(storeName, item) {
 
         request.onsuccess = (event) => {
           const key = event.target.result;
-          try { if (!item.id) item.id = Number(key); } catch (e) { /* noop */ }
+          if (storeName === 'pilotos') {
+            // keyPath 'dni': la clave ES el DNI (string), sin coerción numérica.
+            item.dni = String(item.dni ?? key ?? '').trim();
+          } else {
+            try { if (!item.id) item.id = Number(key); } catch (e) { /* noop */ }
+          }
           if (cache()[storeName]) {
-            const idx = cache()[storeName].findIndex((x) => Number(x.id) === Number(item.id));
+            const idx = cache()[storeName].findIndex((x) => String(x[clave]) === String(item[clave]));
             const clone = Object.assign({}, item);
             if (idx >= 0) cache()[storeName][idx] = clone;
             else cache()[storeName].push(clone);
@@ -124,11 +135,17 @@ export async function guardar(storeName, item) {
       .catch(reject);
   });
 
+  // Clave del documento en Firestore: para 'pilotos' es el DNI (string);
+  // para el resto, el id numérico. Así el doc vive en `/pilotos/{dni}`.
+  const claveDoc = storeName === 'pilotos'
+    ? String(item.dni ?? '').trim()
+    : String(item.id);
+
   // Sync cloud: solo si Firebase activo Y store sincronizable (A-4). No bloqueante.
   const rt = runtime();
   if (rt.useFirebase && esStoreSincronizable(storeName)) {
     try {
-      await rt.setDoc(rt.doc(rt.dbFirebase, storeName, String(item.id)), limpiarObjetoParaFirebase(item));
+      await rt.setDoc(rt.doc(rt.dbFirebase, storeName, claveDoc), limpiarObjetoParaFirebase(item));
     } catch (e) {
       console.warn(`Firebase sync warning [${storeName}]:`, e);
     }
@@ -178,7 +195,13 @@ export async function getTodos(storeName, opciones = {}) {
       const dataNube = [];
       querySnapshot.forEach((docSnap) => {
         const item = docSnap.data();
-        item.id = Number(docSnap.id) || docSnap.id;
+        if (storeName === 'pilotos') {
+          // Doc ID de Firestore = DNI (string), sin coerción numérica.
+          item.dni = String(docSnap.id);
+          item.id = String(docSnap.id);
+        } else {
+          item.id = Number(docSnap.id) || docSnap.id;
+        }
         dataNube.push(item);
       });
       cache()[storeName] = dataNube;
@@ -205,16 +228,18 @@ export async function getTodos(storeName, opciones = {}) {
 // ---------------- ELIMINAR ----------------
 export async function eliminar(storeName, id) {
   const cache = () => estado()._cache;
+  // Clave nativa del store: 'pilotos' usa el DNI (string), el resto id numérico.
+  const claveBorrado = storeName === 'pilotos' ? String(id ?? '').trim() : Number(id);
   await new Promise((resolve, reject) => {
     (typeof globalThis !== 'undefined' ? globalThis.openDB() : Promise.reject('no openDB'))
       .then((db) => {
         const transaction = (globalThis.abrirTransaccionDefensiva || (() => null))(db, storeName, 'readwrite');
         if (!transaction) { reject(`Object store '${storeName}' no disponible en IndexedDB.`); return; }
         const store = transaction.objectStore(storeName);
-        const request = store.delete(Number(id));
+        const request = store.delete(claveBorrado);
         request.onsuccess = () => {
           if (cache()[storeName]) {
-            cache()[storeName] = cache()[storeName].filter((x) => Number(x.id) !== Number(id));
+            cache()[storeName] = cache()[storeName].filter((x) => String(x[clavePrimariaStore(storeName)]) !== String(claveBorrado));
           }
           resolve();
         };
@@ -237,8 +262,10 @@ export async function eliminar(storeName, id) {
 // ---------------- OBTENER POR ID ----------------
 export async function obtenerPorId(storeName, id) {
   const cache = () => estado()._cache;
+  // Comparación por clave nativa: string para 'pilotos', numérica para el resto.
+  const claveBuscada = storeName === 'pilotos' ? String(id ?? '').trim() : Number(id);
   if (cache()[storeName]) {
-    const found = cache()[storeName].find((x) => Number(x.id) === Number(id));
+    const found = cache()[storeName].find((x) => String(x[clavePrimariaStore(storeName)]) === String(claveBuscada));
     if (found) return found;
   }
 
@@ -248,7 +275,7 @@ export async function obtenerPorId(storeName, id) {
         const transaction = (globalThis.abrirTransaccionDefensiva || (() => null))(db, storeName, 'readonly');
         if (!transaction) { resolve(null); return; }
         const store = transaction.objectStore(storeName);
-        const request = store.get(Number(id));
+        const request = store.get(claveBuscada);
         request.onsuccess = (event) => resolve(event.target.result);
         request.onerror = (event) => reject(`Error al obtener de ${storeName} con id ${id}: ` + event.target.error);
       })
@@ -276,13 +303,20 @@ export async function sincronizarFirebaseALocal(stores) {
 
       invalidarCache(storeName);
       const locales = await getTodos(storeName, { soloLocal: true });
-      const porId = new Map(locales.map((item) => [String(item.id), item]));
+      const claveNativa = (item) => String(item[clavePrimariaStore(storeName)] ?? '');
+      const porId = new Map(locales.map((item) => [claveNativa(item), item]));
       const desdeNube = [];
 
       snapNube.forEach((docSnap) => {
         const item = docSnap.data();
-        item.id = Number(docSnap.id) || docSnap.id;
-        const local = porId.get(String(item.id));
+        if (storeName === 'pilotos') {
+          // Doc ID de Firestore = DNI (string), sin coerción numérica.
+          item.dni = String(docSnap.id);
+          item.id = String(docSnap.id);
+        } else {
+          item.id = Number(docSnap.id) || docSnap.id;
+        }
+        const local = porId.get(claveNativa(item));
         if (local && esMasReciente(local, item)) return;
         desdeNube.push(item);
       });
@@ -302,7 +336,7 @@ export async function sincronizarFirebaseALocal(stores) {
       });
 
       const fusion = new Map(porId);
-      desdeNube.forEach((item) => fusion.set(String(item.id), item));
+      desdeNube.forEach((item) => fusion.set(claveNativa(item), item));
       estado()._cache[storeName] = Array.from(fusion.values());
       total += desdeNube.length;
       console.log(`Colección '${storeName}': ${desdeNube.length} registros descargados desde Firestore (resolución A-3).`);
@@ -358,10 +392,20 @@ export async function sincronizarLocalAFirebase() {
     }
 
     const nubePorId = new Map();
+    // Doc ID nativo por store ('pilotos' → DNI string, resto → id).
+    const claveDocNube = (item) => String(item[clavePrimariaStore(storeName)] ?? '');
+    const claveIdNube = (docSnap, docItem) => {
+      if (storeName === 'pilotos') {
+        docItem.dni = String(docSnap.id);
+        docItem.id = String(docSnap.id);
+      } else {
+        docItem.id = Number(docSnap.id) || docSnap.id;
+      }
+      return claveDocNube(docItem);
+    };
     snapshot.forEach((docSnap) => {
       const docItem = docSnap.data();
-      docItem.id = Number(docSnap.id) || docSnap.id;
-      nubePorId.set(String(docItem.id), docItem);
+      nubePorId.set(claveIdNube(docSnap, docItem), docItem);
     });
 
     invalidarCache(storeName);
@@ -370,29 +414,29 @@ export async function sincronizarLocalAFirebase() {
     if (nubePorId.size === 0) {
       for (const item of dataLocal) {
         try {
-          await rt.setDoc(rt.doc(rt.dbFirebase, storeName, String(item.id)), limpiarObjetoParaFirebase(item));
+          await rt.setDoc(rt.doc(rt.dbFirebase, storeName, claveDocNube(item)), limpiarObjetoParaFirebase(item));
           total++;
         } catch (e) {
-          console.warn(`Error sync ${storeName}/${item.id}:`, e);
+          console.warn(`Error sync ${storeName}/${claveDocNube(item)}:`, e);
         }
       }
       detalle.push(`${storeName}: ${dataLocal.length} registros subidos (Firestore estaba vacía)`);
     } else {
       let subidos = 0;
       for (const item of dataLocal) {
-        const nube = nubePorId.get(String(item.id));
+        const nube = nubePorId.get(claveDocNube(item));
         if (!nube) {
           try {
-            await rt.setDoc(rt.doc(rt.dbFirebase, storeName, String(item.id)), limpiarObjetoParaFirebase(item));
+            await rt.setDoc(rt.doc(rt.dbFirebase, storeName, claveDocNube(item)), limpiarObjetoParaFirebase(item));
             subidos++;
             total++;
-          } catch (e) { console.warn(`Error sync ${storeName}/${item.id}:`, e); }
+          } catch (e) { console.warn(`Error sync ${storeName}/${claveDocNube(item)}:`, e); }
         } else if (!esMasReciente(nube, item)) {
           try {
-            await rt.setDoc(rt.doc(rt.dbFirebase, storeName, String(item.id)), limpiarObjetoParaFirebase(item));
+            await rt.setDoc(rt.doc(rt.dbFirebase, storeName, claveDocNube(item)), limpiarObjetoParaFirebase(item));
             subidos++;
             total++;
-          } catch (e) { console.warn(`Error sync ${storeName}/${item.id}:`, e); }
+          } catch (e) { console.warn(`Error sync ${storeName}/${claveDocNube(item)}:`, e); }
         }
       }
       detalle.push(`${storeName}: ${nubePorId.size} en nube; ${subidos} locales más recientes subidos`);
@@ -413,6 +457,36 @@ export async function sincronizarLocalAFirebase() {
   }
 }
 
+// ---------------- SUSCRIPCIÓN EN TIEMPO REAL (onSnapshot) ----------------
+// Mantiene UNA suscripción activa por colección (para 'pilotos' la usa el
+// Listado de Pilotos): cada cambio remoto invalida la cache y re-renderiza
+// la vista activa con `firebase-sync-complete` + `listarPilotos()`.
+const _suscripciones = {};
+export function suscribirColeccion(storeName, coleccion = storeName) {
+  const rt = runtime();
+  if (typeof rt.onSnapshot !== 'function' || !rt.dbFirebase || typeof rt.collection !== 'function') return null;
+  if (_suscripciones[storeName]) return _suscripciones[storeName];
+  try {
+    const ref = rt.collection(rt.dbFirebase, coleccion);
+    _suscripciones[storeName] = rt.onSnapshot(ref, (snap) => {
+      invalidarCache(storeName);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('firebase-sync-complete', { detail: { total: snap.size, store: storeName } }));
+      }
+    });
+    return _suscripciones[storeName];
+  } catch (e) {
+    console.warn(`No se pudo suscribir a '${coleccion}' en tiempo real:`, e);
+    return null;
+  }
+}
+
+export function cancelarSuscripcion(storeName) {
+  const off = _suscripciones[storeName];
+  if (typeof off === 'function') { try { off(); } catch (e) { /* noop */ } }
+  delete _suscripciones[storeName];
+}
+
 // ---------------- Interfaz de servicio ----------------
 export const persistenceService = {
   guardar,
@@ -423,6 +497,8 @@ export const persistenceService = {
   limpiarCacheCompleto,
   sincronizarLocalAFirebase,
   sincronizarFirebaseALocal,
+  suscribirColeccion,
+  cancelarSuscripcion,
   limpiarObjetoParaFirebase,
 };
 

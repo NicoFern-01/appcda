@@ -756,6 +756,31 @@ input:focus, select:focus, textarea:focus {
     min-width: 250px;
 }
 
+/* Paginación en el cliente (Listado de Pilotos) */
+.pagination-controls {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+.pagination-controls .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.pagination-info {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
 /* Tabla protegida contra desbordes - contenedor de scroll horizontal */
 .table-responsive {
     width: 100% !important;

@@ -4,9 +4,42 @@
 
 ## Trabajo reciente (última sesión)
 
-**Catálogo de sanciones totalmente editable/borrable + menú principal en una sola fila.**
+**Anti-colgue del Listado de Pilotos: paginación en cliente (20/pág) + buscador con debounce (300 ms).**
 
 ### Cambios de esta sesión
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| Paginación cliente | `app.js` | `listarPilotos()` guarda el array completo filtrado/ordenado en `pilotosCache` (memoria) y `renderPilotoPagina()` pinta SOLO el `slice((paginaActual-1)*20, paginaActual*20)`. Estado global `paginaActual`/`registrosPorPagina=20`. Render en `DocumentFragment` + `tbody.innerHTML=''` previo (libera nodos viejos). |
+| Controles | `app.js` + `index.html` + `styles.css` | Pie `.pagination-controls` (#pilotos-pagination): botones Anterior/Siguiente (`.btn btn-secondary`) + "Página X de Y". `renderPilotoPaginador()` y `cambiarPaginaPilotos()` con límites nativos (`disabled` al llegar a borde). CSS: `.pagination-controls`/`.pagination-info`. |
+| Debounce | `app.js` + `index.html` | El buscador pasa de `oninput="listarPilotos()"` → `oninput="pilotoBuscarDebounced()"` (timer `setTimeout` 300 ms; al dispararse resetea `paginaActual=1` y re-filtra sobre el array original). |
+
+### Validaciones
+
+- `npx vite build` → exit 0 (~570 ms).
+- `npx playwright test tests/menu.spec.js --workers=1` → **6 passed** (43,5 s).
+- Spec temporal (borrado tras pasar): con 50 pilotos, página 1×20 / 2×20 / 3×10, botones `disabled` en bordes, y `fill('NOMBRE49')` re-renderiza "Página 1 de 1" con 1 fila tras el debounce → **1 passed** (13,9 s).
+
+**Listado de Pilotos completo: formulario de alta manual con escudo anti-duplicados por DNI + tabla reactiva (onSnapshot).**
+
+### Cambios de esta sesión
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| Store `pilotos` | `db.js` | **`DB_VERSION` 14 → 15**: object store `pilotos` con `keyPath: 'dni'` (**string, SIN autoIncrement**). El DNI es la clave primaria en local y el doc ID `/pilotos/{dni}` en Firestore. El keyPath rechaza duplicados a nivel de motor (ConstraintError) como tercera barrera. `validarRegistro()` generalizado con `clavePrimariaStore()`/`normalizarClaveStore()` (solo `pilotos` usa `dni`; el resto sigue con `id`). Agregado a `importarTodo()`. Nuevo `onSnapshot` en el import de `firebase-firestore` + bridge `window.__CDA_FIREBASE_RUNTIME__` (lectura en caliente + suscripción). |
+| Claves nativas | `src/services/schemaValidator.js`, `src/services/persistenceService.js` | `clavePrimariaStore()` (`pilotos`→`dni`, resto→`id`). `guardar()` NO genera `id` numérico para pilotos; doc ID = DNI en `guardar`/sync up/down; `eliminar`/`obtenerPorId`/caché comparan por clave nativa (sin `Number()`). Nuevos `suscribirColeccion()`/`cancelarSuscripcion()` (una suscripción por colección; cada cambio remoto invalida caché y dispara `firebase-sync-complete`). Reglas Firestore: sin cambios (el comodín `/{collection}/{docId}` ya cubre `pilotos`: lectura `signedIn()`, escritura roles operativos). |
+| Vista | `index.html` | `#view-listado-pilotos` deja de ser placeholder: `form#form-piloto.editor-only` (4 campos `required`: `#piloto-nombre`, `#piloto-apellido`, `#piloto-dni` con `inputmode=numeric`, `#piloto-categoria` + `datalist#categorias-piloto`) + botón `#piloto-btn-guardar` "+ Agregar Piloto". Tabla con `search-input#buscar-piloto`, columnas Nombre y Apellido / Documento / Categoría / Acciones y `tbody#pilotos-table-body`. Solo clases existentes (`form-card`, `form-grid`, `form-group`, `table-card`, `table-header-tools`, `badge-info`): **cero CSS nuevo**. |
+| Lógica | `app.js` | `guardarPilotoForm()` (sanitiza: `toUpperCase()` + DNI solo dígitos; **escudo 3 barreras**: `getDoc` en caliente → `obtenerPorId` local → `ConstraintError` del keyPath; mensaje exacto `"Error: El DNI ingresado ya pertenece a un piloto registrado"` vía `mostrarToast`), `listarPilotos()` (buscador, orden `es-AR` por apellido+nombre, `escapeHtml()`, confirmación con `mostrarConfirmacion()` y baja vía `eliminar()`), `suscribirPilotosTiempoReal()` + `poblarCategoriasPiloto()`. `cargarDatosVista('listado-pilotos')` en `viewManager.js` **ya invocaba `listarPilotos()`**: sin cambios. |
+| Test | `tests/menu.spec.js` | El test existente de "Pilotos" ahora verifica formulario (4 inputs + botón), columnas de la tabla y `tbody`. **Sin stubs**: `listarPilotos` corre real (IndexedDB limpia ⇒ estado vacío ⇒ render OK). |
+
+### Validaciones
+
+- `npx vite build` → exit 0 (422 ms).
+- `npx playwright test --workers=1` (suite completa) → **5 passed / 2 skipped**
+  (los 2 de `app.spec.js` requieren credenciales; el test de Pilotos corre
+  `listarPilotos()` real contra IndexedDB limpia).
+
+### Sesión anterior — Catálogo de sanciones editable + menú en una fila
 
 | Aspecto | Archivo | Detalle |
 |---|---|---|
@@ -91,12 +124,10 @@
 
 ## Próximos pasos lógicos
 
-1. **Commitear** el módulo Penalidades completo (planilla + PDFs + fechas + catálogo
-   editable de sanciones + menú en una fila). Mensaje sugerido:
-   `pilotos: penalidades con fechas, tipos de sancion editables y menu en una fila`.
-2. **Diseñar la vista "Listado de Pilotos"** (sigue de placeholder): fuente de
-   datos (¿store `pilotos` nueva o derivada de `staff` con función piloto?),
-   tabla con búsqueda y CRUD.
+1. **Commitear** el Listado de Pilotos (store `pilotos` V15, formulario + escudo anti-duplicados + tabla reactiva) junto a Penalidades. Mensaje sugerido:
+   `pilotos: listado con alta manual, dni como clave y tabla reactiva`.
+2. **Diseñar la vista "Pilotos" (overview)** (sigue de placeholder): ¿resumen del
+   módulo (conteos por categoría, últimos sancionados) o redirigir a Listado?
 3. Evaluar **edición** de penalidades (hoy alta + baja; las `funciones` del
    catálogo no incluyen `editar` a propósito) y exportación/imprenta del listado.
 4. Recordar: usuarios no-admin con permisos personalizados persistidos no ven

@@ -12,7 +12,16 @@ const DB_NAME = 'ControlAutomovilismoDB';
 // con penalidadId (mismo patrón que detalleGastoId de la Carga Detallada).
 // V14: agrega el store 'tiposSancion' (catálogo EDITABLE de tipos de sanción de la planilla
 // de Penalidades), sembrado con los 5 valores por defecto en migrarTiposSancionV14().
-const DB_VERSION = 14;
+// V15: agrega el store 'pilotos' (Listado de Pilotos). El DNI es la clave primaria
+// (keyPath 'dni', SIN autoIncrement): evita duplicados en local y espeja el doc ID
+// `/pilotos/{dni}` de Firestore.
+// V16: REPARACIÓN DEFINITIVA del store 'pilotos'. Mismo caso que V11: una build
+// pudo desplegar el gatillo de importación (IndexedDB + Firestore) en navegadores
+// cuya base quedó en V15 pero SIN el object store materializado (esquema a medio
+// camino), por eso el import lanzaba "El store local 'pilotos' no está disponible".
+// Al subir a V16 el navegador ejecuta OBLIGATORIAMENTE esta actualización y el
+// guard con .contains() garantiza la creación física del store /pilotos/{dni}.
+const DB_VERSION = 16;
 
 let dbInstance = null;
 
@@ -133,7 +142,7 @@ function obtenerConfigFirebase() {
 }
 
 // Variables de módulos de Firebase
-let initializeApp, initializeFirestore, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, writeBatch, query, where, enableIndexedDbPersistence;
+let initializeApp, initializeFirestore, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, onSnapshot, writeBatch, query, where, enableIndexedDbPersistence;
 let getStorage, refStorage, uploadBytes, getDownloadURL, deleteObject;
 let storageFirebase = null;
 
@@ -296,6 +305,7 @@ async function inicializarFirebase() {
         getDocs = fsMod.getDocs;
         getDoc = fsMod.getDoc;
         deleteDoc = fsMod.deleteDoc;
+        onSnapshot = fsMod.onSnapshot;
         writeBatch = fsMod.writeBatch;
         query = fsMod.query;
         where = fsMod.where;
@@ -374,6 +384,7 @@ async function inicializarFirebase() {
                 getDocsFromServer,
                 getDoc,
                 deleteDoc,
+                onSnapshot,
                 query,
                 where,
                 writeBatch,
@@ -678,6 +689,17 @@ function openDB() {
                 tiposSancionStore.createIndex('valor', 'valor', { unique: true });
             }
 
+            // ============ NUEVO EN DB_VERSION 15/16: LISTADO DE PILOTOS ============
+            // keyPath 'dni' (string, SIN autoIncrement): el DNI es la clave
+            // primaria y el doc ID `/pilotos/{dni}` en Firestore. El keyPath
+            // rechaza duplicados en IndexedDB a nivel de motor (ConstraintError),
+            // como segunda barrera además del getDoc previo en el formulario.
+            // El bloque V16 (más abajo) re-crea el store si una build previa lo
+            // dejó sin materializar (bug: "El store local 'pilotos' no está disponible").
+            if (!db.objectStoreNames.contains('pilotos')) {
+                db.createObjectStore('pilotos', { keyPath: 'dni' });
+            }
+
             // ============ DB_VERSION 11: REPARACIÓN DEFINITIVA DE ESQUEMAS INCONSISTENTES ============
             // MOTIVO DEL BUMP: en V10 la base pudo abrirse bajo una build que no materializó
             // 'tiposMovimiento'. Como ya se estaba en la versión objetivo, el evento
@@ -694,6 +716,21 @@ function openDB() {
                         // Si la creación fallara, la garantía la da el bloque V10 de arriba y el
                         // control defensivo de transacciones (no congelar la app). Log limpio.
                         console.warn('[db] V11: no se pudo crear el store tiposMovimiento:', storeErrV11?.message || storeErrV11);
+                    }
+                }
+            }
+
+            // ============ DB_VERSION 16: REPARACIÓN DEFINITIVA DE 'pilotos' ============
+            // MOTIVO DEL BUMP: un navegador podía quedar en V15 con el store 'pilotos'
+            // SIN materializar físicamente (despliegue del gatillo de importación a
+            // medio camino). Al subir a V16 se repite la misma técnica que V11:
+            // garantizar con .contains() que el store exista (keyPath 'dni', string).
+            if (event.oldVersion < 16) {
+                if (!db.objectStoreNames.contains('pilotos')) {
+                    try {
+                        db.createObjectStore('pilotos', { keyPath: 'dni' });
+                    } catch (storeErrV16) {
+                        console.warn('[db] V16: no se pudo crear el store pilotos:', storeErrV16?.message || storeErrV16);
                     }
                 }
             }
@@ -1384,8 +1421,20 @@ function esMasReciente(a, b) {
     return ta > tb;
 }
 
+// Clave primaria por store: casi todos usan 'id' numérico autoincremental,
+// pero 'pilotos' usa 'dni' (string) como clave (doc ID `/pilotos/{dni}`).
+function clavePrimariaStore(storeName) {
+    return storeName === 'pilotos' ? 'dni' : 'id';
+}
+
+// Normaliza la clave para comparaciones y doc IDs de Firestore.
+function normalizarClaveStore(storeName, valor) {
+    if (storeName === 'pilotos') return String(valor ?? '').trim();
+    return Number(valor);
+}
+
 // Validador interceptor simple (A-5): evita persistir objetos corruptos en IndexedDB/Firestore.
-// - Problemas GRAVES (no es objeto / falta id / funciones / NaN / circular) abortan la escritura.
+// - Problemas GRAVES (no es objeto / falta clave primaria / funciones / NaN / circular) abortan la escritura.
 function validarRegistro(storeName, item) {
     const resultado = { ok: true, motivo: '' };
 
@@ -1395,9 +1444,9 @@ function validarRegistro(storeName, item) {
         return resultado;
     }
 
-    if (typeof item.id === 'undefined') {
+    if (typeof item[clavePrimariaStore(storeName)] === 'undefined') {
         resultado.ok = false;
-        resultado.motivo = `[${storeName}] No se escribió: falta el campo 'id'.`;
+        resultado.motivo = `[${storeName}] No se escribió: falta el campo '${clavePrimariaStore(storeName)}'.`;
         return resultado;
     }
 
@@ -1479,7 +1528,7 @@ async function sincronizarLocalAFirebase() {
 async function importarTodo(datos) {
     limpiarCacheCompleto(); // limpiar todo el caché antes de importar
     const db = await openDB();
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos', 'ubicacionesInventario', 'tiposMovimiento', 'penalidades', 'tiposSancion'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos', 'ubicacionesInventario', 'tiposMovimiento', 'penalidades', 'tiposSancion', 'pilotos'];
     
     for (const storeName of stores) {
         if (datos[storeName]) {

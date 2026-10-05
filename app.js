@@ -2720,7 +2720,387 @@ function exportarPDFListadoPersonal() {
     imprimirListadoPersonal();
 }
 
-// ==================== PILOTOS: PENALIDADES ====================
+// ==================== PILOTOS: LISTADO DE PILOTOS ====================
+// Alta manual + tabla reactiva. El DNI sanitizado es la clave primaria
+// (keyPath 'dni' en IndexedDB y doc ID `/pilotos/{dni}` en Firestore).
+
+/** Activa el listener en tiempo real (onSnapshot) de `pilotos`. */
+function suscribirPilotosTiempoReal() {
+    try {
+        const p = typeof window !== 'undefined' ? window.__CDA_MODULES__?.persistencia : null;
+        if (p && typeof p.suscribirColeccion === 'function') p.suscribirColeccion('pilotos');
+    } catch (e) { /* sin Firebase: la tabla sigue reactiva en local */ }
+}
+
+/** Rellena el datalist de categorías con las categorías cargadas. */
+async function poblarCategoriasPiloto() {
+    const datalist = document.getElementById('categorias-piloto');
+    if (!datalist) return;
+    try {
+        const categorias = await getTodos('categorias');
+        datalist.innerHTML = categorias
+            .map(c => `<option value="${escapeHtml(c.nombre || '')}"></option>`)
+            .join('');
+    } catch (e) { /* campo libre: sin categorías la carga sigue usable */ }
+}
+
+/** Alta manual de piloto con escudo anti-duplicados por DNI (3 barreras). */
+async function guardarPilotoForm(e) {
+    if (e) e.preventDefault();
+    if (!puedeEditar()) return;
+    const nombre = (document.getElementById('piloto-nombre')?.value || '').trim().toUpperCase();
+    const apellido = (document.getElementById('piloto-apellido')?.value || '').trim().toUpperCase();
+    const dni = String(document.getElementById('piloto-dni')?.value || '').replace(/\D/g, '');
+    const categoria = (document.getElementById('piloto-categoria')?.value || '').trim().toUpperCase();
+    if (!nombre || !apellido || !dni || !categoria) {
+        mostrarToast('Completá todos los campos obligatorios (*).', 'error');
+        return;
+    }
+    const MSG_DUPLICADO = 'Error: El DNI ingresado ya pertenece a un piloto registrado';
+    try {
+        const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+        if (rt && rt.dbFirebase && typeof rt.getDoc === 'function' && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser) {
+            const snap = await rt.getDoc(rt.doc(rt.dbFirebase, 'pilotos', dni));
+            if (snap && typeof snap.exists === 'function' && snap.exists()) {
+                mostrarToast(MSG_DUPLICADO, 'error');
+                return;
+            }
+        }
+    } catch (err) {
+        console.warn('[pilotos] getDoc previo no disponible, se valida en local:', err?.message || err);
+    }
+    try {
+        const existente = await obtenerPorId('pilotos', dni);
+        if (existente) {
+            mostrarToast(MSG_DUPLICADO, 'error');
+            return;
+        }
+    } catch (err) {
+        console.warn('[pilotos] lectura local previa falló:', err?.message || err);
+    }
+    const btn = document.getElementById('piloto-btn-guardar');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Guardando...';
+    }
+    try {
+        const clave = await guardar('pilotos', {
+            dni,
+            nombre,
+            apellido,
+            categoria,
+            usuarioCreacion: currentUser ? currentUser.id : null,
+            fechaCreacion: new Date().toISOString()
+        });
+        if (!clave) {
+            mostrarToast('No se pudo guardar el piloto (validación de esquema).', 'error');
+            return;
+        }
+        mostrarToast(`Piloto ${nombre} ${apellido} registrado correctamente.`);
+        document.getElementById('form-piloto')?.reset();
+        await listarPilotos();
+    } catch (err) {
+        if (err && (err.name === 'ConstraintError' || String(err.message || '').includes('ConstraintError'))) {
+            mostrarToast(MSG_DUPLICADO, 'error');
+        } else {
+            console.error(err);
+            mostrarToast('Error al guardar el piloto: ' + (err && err.message ? err.message : err), 'error');
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-plus"></i> Agregar Piloto';
+        }
+    }
+}
+
+/**
+ * Renderiza la tabla inferior con PAGINACIÓN EN EL CLIENTE + busqueda con
+ * DEBOUNCE (300 ms). El array completo de pilotos NO se dibuja en el DOM:
+ * listarPilotos() lo guarda en memoria (pilotosCache) y renderPilotoPagina()
+ * solo pinta el corte (slice) de la página actual → fluido y sin congelar
+ * aunque haya +1.800 registros (el onSnapshot mantiene la vista reactiva).
+ */
+let pilotosCache = [];
+let paginaActual = 1;
+const registrosPorPagina = 20;
+
+async function listarPilotos() {
+    const tbody = document.getElementById('pilotos-table-body');
+    if (!tbody) return;
+    await poblarCategoriasPiloto();
+    suscribirPilotosTiempoReal();
+
+    let todos = [];
+    try {
+        todos = await getTodos('pilotos');
+    } catch (e) {
+        console.warn('[pilotos] no se pudo leer el store local:', e?.message || e);
+    }
+
+    // Filtro sobre el array ORIGINAL (al tocar la busqueda se resetea la pagina).
+    const busqueda = (document.getElementById('buscar-piloto')?.value || '').trim().toLowerCase();
+    const collator = new Intl.Collator('es', { sensitivity: 'base' });
+    pilotosCache = todos
+        .filter(p => {
+            if (!busqueda) return true;
+            const linea = `${p.nombre || ''} ${p.apellido || ''} ${p.dni || ''} ${p.categoria || ''}`.toLowerCase();
+            return linea.includes(busqueda);
+        })
+        .sort((a, b) => collator.compare(
+            `${a.apellido || ''} ${a.nombre || ''}`.trim(),
+            `${b.apellido || ''} ${b.nombre || ''}`.trim()
+        ));
+
+    // Corrige la pagina si quedo fuera de rango tras filtrar/eliminar.
+    const totalPaginas = Math.max(1, Math.ceil(pilotosCache.length / registrosPorPagina));
+    if (paginaActual > totalPaginas) paginaActual = totalPaginas;
+
+    renderPilotoPagina();
+    renderPilotoPaginador(pilotosCache.length, busqueda ? null : totalPaginas);
+}
+
+/** Dibuja SOLO las filas del corte de la página actual. */
+function renderPilotoPagina() {
+    const tbody = document.getElementById('pilotos-table-body');
+    if (!tbody) return;
+    const cols = puedeEditar() ? 4 : 3;
+    const corte = pilotosCache.slice((paginaActual - 1) * registrosPorPagina, paginaActual * registrosPorPagina);
+
+    if (corte.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="${cols}" style="text-align:center;color:var(--text-secondary);">No hay pilotos registrados.</td></tr>`;
+        return;
+    }
+
+    // Limpia los nodos de la página anterior antes de montar los nuevos.
+    tbody.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    corte.forEach(p => {
+        const dniTxt = escapeHtml(String(p.dni || ''));
+        const nombreTxt = escapeHtml(`${p.nombre || ''} ${p.apellido || ''}`.trim());
+        const catTxt = escapeHtml(p.categoria || '-');
+        const acciones = puedeEditar()
+            ? `<td style="text-align:right;"><button class="action-btn delete" onclick="eliminarPiloto('${dniTxt}')" title="Eliminar piloto"><i class="fa-solid fa-trash"></i></button></td>`
+            : '';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td style="font-weight:600;">${nombreTxt}</td><td>${dniTxt}</td><td><span class="badge badge-info">${catTxt}</span></td>${acciones}`;
+        fragment.appendChild(tr);
+    });
+    tbody.appendChild(fragment);
+}
+
+/** Dibuja/navega los controles Anterior / "Página X de Y" / Siguiente. */
+function renderPilotoPaginador(total, totalPaginas) {
+    const cont = document.getElementById('pilotos-pagination');
+    if (!cont) return;
+    const yaPaginado = Number.isInteger(totalPaginas) && totalPaginas > 0;
+    const paginas = yaPaginado ? totalPaginas : Math.max(1, Math.ceil(total / registrosPorPagina));
+    cont.innerHTML = `
+        <button type="button" class="btn btn-secondary pagination-prev" onclick="cambiarPaginaPilotos(-1)" ${paginaActual <= 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i> Anterior</button>
+        <span class="pagination-info">Página ${paginaActual} de ${paginas}</span>
+        <button type="button" class="btn btn-secondary pagination-next" onclick="cambiarPaginaPilotos(1)" ${paginaActual >= paginas ? 'disabled' : ''}>Siguiente <i class="fa-solid fa-chevron-right"></i></button>
+    `;
+}
+
+/** Navegación de páginas con límites nativos (disabled si queda fuera de rango). */
+function cambiarPaginaPilotos(direccion) {
+    const totalPaginas = Math.max(1, Math.ceil(pilotosCache.length / registrosPorPagina));
+    const nueva = paginaActual + direccion;
+    if (nueva < 1 || nueva > totalPaginas) return;
+    paginaActual = nueva;
+    renderPilotoPagina();
+    renderPilotoPaginador(pilotosCache.length, totalPaginas);
+}
+
+/** Buscador con DEBOUNCE de 300 ms: espera a que el usuario deje de tipear. */
+let pilotoBusquedaTimer = null;
+function pilotoBuscarDebounced() {
+    if (pilotoBusquedaTimer) clearTimeout(pilotoBusquedaTimer);
+    pilotoBusquedaTimer = setTimeout(() => {
+        paginaActual = 1;              // el filtro vuelve a arrancar desde la página 1
+        listarPilotos();
+    }, 300);
+}
+
+/** Baja de piloto (local + Firestore, vía persistencia genérica). */
+async function eliminarPiloto(dni) {
+    if (!puedeEditar()) return;
+    const clave = String(dni || '').replace(/\D/g, '');
+    if (!clave) return;
+    let nombrePiloto = 'este piloto';
+    try {
+        const piloto = await obtenerPorId('pilotos', clave);
+        if (piloto) {
+            const completo = `${piloto.nombre || ''} ${piloto.apellido || ''}`.trim();
+            if (completo) nombrePiloto = completo;
+        }
+    } catch (e) { /* nombre genérico */ }
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar piloto',
+        `¿Eliminar a ${nombrePiloto}? Esta acción no se puede deshacer.`,
+        'warning'
+    );
+    if (!confirmado) return;
+    await eliminar('pilotos', clave);
+    await listarPilotos();
+}
+
+// ---------------- Importación masiva del padrón CDA (HTML/XLS) ----------------
+// Parser 100% nativo (FileReader + DOMParser, sin librerías): el padrón de la
+// CDA es un HTML con tablas. Columnas: Apellido = celda 1, Nombre = celda 2,
+// DNI = celda 3, Categoría = celda 16. La escritura por lotes vive en
+// importarPadronLotes() (más abajo): IndexedDB local + `writeBatch` a
+// Firestore con el DNI como doc ID (`/pilotos/{dni}`, set = upsert).
+
+const PILOTOS_BATCH_MAX = 400;
+// Padrón inicial publicado por la CDA (HTML): vive en public/ y Vite lo copia a
+// dist/ en el build. Se lee por fetch() en segundo plano (Task 2) en lugar de
+// exigir que el admin suba el archivo a mano.
+const PADRON_INICIAL_URL = 'padron_inicial.html';
+
+/** Dispara el selector de archivo oculto del padrón. */
+function dispararImportarPadron() {
+    if (!puedeEditar()) return;
+    document.getElementById('piloto-import-file')?.click();
+}
+
+/** Importa el padrón inicial embebido (fetch a public/padron_inicial.html). */
+async function importarPadronInicial(btn) {
+    const resp = await fetch(`${PADRON_INICIAL_URL}?v=${Date.now()}`);
+    if (!resp.ok) throw new Error(`No se pudo descargar el padrón (HTTP ${resp.status}).`);
+    const texto = await resp.text();
+    const documento = new DOMParser().parseFromString(texto, 'text/html');
+    const registros = extraerRegistrosPadron(documento);
+    if (registros.length === 0) {
+        mostrarToast('El padrón inicial no contiene pilotos válidos para importar.', 'warning');
+        return;
+    }
+    const enNube = await importarPadronLotes(registros, btn);
+    mostrarToast(`Padrón importado: ${registros.length} pilotos registrados correctamente${enNube ? ' (local + nube)' : ' (solo local, sin sesión en la nube)'}.`);
+    await listarPilotos();
+}
+
+/** Convierte un documento HTML de la CDA a registros de piloto (dedup por DNI). */
+function extraerRegistrosPadron(documento) {
+    const porDni = new Map();
+    documento.querySelectorAll('table tr').forEach(fila => {
+        const celdas = Array.from(fila.querySelectorAll('td, th'))
+            .map(c => (c.textContent || '').trim());
+        const piloto = parsearFilaPadron(celdas);
+        if (piloto && !porDni.has(piloto.dni)) porDni.set(piloto.dni, piloto);
+    });
+    return Array.from(porDni.values());
+}
+
+/** Lee el archivo del padrón (FileReader UTF-8) y lo importa por lotes. */
+function parsearFilaPadron(celdas) {
+    if (!celdas || celdas.length < 17) return null;
+    const linea = celdas.join(' ').toLowerCase();
+    if (linea.includes('tipo') || linea.includes('auditor')) return null; // cabecera
+    const apellido = (celdas[1] || '').trim().toUpperCase();
+    const nombre = (celdas[2] || '').trim().toUpperCase();
+    const dni = String(celdas[3] || '').replace(/\D/g, '');
+    const categoria = (celdas[16] || '').trim().toUpperCase();
+    if (!dni || !nombre) return null; // fila corrupta: se salta
+    return {
+        dni,
+        nombre,
+        apellido,
+        categoria: categoria || 'SIN CATEGORÍA',
+        usuarioCreacion: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null,
+        fechaCreacion: new Date().toISOString()
+    };
+}
+
+/** Lee el archivo del padrón (FileReader UTF-8) y lo importa por lotes. */
+async function importarPadronPilotos(event) {
+    if (!puedeEditar()) return;
+    const input = (event && event.target) || document.getElementById('piloto-import-file');
+    const archivo = input && input.files ? input.files[0] : null;
+    if (!archivo) return;
+
+    await conFeedbackDeImportacion(input, async () => {
+        const texto = await new Promise((resolve, reject) => {
+            const lector = new FileReader();
+            lector.onload = () => resolve(String(lector.result || ''));
+            lector.onerror = () => reject(lector.error || new Error('No se pudo leer el archivo.'));
+            lector.readAsText(archivo, 'UTF-8');
+        });
+
+        const documento = new DOMParser().parseFromString(texto, 'text/html');
+        const registros = extraerRegistrosPadron(documento);
+        if (registros.length === 0) {
+            mostrarToast('El archivo no contiene pilotos válidos para importar.', 'warning');
+            return;
+        }
+        const btn = document.getElementById('piloto-btn-importar');
+        const enNube = await importarPadronLotes(registros, btn);
+        mostrarToast(`Padrón importado: ${registros.length} pilotos registrados correctamente${enNube ? ' (local + nube)' : ' (solo local, sin sesión en la nube)'}.`);
+        await listarPilotos();
+    });
+}
+
+/** Carga el padrón inicial embebido (fetch a public/padron_inicial.html) con feedback de UI. */
+async function dispararImportarPadronInicial() {
+    if (!puedeEditar()) return;
+    await conFeedbackDeImportacion(null, async () => {
+        const btn = document.getElementById('piloto-btn-importar-inicial');
+        await importarPadronInicial(btn);
+        await listarPilotos();
+    });
+}
+
+/** Envuelve la lógica de importación con el estado del botón + manejo de errores. */
+async function conFeedbackDeImportacion(input, accion) {
+    const botones = ['piloto-btn-importar', 'piloto-btn-importar-inicial']
+        .map(id => document.getElementById(id))
+        .filter(Boolean);
+    const estadosPrevios = botones.map(b => ({ b, html: b.innerHTML }));
+    botones.forEach(b => { b.disabled = true; b.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Procesando padrón...'; });
+
+    try {
+        await accion();
+    } catch (err) {
+        console.error('[pilotos] Error al importar el padrón:', err);
+        mostrarToast('Error al importar el padrón: ' + (err && err.message ? err.message : err), 'error');
+    } finally {
+        if (input) input.value = ''; // permite re-elegir el mismo archivo
+        botones.forEach(b => { b.disabled = false; b.innerHTML = ''; });
+        estadosPrevios.forEach(({ b, html }) => { b.innerHTML = html; });
+    }
+}
+
+/** Guarda los registros en IndexedDB + Firestore en lotes (sin congelar la UI). */
+async function importarPadronLotes(registros, btn) {
+    invalidarCache('pilotos');
+    const dbLocal = await openDB();
+    const tx = abrirTransaccionDefensiva(dbLocal, 'pilotos', 'readwrite');
+    if (!tx) throw new Error("El store local 'pilotos' no está disponible.");
+    const storeLocal = tx.objectStore('pilotos');
+    registros.forEach(item => { try { storeLocal.put(item); } catch (e) { /* Map ya deduplicó */ } });
+    await new Promise((resolve, reject) => {
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error || new Error('Error al guardar el padrón en local.'));
+        tx.onabort = () => reject(tx.error || new Error('Importación local cancelada.'));
+    });
+
+    const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+    const haySesion = !!(rt && rt.dbFirebase && typeof rt.writeBatch === 'function'
+        && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser);
+    if (!haySesion) return false;
+
+    for (let i = 0; i < registros.length; i += PILOTOS_BATCH_MAX) {
+        const lote = rt.writeBatch(rt.dbFirebase);
+        registros.slice(i, i + PILOTOS_BATCH_MAX).forEach(item => {
+            lote.set(rt.doc(rt.dbFirebase, 'pilotos', item.dni), item, { merge: true });
+        });
+        await lote.commit();
+        const subidos = Math.min(i + PILOTOS_BATCH_MAX, registros.length);
+        if (btn) btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Subiendo ${subidos}/${registros.length}...`;
+        await new Promise(r => setTimeout(r, 0)); // cede el hilo: no congela el navegador
+    }
+    return true;
+}
 // Planilla de sanciones a pilotos con documentación adjunta (PDF).
 // Persistencia: los registros viven en el store 'penalidades' (DB_VERSION 13) y
 // los PDFs en el store existente 'adjuntos', referenciados con `penalidadId`

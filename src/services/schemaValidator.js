@@ -7,9 +7,15 @@
 // Esta es la fuente limpia y reutilizable (testeable) para los futuros
 // módulos de /src; main.js la expone como window.__CDA_SCHEMA_VALIDATOR__.
 //
-// Garantiza que ningún objeto corrupto (no-objeto, sin id, con funciones,
-// NaN o referencias circulares) llegue a persistirse y rompa el esquema.
+// Garantiza que ningún objeto corrupto (no-objeto, sin clave primaria, con
+// funciones, NaN o referencias circulares) llegue a persistirse y rompa el
+// esquema. 'pilotos' usa 'dni' (string) como clave; el resto usa 'id' numérico.
 // ============================================================
+
+/** Clave primaria por store ('pilotos' → 'dni', el resto → 'id'). */
+export function clavePrimariaStore(storeName) {
+  return storeName === 'pilotos' ? 'dni' : 'id';
+}
 
 /**
  * Valida un registro antes de escribirlo.
@@ -24,8 +30,9 @@ export function validarRegistro(storeName, item) {
     return fail(resultado, storeName, 'el registro no es un objeto simple');
   }
 
-  if (typeof item.id === 'undefined') {
-    return fail(resultado, storeName, "falta el campo 'id'");
+  const clave = clavePrimariaStore(storeName);
+  if (typeof item[clave] === 'undefined') {
+    return fail(resultado, storeName, `falta el campo '${clave}'`);
   }
 
   const prohibidos = Object.values(item).some(
