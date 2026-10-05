@@ -2945,6 +2945,253 @@ async function eliminarPiloto(dni) {
     await listarPilotos();
 }
 
+// ==================== PILOTOS: DASHBOARD DEL MÓDULO ====================
+// Overview del módulo (vista padre del grupo desplegable). Lee los stores
+// 'pilotos' y 'penalidades' por la misma vía genérica del resto de la app
+// (getTodos → IndexedDB + caché, con sync opcional a Firestore), así que el
+// render es el mismo offline y en la nube.
+//
+// Los 4 ítems del tablero se pintan con clases YA existentes (.stat-card,
+// .chart-card, .badge-*, .tag): lo único propio son las barras .cat-bar-*,
+// el shimmer .cat-bar-skeleton y la variante de alerta .stat-card-alerta.
+// SIN librerías de gráficos: las barras son <div> con width en %.
+
+// Paleta de tonos para las barras: se cicla en el orden del proyecto
+// (cyan → verde → ámbar) para que las categorías se distingan sin salir de
+// la identidad visual del dashboard. La variante de alerta se aplica aparte.
+const TONOS_CATEGORIA = [
+    'linear-gradient(90deg, var(--accent-blue), var(--accent-green))',
+    'linear-gradient(90deg, #00d2d3, #0097f6)',
+    'linear-gradient(90deg, var(--accent-green), #00d2d3)',
+    'linear-gradient(90deg, #ff9f43, var(--accent-blue))'
+];
+
+// Categorías que la ACTC no fiscaliza para el CDA: detectar un piloto en
+// alguna de ellas es la seña de alerta HOY. Cuando exista el cruce real con
+// la fuente oficial, esta lista pasa a ser solo el fallback por categoría.
+const CATEGORIAS_ACTC_NO_FISCALIZADAS = [
+    'TURISMO CARRETERA', 'TURISMO DE CARRERA', 'TC PISTA', 'TC2000', 'TC 2000', 'TCP'
+];
+
+/** Renderiza el dashboard completo del módulo Pilotos. */
+async function renderDashboardPilotos() {
+    pintarSkeletonPilotos();
+    try {
+        const [pilotos, penalidades] = await Promise.all([
+            getTodos('pilotos'),
+            getTodos('penalidades')
+        ]);
+        renderKpiPilotos(Array.isArray(pilotos) ? pilotos : [], Array.isArray(penalidades) ? penalidades : []);
+        renderBarrasCategorias(Array.isArray(pilotos) ? pilotos : []);
+        renderSancionados(Array.isArray(penalidades) ? penalidades : []);
+    } catch (err) {
+        console.error('[pilotos] Error al renderizar el dashboard:', err);
+        mostrarToast('No se pudo cargar el resumen de pilotos.', 'error');
+    }
+}
+
+/** Placeholder animado mientras llegan los datos (evita el cuadro vacío). */
+function pintarSkeletonPilotos() {
+    const cont = document.getElementById('pilotos-categorias-body');
+    if (cont) {
+        cont.innerHTML = `<div class="cat-bar-skeleton">${
+            Array.from({ length: 5 }, () => '<div class="cat-bar-track"></div>').join('')
+        }</div>`;
+    }
+    const cuerpo = document.getElementById('pilotos-sancionados-body');
+    if (cuerpo) {
+        cuerpo.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">Cargando sanciones…</td></tr>';
+    }
+}
+
+/**
+ * Normaliza el texto de categoría para agrupar.
+ * El padrón real trae variantes que deben caer en la MISMA barra, por ejemplo
+ * "SPORT HISTORICO" y "Sport Histórico  " (tildes + espacios de sobra).
+ * Por eso: mayúsculas + sin tildes (NFD quita el diacrítico) + espacios colapsados.
+ */
+function normalizarCategoriaPiloto(valor) {
+    return String(valor === null || valor === undefined ? '' : valor)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')   // quita tildes: Histórico -> HISTORICO
+        .toUpperCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/** ¿La categoría está en la lista de categorías no fiscalizadas por la ACTC? */
+function categoriaEnAlertaActc(categoria) {
+    const c = normalizarCategoriaPiloto(categoria);
+    return CATEGORIAS_ACTC_NO_FISCALIZADAS.some(alerta => c.includes(alerta));
+}
+
+/** Arma el conteo por categoría (dedup por DNI, que es la clave primaria del store). */
+function conteoPorCategoriaPilotos(pilotos) {
+    const porCategoria = new Map();
+    const vistos = new Set();
+    pilotos.forEach(p => {
+        const dni = String(p && p.dni ? p.dni : '').trim();
+        if (dni && vistos.has(dni)) return; // el mismo piloto no cuenta dos veces
+        if (dni) vistos.add(dni);
+        const categoria = normalizarCategoriaPiloto(p && p.categoria) || 'SIN CATEGORÍA';
+        porCategoria.set(categoria, (porCategoria.get(categoria) || 0) + 1);
+    });
+    return Array.from(porCategoria.entries())
+        .map(([categoria, cantidad]) => ({ categoria, cantidad, alerta: categoriaEnAlertaActc(categoria) }))
+        .sort((a, b) => b.cantidad - a.cantidad || a.categoria.localeCompare(b.categoria, 'es-AR'));
+}
+
+/** Convierte 'YYYY-MM-DD' a fecha local comparable (evita el corrimiento de UTC). */
+function fechaPenalidadAMs(fechaStr) {
+    if (!fechaStr) return null;
+    const p = String(fechaStr).split('-');
+    if (p.length !== 3) return null;
+    const ms = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).getTime();
+    return Number.isNaN(ms) ? null : ms;
+}
+
+/** Día de hoy a medianoche local, para comparar solo por fecha (sin horas). */
+function inicioDeHoy(hoy = new Date()) {
+    return new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).getTime();
+}
+
+/**
+ * Clasifica las penalidades en vigentes y cumplidas.
+ * Sin fecha de fin = sanción indefinida → sigue vigente.
+ * La fecha de fin igual al día de hoy todavía está vigente (vence mañana).
+ */
+function clasificarPenalidades(penalidades, hoy = new Date()) {
+    const limite = inicioDeHoy(hoy);
+    const vigentes = [];
+    const cumplidas = [];
+    penalidades.forEach(p => {
+        const fin = fechaPenalidadAMs(p && p.fechaFin);
+        if (fin === null || fin >= limite) vigentes.push(p);
+        else cumplidas.push(p);
+    });
+    return { vigentes, cumplidas };
+}
+
+/** Ítem 1 + 4: KPIs de cabecera (total, sanciones vigentes y alerta ACTC). */
+function renderKpiPilotos(pilotos, penalidades) {
+    const elTotal = document.getElementById('pilotos-kpi-total');
+    const notaTotal = document.getElementById('pilotos-kpi-total-nota');
+    const elVig = document.getElementById('pilotos-kpi-vigentes');
+    const notaVig = document.getElementById('pilotos-kpi-vigentes-nota');
+    const elActc = document.getElementById('pilotos-kpi-actc');
+    const notaActc = document.getElementById('pilotos-kpi-actc-nota');
+    const anioActc = document.getElementById('pilotos-kpi-actc-anio');
+
+    const conteo = conteoPorCategoriaPilotos(pilotos);
+    const total = conteo.reduce((acc, c) => acc + c.cantidad, 0);
+    const enAlerta = conteo.filter(c => c.alerta);
+    const pilotosEnAlerta = enAlerta.reduce((acc, c) => acc + c.cantidad, 0);
+    const fmt = n => new Intl.NumberFormat('es-AR').format(n);
+
+    if (elTotal) elTotal.textContent = fmt(total);
+    if (notaTotal) {
+        notaTotal.textContent = total === 0
+            ? 'Todavía no hay pilotos cargados'
+            : `En ${conteo.length} ${conteo.length === 1 ? 'categoría' : 'categorías'}`;
+    }
+
+    const { vigentes, cumplidas } = clasificarPenalidades(penalidades);
+    if (elVig) elVig.textContent = fmt(vigentes.length);
+    if (notaVig) {
+        notaVig.textContent = penalidades.length === 0
+            ? 'Sin sanciones cargadas'
+            : `${cumplidas.length} cumplida${cumplidas.length === 1 ? '' : 's'}`;
+    }
+
+    if (elActc) elActc.textContent = fmt(pilotosEnAlerta);
+    if (anioActc) anioActc.textContent = `· ${new Date().getFullYear()}`;
+    if (notaActc) {
+        notaActc.textContent = pilotosEnAlerta > 0
+            ? `${enAlerta.length} ${enAlerta.length === 1 ? 'categoría' : 'categorías'} sin fiscalizar`
+            : 'Ninguna categoría en observación';
+    }
+}
+
+// ---------------- Importación masiva del padrón CDA (HTML/XLS) ----------------
+/** Ítem 2: barras horizontales nativas, proporcionales a la categoría más numerosa. */
+function renderBarrasCategorias(pilotos) {
+    const cont = document.getElementById('pilotos-categorias-body');
+    if (!cont) return;
+
+    const conteo = conteoPorCategoriaPilotos(pilotos);
+    const total = conteo.reduce((acc, c) => acc + c.cantidad, 0);
+    const etiquetaTotal = document.getElementById('pilotos-cat-total');
+    if (etiquetaTotal) etiquetaTotal.textContent = total > 0 ? `${total} pilotos` : '';
+
+    if (conteo.length === 0) {
+        cont.innerHTML = '<div class="pilotos-vacio">Sin pilotos cargados todavía.<br>Importá el padrón desde el Listado de Pilotos para ver la distribución.</div>';
+        return;
+    }
+
+    // El ancho es relativo a la categoría más numerosa: la más grande ocupa el 100%.
+    const maximo = Math.max(...conteo.map(c => c.cantidad), 1);
+    cont.innerHTML = conteo.map((c, i) => {
+        const pct = Math.max((c.cantidad / maximo) * 100, 3);
+        const share = total > 0 ? Math.round((c.cantidad / total) * 100) : 0;
+        const estilo = c.alerta ? '' : ` background:${TONOS_CATEGORIA[i % TONOS_CATEGORIA.length]};`;
+        return `<div class="cat-bar-row">
+            <div class="cat-bar-head">
+                <span class="cat-bar-name" title="${escapeHtml(c.categoria)}">${escapeHtml(c.categoria)}</span>
+                <span class="cat-bar-count">${c.cantidad} · ${share}%</span>
+            </div>
+            <div class="cat-bar-track">
+                <div class="cat-bar-fill${c.alerta ? ' is-alerta' : ''}" style="width:${pct}%;${estilo}"></div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+/** Ítem 3: mini-tabla de sancionados con estado condicional (vigente / cumplida). */
+function renderSancionados(penalidades) {
+    const cuerpo = document.getElementById('pilotos-sancionados-body');
+    if (!cuerpo) return;
+
+    if (penalidades.length === 0) {
+        cuerpo.innerHTML = '<tr><td colspan="3" class="pilotos-vacio">No hay sanciones registradas.</td></tr>';
+        return;
+    }
+
+    const hoy = new Date();
+    const limite = inicioDeHoy(hoy);
+    const { vigentes, cumplidas } = clasificarPenalidades(penalidades, hoy);
+
+    // Vigentes primero (la que vence antes, arriba) y luego las cumplidas recientes.
+    const porVencimiento = (a, b) => {
+        const fa = fechaPenalidadAMs(a.fechaFin);
+        const fb = fechaPenalidadAMs(b.fechaFin);
+        if (fa === null) return 1;   // sin vencimiento, al final
+        if (fb === null) return -1;
+        return fa - fb;
+    };
+    const lista = [
+        ...vigentes.sort(porVencimiento),
+        ...cumplidas.sort((a, b) => (fechaPenalidadAMs(b.fechaFin) || 0) - (fechaPenalidadAMs(a.fechaFin) || 0))
+    ].slice(0, 12);
+
+    cuerpo.innerHTML = lista.map(p => {
+        const nombre = `${escapeHtml(String(p.nombre || ''))} ${escapeHtml(String(p.apellido || ''))}`.trim() || 'Piloto';
+        const sancion = escapeHtml(String(p.sancion || '').trim());
+        const motivo = escapeHtml(String(p.motivo || '').trim());
+        const detalle = motivo || '—';
+        const fin = fechaPenalidadAMs(p.fechaFin);
+        const esVigente = fin === null || fin >= limite;
+        const vencimiento = p.fechaFin ? escapeHtml(formatearFechaVisual(p.fechaFin)) : (esVigente ? 'Sin fecha' : '—');
+        const estado = esVigente
+            ? '<span class="badge badge-warning">Vigente</span>'
+            : '<span class="badge badge-success">Cumplida</span>';
+        return `<tr>
+            <td style="font-weight:600;">${nombre}</td>
+            <td class="sanccion-texto">${detalle}${sancion ? ` <span class="tag">${sancion}</span>` : ''}</td>
+            <td class="vencimiento${esVigente ? ' is-vigente' : ''}">${vencimiento} ${estado}</td>
+        </tr>`;
+    }).join('');
+}
+
 // ---------------- Importación masiva del padrón CDA (HTML/XLS) ----------------
 // Parser 100% nativo (FileReader + DOMParser, sin librerías): el padrón de la
 // CDA es un HTML con tablas. Columnas: Apellido = celda 1, Nombre = celda 2,

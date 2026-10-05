@@ -38,14 +38,31 @@ o editar cada cosa.
      categorías, entregas, ubicaciones/sectores con stock por ubicación;
      edición/eliminación de movimientos solo admin con rollback.
    - *Alojamiento*, *Categorías y Circuitos*, *Configuración* (solo admin).
-   - *Pilotos*: grupo con dos hijos — "Listado de Pilotos" (placeholder) y
-     "Penalidades" (planilla de sanciones: nombre, apellido, DNI, nro. de auto,
+   - *Pilotos*: grupo con dos hijos — "Listado de Pilotos" (alta manual con DNI
+     como clave única, tabla con buscador y paginación de 20 por página, e
+     **importación masiva del padrón**) y "Penalidades" (planilla de sanciones: nombre, apellido, DNI, nro. de auto,
      categoría, **sanción de texto libre con sugerencias editables vía ruedita**,
      **fecha de inicio (obligatoria) y fecha de fin (opcional)**, motivo ampliado
      y adjuntos PDF; alta, listado con buscador + columnas Inicio/Fin y
      eliminación con confirmación). La **ruedita** abre el catálogo de tipos de
      sanción, donde se pueden **agregar, renombrar y borrar TODOS los tipos**
      (incluidos los 5 que vienen por defecto).
+    - *Vista padre "Control de Pilotos"*: el clic en el grupo abre un
+      **dashboard del módulo** (ya no es un placeholder) con 4 ítems:
+      ① KPI de pilotos registrados, ② **distribución por categoría** en barras
+      horizontales (ancho proporcional al máximo, agrupando variantes con/sin
+      tildes), ③ **panel de pilotos sancionados** (nombre, sanción/motivo y
+      vencimiento con badge "Vigente"/"Cumplida") y ④ KPI de **alerta ACTC**
+      con borde destacado (hoy estimado por categoría: lista de categorías que
+      la ACTC no fiscaliza, sin cruce con la fuente oficial). Dos atajos al pie
+      saltan al Listado y a Penalidades.
+   - *Importación del padrón*: dos botones en el Listado de Pilotos — **"Cargar
+     Padrón Inicial"** (descarga el padrón publicado por la CDA, ya incluido en el
+     proyecto) y **"Importar Padrón"** (elegir un archivo HTML/XLS propio). Ambas
+     leen el archivo en el navegador, lo parsean sin librerías externas, deduplican
+     por DNI y dan de alta miles de pilotos sin congelar la pantalla; si hay sesión
+     en la nube, los datos suben por lotes. Repetir la importación es seguro: los
+     pilotos que ya existen se actualizan, no se duplican.
 5. **Roles**: admin (acceso total), editor (carga/edición), viewer (solo lectura),
    supervisor (dashboard) y permisos "personalizados" por módulo con las
    funciones `ver/crear/editar/eliminar`.

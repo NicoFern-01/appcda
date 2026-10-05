@@ -4,7 +4,69 @@
 
 ## Trabajo reciente (última sesión)
 
-**Anti-colgue del Listado de Pilotos: paginación en cliente (20/pág) + buscador con debounce (300 ms).**
+**Paso 2 resuelto: la vista padre "Pilotos" pasa de placeholder a dashboard dinámico de 4 ítems.**
+
+### Cambios de esta sesión
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| Vista | `index.html` | `#view-pilotos` reemplaza "Módulo en construcción" por: `header` (`page-title` "Control de Pilotos"), fila 1 `.stats-grid` con 3 `.stat-card` (KPI total `#pilotos-kpi-total`, sanciones vigentes `#pilotos-kpi-vigentes`, alerta ACTC `#pilotos-kpi-actc` en `.stat-card-alerta` + `.stat-alerta-num`), fila 2 `.charts-grid` con `.chart-card` de barras (`#pilotos-categorias-body`, cabecera `#pilotos-cat-total`) y mini-tabla `.tabla-sancionados` (`thead` Nombre y Apellido / Sanción / Motivo / Vencimiento, `tbody#pilotos-sancionados-body`), más un tercer `.charts-grid` de pie con `.dash-pie-links` (`.link-like` que llaman a `navegarDesdeDashboard('listado-pilotos'|'penalidades')`) y `.dash-aviso-actc` (texto de alcance del cruce). Los dos primeros `.stat-card` son `role="link"` navegables. |
+| CSS | `styles.css` | Bloque nuevo antes de "Filtro por mes del Calendario": `.cat-bar-*` (row/head/name/count/track/fill, `.is-alerta`), estados `.cat-bar-placeholder`/`.pilotos-vacio`, skeleton `.cat-bar-skeleton` + `@keyframes cat-shimmer`, `.tabla-sancionados*`, `.stat-card-alerta`/`.stat-icon-alerta`/`.stat-alerta-num`, `.dash-pie-links`/`.dash-aviso-actc` y media query móvil. Todo lo demás reutiliza vocabulario existente (`.stats-grid`, `.stat-card`, `.chart-card`, `.charts-grid`, `.badge-*`, `.tag`): **sin librerías de gráficos ni `.card`/`.progress-bar` nuevos**. |
+| Lógica | `app.js` | Bloque `// ==================== PILOTOS: DASHBOARD DEL MÓDULO ====================` (~línea 2948, antes de la sección de importación del padrón): `renderDashboardPilotos()` (skeleton → `Promise.all(getTodos('pilotos'), getTodos('penalidades'))` → KPIs/barras/sancionados; `catch` → `mostrarToast`), `pintarSkeletonPilotos()`, `normalizarCategoriaPiloto()` (**NFD quita tildes** + colapsa espacios: "Sport Histórico" y "SPORT HISTORICO" caen en la misma barra), `categoriaEnAlertaActc()` + `CATEGORIAS_ACTC_NO_FISCALIZADAS` (heurística actual), `conteoPorCategoriaPilotos()` (dedup por DNI con `Set`, orden desc), `fechaPenalidadAMs()` (parseo local de `YYYY-MM-DD`, evita el corrimiento UTC), `inicioDeHoy()`, `clasificarPenalidades()` (vigente = sin `fechaFin` o `fin >= hoy`; cumplidas en caso contrario), `renderKpiPilotos()` (`Intl.NumberFormat('es-AR')`), `renderBarrasCategorias()` (ancho % del máximo, mínimo 3%, `background` de `TONOS_CATEGORIA` salvo en alerta) y `renderSancionados()` (top 12, vigentes ordenadas por vencimiento más próximo, `escapeHtml` + `formatearFechaVisual`, badges `badge-warning`/`badge-success`). |
+| Disparador | `src/services/viewManager.js` | `cargarDatosVista()` `case 'pilotos': await invocarGlobal('renderDashboardPilotos')` (antes era `break` vacío). Función global en `app.js` → visible en `window`, mismo patrón que `listarPilotos`. |
+| Test | `tests/menu.spec.js` | El test de "Pilotos" pasa de validar el placeholder a validar el dashboard: `page-title`, ausencia de "Módulo en construcción", 1 `.stats-grid` + 2 `.charts-grid`, `#pilotos-kpi-total` con número, `.stat-card-alerta` presente, estado vacío de `#pilotos-categorias-body` (`Sin pilotos cargados`/`Cargando`) y las 3 columnas del `thead` de sancionados. **`renderDashboardPilotos` queda sin stub a propósito** (documentado en el comentario de `CARGADORES`): con IndexedDB vacía renderiza `0` + placeholder. |
+| `.context` | `activeContext.md`, `productContext.md` | Paso 2 marcado como resuelto y descripción del dashboard agregada al flujo de Pilotos. |
+
+### Bug real detectado con tests aislados
+
+Un test Node sobre las funciones puras (extraídas del propio `app.js`) descubrió
+que `normalizarCategoriaPiloto()` solo colapsaba espacios: el padrón real publica
+**"SPORT HISTORICO"** y **"Sport Histórico  "**, que salían como DOS barras
+distintas. Se corrigió agregando `normalize('NFD')` + borrado de diacríticos.
+Verificado: 10 aserciones en verde (agrupación, orden, alertas ACTC, clasificación
+de fechas incl. "vence hoy" y fechas inválidas, parseo sin corrimiento UTC).
+
+### Validaciones
+
+- `node --check app.js` → exit 0.
+- Test aislado de lógica pura (10 aserciones) → todas en verde.
+- `npx vite build` → exit 0 (560 ms). Los avisos sobre `db.js`/`app.js` sin
+  `type="module"` son preexistentes (scripts clásicos by design).
+- `npx playwright test --workers=1` → **6 passed / 2 skipped** (51,6 s), igual
+  al baseline. El test del dashboard validó el render real.
+
+### Estado de git
+
+Modificados sin commitear: `app.js`, `index.html`, `styles.css`,
+`src/services/viewManager.js`, `tests/menu.spec.js`,
+`.context/activeContext.md`, `.context/productContext.md`.
+
+### Sesión previa (conservada por referencia)
+
+**Aterrizaje en máquina nueva: entorno rearmado + Memory Bank corregido.**
+
+### Cambios de esta sesión
+
+| Aspecto | Detalle |
+|---|---|
+| Entorno | `node_modules` **no existía** tras el cambio de máquina → `npm install` (713 paquetes, 59 s). Faltaba también el navegador de Playwright: `npx playwright install chromium` (6 tests fallaban con `Executable doesn't exist`). Ambos son prerequisite de máquina, **no** cambios de código. |
+| `.env` | **Sigue sin existir** (por diseño, está en `.gitignore`). Hay que crearlo desde `.env.example` antes de tocar Firebase: `copy .env.example .env` y completar las claves. |
+| Corrección del Memory Bank | Detecté que la **importación del padrón** (funcionalidad del HEAD `58077e7`) **no estaba documentada** en este archivo pese a ser lo último que se escribió en el código. Registrada abajo (§ nueva) y en `productContext.md`. |
+
+### Importación masiva del padrón CDA (HEAD `58077e7`, antes no documentado)
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| Parser 100% nativo | `app.js` | `extraerRegistrosPadron()` (recorre `table tr`, dedup por DNI con `Map`), `parsearFilaPadron()` (**celda 1 = Apellido, 2 = Nombre, 3 = DNI, 16 = Categoría**; exige ≥17 celdas, salta cabeceras con "tipo"/"auditor" y filas sin DNI o nombre; `toUpperCase()`; categoría vacía → `SIN CATEGORÍA`). Sin librerías: `FileReader` + `DOMParser`. |
+| Botones | `index.html` | `#piloto-btn-importar-inicial` (Cargar Padrón Inicial) y `#piloto-btn-importar` (Importar Padrón) + `#piloto-import-file` oculto (`accept=".html,.htm,.xls"`), dentro del form de pilotos. |
+| Padrón embebido | `public/padron_inicial.html` | Publicado por la CDA; `PADRON_INICIAL_URL = 'padron_inicial.html'` con `fetch(?v=Date.now())` como cache-busting. Vite lo copia a `dist/`. |
+| Escritura por lotes | `app.js` | `importarPadronLotes()`: `invalidarCache('pilotos')` → una **única transacción** IndexedDB con `storeLocal.put()` por registro → y solo si hay sesión en la nube, `writeBatch` de a `PILOTOS_BATCH_MAX = 400` con `doc(db,'pilotos',dni)` + `set(...,{merge:true})` (upsert). `setTimeout(r,0)` entre lotes para no congelar el navegador. Devuelve `true` si subió a la nube. |
+| Feedback | `app.js` | `conFeedbackDeImportacion()` deshabilita ambos botones y muestra spinner + progreso `Subiendo i/N...`; captura errores con `mostrarToast`. |
+
+> Nota: el HTML nombra el campo "Apellido" en celda 1 y "Nombre" en celda 2, pero el
+> header de `index.html` escribe `Nombre *` primero. Ojo al auditar el mapeo del padrón.
+
+### Sesión previa — Anti-colgue del Listado de Pilotos: paginación en cliente (20/pág) + buscador con debounce (300 ms).
 
 ### Cambios de esta sesión
 
@@ -119,15 +181,22 @@
 - La sincronización con Firestore es **genérica por nombre de store**: `penalidades`,
   `tiposSancion` y sus adjuntos sincronizan solos (cubiertos por el comodín de
   `firestore.rules`) si `VITE_CDA_SYNC_USUARIOS_NUBE` está habilitado.
-- Red de seguridad E2E: **5 tests de menú** (sin credenciales) + 2 de `app.spec.js`
-  (requieren credenciales / login desactivado).
+- Red de seguridad E2E: **6 tests de menú** (sin credenciales) + 2 de `app.spec.js`
+  (requieren credenciales / login desactivado). Suite completa verificada en esta
+  sesión: **6 passed / 2 skipped** (2,0 min, exit 0).
 
 ## Próximos pasos lógicos
 
-1. **Commitear** el Listado de Pilotos (store `pilotos` V15, formulario + escudo anti-duplicados + tabla reactiva) junto a Penalidades. Mensaje sugerido:
-   `pilotos: listado con alta manual, dni como clave y tabla reactiva`.
-2. **Diseñar la vista "Pilotos" (overview)** (sigue de placeholder): ¿resumen del
-   módulo (conteos por categoría, últimos sancionados) o redirigir a Listado?
+1. **Crear `.env`** en esta máquina (`copy .env.example .env` + claves de Firebase).
+   Sin él, la app arranca sin identidad en la nube y la importación del padrón solo
+   escribe en local.
+2. ~~**Diseñar la vista "Pilotos" (overview)**~~ → **RESUELTO en esta sesión**:
+   `#view-pilotos` ahora es un dashboard dinámico de 4 ítems (KPI total,
+   barras por categoría, sancionados y alerta ACTC) disparado por
+   `invocarGlobal('renderDashboardPilotos')`. Mejoras posibles: cruce REAL con
+   la fuente ACTC (hoy es heurística por `CATEGORIAS_ACTC_NO_FISCALIZADAS`),
+   reactividad al alta de pilotos desde la misma sesión y filtrado por
+   categoría/sanción en los paneles.
 3. Evaluar **edición** de penalidades (hoy alta + baja; las `funciones` del
    catálogo no incluyen `editar` a propósito) y exportación/imprenta del listado.
 4. Recordar: usuarios no-admin con permisos personalizados persistidos no ven
@@ -135,8 +204,17 @@
 5. Pendientes de sesiones previas: migración ESM de `app.js`, auditoría
    `technical_analysis.md` (S1 XSS / S2 CSV injection), tests E2E aislados.
 
+> El paso 1 anterior ("Commitear el Listado de Pilotos") quedó **resuelto**: todo
+> está commiteado y pusheado en `58077e7` "Carga de PIlotod" (`main` = `origin/main`).
+> El árbol de trabajo estaba limpio al iniciar esta sesión.
+
 ## Advertencias operativas
 
+- **Máquina nueva / repo recién clonado**: el setup mínimo es
+  `npm install` **+ `npx playwright install chromium`** (los navegadores viven en
+  `%LOCALAPPDATA%\ms-playwright`, fuera del repo, así que no viajan con el clone;
+  sin esto los 6 tests de menú fallan con `Executable doesn't exist`, no con un
+  error de código). Además crear `.env` desde `.env.example`.
 - **NUNCA** correr el test de login desactivado contra Firebase de producción:
   un login fallido dispara `intentarMigrarCuentaLocal()` y MUTA la cuenta real.
 - Publicar `firestore.rules` antes de habilitar `VITE_CDA_SYNC_USUARIOS_NUBE`.

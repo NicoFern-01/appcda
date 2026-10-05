@@ -344,7 +344,8 @@ export async function cargarDatosVista(viewId) {
             await invocarGlobal('listarEstadisticasPersonal');
             break;
         case 'pilotos':
-            // Overview del módulo (placeholder histórico, sin tabla propia).
+            // Dashboard del módulo: KPIs + distribución por categoría + sancionados.
+            await invocarGlobal('renderDashboardPilotos');
             break;
         case 'listado-pilotos':
             await invocarGlobal('listarPilotos');

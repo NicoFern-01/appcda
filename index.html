@@ -1010,16 +1010,104 @@
                 </div>
             </div>
 
-            <!-- VIEW: PILOTOS (padre del grupo desplegable) -->
+            <!-- VIEW: PILOTOS (dashboard del módulo: padre del grupo desplegable) -->
             <section id="view-pilotos" class="view">
                 <header>
                     <div>
-                        <h1 class="page-title">Pilotos</h1>
-                        <p class="page-subtitle">Gestión de pilotos del CDA</p>
+                        <h1 class="page-title">Control de Pilotos</h1>
+                        <p class="page-subtitle">Resumen del padrón de pilotos, categorías y sanciones vigentes</p>
                     </div>
                 </header>
-                <div class="table-card">
-                    <p style="color:var(--text-secondary);margin:0;">Módulo en construcción. Use el submenú <strong>Listado de Pilotos</strong> para acceder al listado.</p>
+
+                <!-- FILA 1: KPIs (reutiliza .stats-grid / .stat-card del Dashboard General) -->
+                <div class="stats-grid">
+                    <!-- ÍTEM 1: Total de pilotos (scorecard) -->
+                    <div class="stat-card dashboard-link-card" role="link" tabindex="0"
+                         onclick="navegarDesdeDashboard('listado-pilotos')"
+                         onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('listado-pilotos')"
+                         title="Ir al Listado de Pilotos" aria-controls="pilotos-categorias-card">
+                        <div class="stat-info">
+                            <h3>Pilotos Registrados</h3>
+                            <p id="pilotos-kpi-total">—</p>
+                            <span class="stat-delta" id="pilotos-kpi-total-nota">Cargando padrón…</span>
+                        </div>
+                        <div class="stat-icon stat-icon-blue">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <path d="M16 11a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-8 1a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h9v-2.5c0-.83.42-1.6 1.13-2.2A12.6 12.6 0 0 0 8 14zm8 0c-2.67 0-8 1.33-8 4v2h16v-2c0-2.67-5.33-4-8-4z"/>
+                            </svg>
+                        </div>
+                    </div>
+
+                    <!-- Acompañante: sanciones vigentes (contexto del panel de sancionados) -->
+                    <div class="stat-card dashboard-link-card" role="link" tabindex="0"
+                         onclick="navegarDesdeDashboard('penalidades')"
+                         onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('penalidades')"
+                         title="Ir a Penalidades" aria-controls="pilotos-sancionados-card">
+                        <div class="stat-info">
+                            <h3>Sanciones Vigentes</h3>
+                            <p id="pilotos-kpi-vigentes">—</p>
+                            <span class="stat-delta" id="pilotos-kpi-vigentes-nota">—</span>
+                        </div>
+                        <div class="stat-icon stat-icon-red">
+                            <i class="fa-solid fa-gavel"></i>
+                        </div>
+                    </div>
+
+                    <!-- ÍTEM 4: Auditoría ACTC / alertas internacionales (borde de alerta) -->
+                    <div class="stat-card stat-card-alerta">
+                        <div class="stat-info">
+                            <h3>Alerta ACTC <span id="pilotos-kpi-actc-anio" style="font-weight:400;"></span></h3>
+                            <p id="pilotos-kpi-actc" class="stat-alerta-num">—</p>
+                            <span class="stat-delta" id="pilotos-kpi-actc-nota">Sin cruces con fuente externa</span>
+                        </div>
+                        <div class="stat-icon stat-icon-alerta">
+                            <i class="fa-solid fa-triangle-exclamation"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- FILA 2: distribución por categoría + sancionados (reutiliza .charts-grid / .chart-card) -->
+                <div class="charts-grid">
+                    <!-- ÍTEM 2: Distribución por categoría (barras CSS nativas, sin Chart.js) -->
+                    <div class="chart-card" id="pilotos-categorias-card">
+                        <h3>Distribución por Categoría <span id="pilotos-cat-total" style="font-size:0.8rem; color:var(--text-secondary); font-weight:400;"></span></h3>
+                        <div id="pilotos-categorias-body" class="cat-bars">
+                            <div class="cat-bar-placeholder">Cargando categorías…</div>
+                        </div>
+                    </div>
+
+                    <!-- ÍTEM 3: Pilotos sancionados (nombre, sanción/motivo, vencimiento) -->
+                    <div class="chart-card" id="pilotos-sancionados-card">
+                        <h3>Pilotos Sancionados <span style="font-size:0.8rem; color:var(--text-secondary); font-weight:400;">Vigentes y cumplidas</span></h3>
+                        <div class="table-responsive">
+                            <table class="tabla-sancionados">
+                                <thead>
+                                    <tr>
+                                        <th style="width:34%;">Nombre y Apellido</th>
+                                        <th style="width:44%;">Sanción / Motivo</th>
+                                        <th style="width:22%;">Vencimiento</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pilotos-sancionados-body">
+                                    <tr><td colspan="3" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">Cargando sanciones…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pie: atajos a las vistas hijas + nota de alcance del cruce ACTC -->
+                <div class="charts-grid">
+                    <div class="chart-card" style="grid-column: 1 / -1;">
+                        <div class="dash-pie-links">
+                            <a class="link-like" onclick="navegarDesdeDashboard('listado-pilotos')" role="button" tabindex="0">Ver Listado de Pilotos</a>
+                            <a class="link-like" onclick="navegarDesdeDashboard('penalidades')" role="button" tabindex="0">Ver Penalidades</a>
+                            <span class="dash-aviso-actc">
+                                <i class="fa-solid fa-circle-info"></i>
+                                Cruce ACTC en desarrollo: hoy se detecta por la categoría registrada, sin consulta a la fuente oficial.
+                            </span>
+                        </div>
+                    </div>
                 </div>
             </section>
 

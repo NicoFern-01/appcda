@@ -17,6 +17,10 @@ const GRUPOS = [
 ];
 
 // Cargadores que `cargarDatosVista` invoca al navegar (evitan IndexedDB/red).
+// EXCEPCIONES que se dejan REALES a propósito:
+//   - `listarPilotos`: valida importación real del padrón.
+//   - `renderDashboardPilotos`: valida el render real del dashboard
+//     (KPIs en 0 + placeholder de categorías con IndexedDB vacía).
 const CARGADORES = [
   'renderDashboard', 'cargarYParsearCalendario', 'listarCompetencias', 'listarGastos',
   'listarRendiciones', 'cargarPersonalCompetencia', 'renderDashboardInventario',
@@ -99,7 +103,7 @@ test.describe('Menú lateral — submenús desplegables', () => {
     await expect(page.locator('#submenu-personal')).toHaveClass(/collapsed/);
   });
 
-  test('El grupo "Pilotos" queda debajo de "Personal" y navega a su vista placeholder', async ({ page }) => {
+  test('El grupo "Pilotos" queda debajo de "Personal" y abre el dashboard del módulo', async ({ page }) => {
     await prepararMenu(page);
 
     // 1) Orden físico exacto del menú (según `orden` de CATALOGO_MODULOS).
@@ -126,6 +130,32 @@ test.describe('Menú lateral — submenús desplegables', () => {
     await page.locator('#menu-pilotos').click();
     await expect(page.locator('#submenu-pilotos')).not.toHaveClass(/collapsed/);
     await expect(page.locator('#view-pilotos')).toHaveClass(/active/);
+
+    // 3b) La vista padre ya NO es un placeholder: es el dashboard del módulo.
+    //     Grilla = .stats-grid (fila 1) + .charts-grid (fila 2), las mismas
+    //     clases del Dashboard General.
+    await expect(page.locator('#view-pilotos .page-title')).toHaveText('Control de Pilotos');
+    await expect(page.locator('#view-pilotos')).not.toContainText('Módulo en construcción');
+    // Dos .charts-grid: (1) distribución + sancionados, (2) pie de atajos.
+    await expect(page.locator('#view-pilotos .stats-grid')).toHaveCount(1);
+    await expect(page.locator('#view-pilotos .charts-grid')).toHaveCount(2);
+    await expect(page.locator('#pilotos-categorias-card')).toHaveCount(1);
+
+    // Ítem 1 (total de pilotos) e Ítem 4 (alerta ACTC, con borde de alerta).
+    await expect(page.locator('#pilotos-kpi-total')).toHaveText(/^[\d.]+$/);
+    await expect(page.locator('#pilotos-kpi-actc')).toHaveCount(1);
+    await expect(page.locator('#view-pilotos .stat-card-alerta')).toHaveCount(1);
+
+    // Ítem 2 (distribución por categoría): sin datos muestra el placeholder
+    // elegante, nunca un cuadro vacío.
+    const cats = page.locator('#pilotos-categorias-body');
+    await expect(cats).toHaveCount(1);
+    await expect(cats).toHaveText(/Sin pilotos cargados|Cargando/);
+
+    // Ítem 3 (pilotos sancionados): mini-tabla de 3 columnas.
+    const colsSanc = await page.locator('#pilotos-sancionados-card thead th').allTextContents();
+    expect(colsSanc.map((t) => t.trim())).toEqual(['Nombre y Apellido', 'Sanción / Motivo', 'Vencimiento']);
+    await expect(page.locator('#pilotos-sancionados-body')).toHaveCount(1);
 
     // 4) El hijo "Listado de Pilotos" navega a la vista con su formulario y tabla.
     await page.locator('.submenu-item[data-view="listado-pilotos"]').click();
