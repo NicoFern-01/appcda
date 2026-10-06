@@ -276,6 +276,19 @@ export function ejecutarSwitchView(viewId) {
 
     abrirSubmenuDeVista(viewId);
 
+    // Desuscripción en caliente del listener onSnapshot de 'pilotos': la
+    // función de retorno vive en persistenceService (_suscripciones) y hasta
+    // ahora nunca se invocaba, por lo que la colección seguía escuchándose
+    // (y re-renderizando la vista activa vía firebase-sync-complete) incluso
+    // fuera del Listado. Al volver a 'listado-pilotos', listarPilotos()
+    // re-activa la suscripción (suscribirPilotosTiempoReal es idempotente).
+    if (viewId !== 'listado-pilotos') {
+        try {
+            const p = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.persistencia) || null;
+            if (p && typeof p.cancelarSuscripcion === 'function') p.cancelarSuscripcion('pilotos');
+        } catch (e) { /* sin Firebase: no había suscripción que cancelar */ }
+    }
+
     try {
         routerNavigate(viewId);
     } catch (e) {

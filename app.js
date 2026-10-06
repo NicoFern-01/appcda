@@ -3000,7 +3000,7 @@ function pintarSkeletonPilotos() {
     }
     const cuerpo = document.getElementById('pilotos-sancionados-body');
     if (cuerpo) {
-        cuerpo.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">Cargando sanciones…</td></tr>';
+        cuerpo.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">Cargando sanciones…</td></tr>';
     }
 }
 
@@ -3078,14 +3078,9 @@ function renderKpiPilotos(pilotos, penalidades) {
     const notaTotal = document.getElementById('pilotos-kpi-total-nota');
     const elVig = document.getElementById('pilotos-kpi-vigentes');
     const notaVig = document.getElementById('pilotos-kpi-vigentes-nota');
-    const elActc = document.getElementById('pilotos-kpi-actc');
-    const notaActc = document.getElementById('pilotos-kpi-actc-nota');
-    const anioActc = document.getElementById('pilotos-kpi-actc-anio');
 
     const conteo = conteoPorCategoriaPilotos(pilotos);
     const total = conteo.reduce((acc, c) => acc + c.cantidad, 0);
-    const enAlerta = conteo.filter(c => c.alerta);
-    const pilotosEnAlerta = enAlerta.reduce((acc, c) => acc + c.cantidad, 0);
     const fmt = n => new Intl.NumberFormat('es-AR').format(n);
 
     if (elTotal) elTotal.textContent = fmt(total);
@@ -3103,13 +3098,19 @@ function renderKpiPilotos(pilotos, penalidades) {
             : `${cumplidas.length} cumplida${cumplidas.length === 1 ? '' : 's'}`;
     }
 
-    if (elActc) elActc.textContent = fmt(pilotosEnAlerta);
-    if (anioActc) anioActc.textContent = `· ${new Date().getFullYear()}`;
-    if (notaActc) {
-        notaActc.textContent = pilotosEnAlerta > 0
-            ? `${enAlerta.length} ${enAlerta.length === 1 ? 'categoría' : 'categorías'} sin fiscalizar`
-            : 'Ninguna categoría en observación';
-    }
+    // Tarjeta CONSULTA PILOTOS ACTC: el número gigante y la nota "N categoría sin
+    // fiscalizar" se eliminaron del DOM (no pertenecen al módulo). Solo queda la
+    // reacción de peligro cuando hay auto-sanciones vigentes emitidas por la
+    // auditoría (campo autoActc).
+    const autoActc = vigentes.filter(p => p && p.autoActc).length;
+
+    // Reacción visual de peligro: badge rojo "PELIGRO" + icono/tarjeta en rojo.
+    const tarjetaActc = document.getElementById('pilotos-kpi-actc-card');
+    const badgeActc = document.getElementById('pilotos-kpi-actc-badge');
+    const iconoActc = document.getElementById('pilotos-kpi-actc-icono');
+    if (badgeActc) badgeActc.hidden = autoActc === 0;
+    if (tarjetaActc) tarjetaActc.classList.toggle('is-peligro', autoActc > 0);
+    if (iconoActc) iconoActc.classList.toggle('is-peligro', autoActc > 0);
 }
 
 // ---------------- Importación masiva del padrón CDA (HTML/XLS) ----------------
@@ -3152,7 +3153,7 @@ function renderSancionados(penalidades) {
     if (!cuerpo) return;
 
     if (penalidades.length === 0) {
-        cuerpo.innerHTML = '<tr><td colspan="3" class="pilotos-vacio">No hay sanciones registradas.</td></tr>';
+        cuerpo.innerHTML = '<tr><td colspan="4" class="pilotos-vacio">No hay sanciones registradas.</td></tr>';
         return;
     }
 
@@ -3175,6 +3176,7 @@ function renderSancionados(penalidades) {
 
     cuerpo.innerHTML = lista.map(p => {
         const nombre = `${escapeHtml(String(p.nombre || ''))} ${escapeHtml(String(p.apellido || ''))}`.trim() || 'Piloto';
+        const categoria = escapeHtml(String(p.categoria || '').trim()) || '—';
         const sancion = escapeHtml(String(p.sancion || '').trim());
         const motivo = escapeHtml(String(p.motivo || '').trim());
         const detalle = motivo || '—';
@@ -3186,10 +3188,604 @@ function renderSancionados(penalidades) {
             : '<span class="badge badge-success">Cumplida</span>';
         return `<tr>
             <td style="font-weight:600;">${nombre}</td>
+            <td class="categoria-piloto">${categoria}</td>
             <td class="sanccion-texto">${detalle}${sancion ? ` <span class="tag">${sancion}</span>` : ''}</td>
             <td class="vencimiento${esVigente ? ' is-vigente' : ''}">${vencimiento} ${estado}</td>
         </tr>`;
     }).join('');
+}
+
+// ==================== PILOTOS: AUDITORÍA ACTC EN CALIENTE (SERPER) ====================
+// Formulario DENTRO de la tarjeta "Consulta Pilotos ACTC". 100% CLIENT-SIDE y apto
+// GitHub Pages: NO hay backend ni scripts de Python; el fetch() a serper.dev sale
+// directo desde el navegador con la key escrita por Configuración (localStorage
+// `serper_api_key`). Sin spinner ni búsquedas en segundo plano: TODO corre SOLO
+// bajo demanda (clic en "Auditar" o Enter). Flujo:
+//   1. Sanitización (.toUpperCase() + escapeHtml() antes de tocar el DOM) →
+//      busca al piloto en la colección `pilotos` (espejo local del padrón CDA
+//      + doc en caliente `/pilotos/{dni}` si hay sesión Firebase). Si NO está
+//      registrado → aviso "Postulante Externo" (gris, sin return) y la
+//      auditoría CONTINÚA transparente: AUDITORÍA UNIVERSAL (cualquier nombre
+//      se consulta igual contra la fuente externa).
+//   2. Caché preventiva: `/auditoria_cache/{dni}` con menos de 7 días (nube)
+//      + espejo en localStorage; si no hay resultado vigente, consulta la API
+//      de Serper.dev con la X-API-KEY guardada en `configuracionGlobal`.
+//   3. Analiza los primeros 5 `organic`: si el snippet confirma actividad ACTC
+//      del año corriente → POSITIVO → auto-sanción (DNI como ID, sin
+//      duplicados) + banner rojo flotante + contador de la tarjeta en +1.
+// JS puro: sin librerías; fetch + IndexedDB/Firestore por los puentes ya
+// existentes (window.__CDA_FIREBASE_RUNTIME__ / getTodos / guardar).
+
+const AUDITORIA_CACHE_DIAS = 7;
+const AUDITORIA_CACHE_LS = 'cda_auditoria_cache';
+
+/** Positivo pendiente de revisión humana. Se limpia al confirmar o cancelar. */
+let _pendienteActc = null;
+
+/** Categorías ACTC que pueden confirmar el snippet (texto normalizado). */
+const CATEGORIAS_CONSULTA_ACTC = [
+    { clave: 'turismo carretera', etiqueta: 'Turismo Carretera' },
+    { clave: 'tc pista', etiqueta: 'TC Pista' },
+    { clave: 'tc pick up', etiqueta: 'TC Pick Up' },
+    { clave: 'actc', etiqueta: 'ACTC' }
+];
+
+/** Año corriente de la auditoría (2026 al lanzamiento del módulo). */
+function anioAuditoriaActc() {
+    return new Date().getFullYear();
+}
+
+/** Minúsculas sin tildes + espacios colapsados (comparar nombres y snippets). */
+function normalizarTextoAuditoria(texto) {
+    return String(texto === null || texto === undefined ? '' : texto)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/**
+ * Pinta el estado dentro de la propia tarjeta "Consulta Pilotos ACTC".
+ * tipo: '' (vacío) | 'cargando' | 'ok' (verde) | 'alerta' (rojo) | 'error'.
+ * Sin spinner: el estado es solo texto (la auditoría es 100% bajo demanda).
+ */
+function pintarEstadoAuditoria(tipo, html) {
+    const estado = document.getElementById('auditoria-estado');
+    if (estado) {
+        estado.className = `auditoria-estado${tipo ? ' es-' + tipo : ''}`;
+        estado.innerHTML = html;
+    }
+}
+
+/**
+ * ==== VEREDICTO DE LA AUDITORÍA (cliente, sin depender de Firestore) ====
+ * Se pinta en cuanto hay resultado (JSON de Serper o caché ≤7 días), ANTES de
+ * cualquier escritura en la nube: si la cuota diaria de Firebase está en pausa,
+ * la UI igual muestra el veredicto en <1 s tras el fetch.
+ * - Positivo → mensaje ROJO bold exacto del alcance.
+ * - Negativo → mensaje VERDE bold exacto del alcance.
+ * `sufijoCache` es el tag "(resultado en caché ≤7 días)" o ''.
+ */
+function pintarVeredictoAuditoriaActc(positivo, sufijoCache) {
+    const anio = anioAuditoriaActc();
+    if (positivo) {
+        pintarEstadoAuditoria('alerta',
+            `⚠️ Actividad detectada en ACTC ${anio}. Piloto Inhabilitado.${sufijoCache}`);
+    } else {
+        pintarEstadoAuditoria('ok',
+            `✓ Piloto Verificado: Sin anomalías en ACTC ${anio}${sufijoCache}`);
+    }
+}
+
+/**
+ * ==== CORTE DE SEGURIDAD ANTI-CUOTA (Firestore en pausa) ====
+ * Con la cuota diaria agotada el SDK de Firebase NO rechaza el await: queda en
+ * backoff/reintentos y el `try/catch` nunca se activa → la UI se congelaría en
+ * "Consultando...". Esta carrera corta cualquier promesa de Firestore a los
+ * `ms` y devuelve `valorPorDefecto`; si la promesa falla DESPUÉS del corte,
+ * el catch interno la traga (aviso `Firestore en pausa temporal:`) para que no
+ * quede un rechazo sin atender. La escritura local (IndexedDB) previa al
+ * setDoc NO se ve afectada: sigue ocurriendo antes, dentro de `guardar()`.
+ */
+function conCorteDeSeguridad(promesa, ms = 1500, valorPorDefecto = null) {
+    return Promise.race([
+        Promise.resolve(promesa).catch(e => {
+            console.warn('Firestore en pausa temporal:', e);
+            return valorPorDefecto;
+        }),
+        new Promise(resolver => setTimeout(() => resolver(valorPorDefecto), ms))
+    ]);
+}
+
+/**
+ * Banner rojo flotante sobre el formulario de la tarjeta.
+ * Se enciende solo en positivo y se apaga al iniciar una nueva auditoría.
+ */
+function alternarBannerAuditoriaActc(mostrar) {
+    const banner = document.getElementById('auditoria-banner');
+    if (!banner) return;
+    banner.textContent = mostrar
+        ? '⚠️ Piloto inhabilitado: sanción confirmada y registrada en la lista de sancionados'
+        : '';
+    banner.hidden = !mostrar;
+}
+
+/**
+ * Renderiza el panel de evidencias para revisión humana.
+ * NO escribe nada en la base de datos. La sanción ocurre SOLO cuando el
+ * administrador pulsa "Confirmar Infracción y Sancionar Piloto".
+ */
+function mostrarEvidenciasActc(piloto, categoriaDetectada, resultado, sufijoCache) {
+    _pendienteActc = { piloto, categoriaDetectada, sufijoCache };
+    const anio = anioAuditoriaActc();
+    const organic = Array.isArray(resultado.organic) ? resultado.organic : [];
+    const nombreCompleto = escapeHtml(
+        `${piloto.nombre || ''} ${piloto.apellido || ''}`.replace(/\s+/g, ' ').trim()
+    );
+    const catEsc = escapeHtml(categoriaDetectada);
+
+    let snippetsHtml = '';
+    if (organic.length > 0) {
+        snippetsHtml = '<ol class="auditoria-snippets-list">';
+        for (const item of organic) {
+            const titulo = escapeHtml(String(item && item.title   ? item.title   : '(sin título)'));
+            const snip   = escapeHtml(String(item && item.snippet ? item.snippet : ''));
+            const link   = escapeHtml(String(item && item.link    ? item.link    : ''));
+            snippetsHtml +=
+                `<li class="auditoria-snippet-item">` +
+                `<a class="auditoria-snippet-link" href="${link}" target="_blank" rel="noopener noreferrer">${titulo}</a>` +
+                (snip ? `<p class="auditoria-snippet-texto">${snip}</p>` : '') +
+                `</li>`;
+        }
+        snippetsHtml += '</ol>';
+    } else {
+        snippetsHtml = '<p class="auditoria-sin-snippets">Resultado en caché: no hay fuentes disponibles para mostrar.</p>';
+    }
+
+    pintarEstadoAuditoria('alerta',
+        `<p class="auditoria-ev-header">⚠️ Actividad detectada en <strong>${catEsc}</strong> ${anio} ` +
+        `para <strong>${nombreCompleto}</strong>. Revisá las fuentes y confirmá si corresponde sancionar:` +
+        `${sufijoCache}</p>` +
+        snippetsHtml +
+        `<div class="auditoria-acciones">` +
+        `<button class="btn auditoria-btn-confirmar" onclick="confirmarSancionActc()" id="btn-confirmar-sancion-actc">` +
+        `<i class="fa-solid fa-gavel"></i> Confirmar Infracción y Sancionar Piloto</button>` +
+        `<button class="btn btn-secondary auditoria-btn-cancelar" onclick="cancelarAuditoriaActc()">` +
+        `<i class="fa-solid fa-xmark"></i> Cancelar</button>` +
+        `</div>`
+    );
+}
+
+/** Cancela la revisión pendiente: limpia el panel sin escribir nada. */
+function cancelarAuditoriaActc() {
+    _pendienteActc = null;
+    pintarEstadoAuditoria('', '');
+    alternarBannerAuditoriaActc(false);
+}
+
+/**
+ * Confirma la infracción: se ejecuta SOLO cuando el administrador pulsa el
+ * botón. Escribe en `penalidades` vía `autoSancionarActc()` y refresca el dashboard.
+ */
+async function confirmarSancionActc() {
+    if (!_pendienteActc) return;
+    const { piloto, categoriaDetectada } = _pendienteActc;
+    _pendienteActc = null;
+
+    const btn = document.getElementById('btn-confirmar-sancion-actc');
+    if (btn) btn.disabled = true;
+
+    try {
+        pintarEstadoAuditoria('cargando',
+            '<i class="fa-solid fa-gavel"></i> Registrando sanción…');
+        await autoSancionarActc(piloto, categoriaDetectada);
+        await refrescarDashboardTrasAuditoria();
+
+        const nombreCompleto = `${piloto.nombre || ''} ${piloto.apellido || ''}`
+            .replace(/\s+/g, ' ').trim();
+        mostrarToast(`Auditoría ACTC: sanción confirmada para ${nombreCompleto}.`, 'error');
+
+        // Tras confirmar, el veredicto ya viajó por toast y la mini-tabla/KPI
+        // reflejan la sanción: se limpia el panel de evidencias y el formulario
+        // para una nueva consulta (reset total; el banner NO permanece encendido).
+        const input = document.getElementById('input-auditar-piloto');
+        if (input) input.value = '';
+        cancelarAuditoriaActc();
+    } catch (e) {
+        console.error('[auditoria] Error al confirmar sanción:', e);
+        pintarEstadoAuditoria('error', '✗ Error al registrar la sanción. Intentá de nuevo.');
+    }
+}
+
+/** Runtime de Firestore con sesión (bridge de db.js). Null si no está disponible. */
+function runtimeAuditoria() {
+    const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+    if (!rt || !rt.dbFirebase || !rt.auth || !rt.auth.currentUser) return null;
+    if (typeof rt.getDoc !== 'function' || typeof rt.doc !== 'function') return null;
+    return rt;
+}
+
+/**
+ * Busca el piloto en la colección `pilotos` del padrón CDA.
+ * - Si el texto parece DNI, valida contra el doc en caliente `/pilotos/{dni}`
+ *   (mejor esfuerzo: si hay runtime con sesión, la nube manda).
+ * - Si es nombre, filtra el espejo local sin tildes ni mayúsculas.
+ * Devuelve el piloto o null (null ⇒ se auditará como postulante EXTERNO:
+ * ver pilotoExternoDesdeTexto — la auditoría universal no se corta).
+ */
+async function buscarPilotoEnPadron(texto) {
+    const consulta = normalizarTextoAuditoria(texto);
+    if (!consulta) return null;
+
+    let pilotos = [];
+    try {
+        pilotos = (await getTodos('pilotos')) || [];
+    } catch (e) {
+        console.warn('[auditoria] No se pudo leer el padrón local:', e);
+    }
+
+    const soloDigitos = consulta.replace(/\D/g, '');
+    if (soloDigitos.length >= 6) {
+        // Búsqueda por DNI.
+        let encontrado = pilotos.find(
+            p => String(p && p.dni ? p.dni : '').replace(/\D/g, '') === soloDigitos
+        ) || null;
+
+        const rt = runtimeAuditoria();
+        if (rt) {
+            try {
+                // Corte anti-cuota: si la nube no responde en 1.5 s se respeta
+                // el espejo local (mejor esfuerzo, igual que el resto del flujo).
+                const snap = await conCorteDeSeguridad(
+                    rt.getDoc(rt.doc(rt.dbFirebase, 'pilotos', soloDigitos)),
+                    1500, null
+                );
+                if (snap && typeof snap.exists === 'function' && snap.exists()) {
+                    encontrado = Object.assign({}, snap.data(), { dni: soloDigitos });
+                } else if (!encontrado) {
+                    return null; // la nube confirmó que no existe
+                }
+            } catch (e) { /* sin nube: se respeta el espejo local */ }
+        }
+        return encontrado;
+    }
+
+    // Búsqueda por nombre y apellido (el padrón puede venir en MAYÚSCULAS).
+    return pilotos.find(p => {
+        const nombre = normalizarTextoAuditoria(
+            `${p && p.nombre ? p.nombre : ''} ${p && p.apellido ? p.apellido : ''}`
+        );
+        return nombre && (nombre.includes(consulta) || consulta.includes(nombre));
+    }) || null;
+}
+
+/**
+ * ==== AUDITORÍA UNIVERSAL (postulante externo) ====
+ * Construye un registro sintético para pilotos que NO están en el padrón CDA,
+ * de modo que la auditoría continúe transparente contra Serper.dev.
+ * - Apellido/Nombre provienen del propio input (última palabra = apellido).
+ * - `dni` sintético: hash estable djb2 (uint32) con prefijo '9' + 10 dígitos
+ *   → 11 dígitos, FUERA del rango de DNI reales (≤ 8 dígitos), así nunca
+ *   colisiona con el id de un piloto del padrón. Estable por diseño: mismo
+ *   texto → mismo id, el re-audito sobrescribe en vez de duplicar (misma
+ *   lógica idempotente que el DNI real en `autoSancionarActc`).
+ */
+function pilotoExternoDesdeTexto(texto) {
+    const partes = String(texto || '').trim().split(/\s+/).filter(Boolean);
+    const apellido = partes.length > 0 ? partes[partes.length - 1] : '';
+    const nombre = partes.slice(0, -1).join(' ');
+    let h = 5381;
+    const clave = normalizarTextoAuditoria(partes.join(' '));
+    for (let i = 0; i < clave.length; i++) {
+        h = ((h << 5) + h + clave.charCodeAt(i)) >>> 0;
+    }
+    const dniSintetico = Number('9' + String(h).padStart(10, '0'));
+    return { dni: String(dniSintetico), nombre, apellido, externo: true };
+}
+
+/** Caché preventiva: resultado de /auditoria_cache/{dni} con menos de 7 días. */
+async function leerAuditoriaCache(dni) {
+    const ahora = Date.now();
+    const vigencia = AUDITORIA_CACHE_DIAS * 24 * 60 * 60 * 1000;
+
+    // 1) Firestore `/auditoria_cache/{dni}` (si hay sesión activa) — con corte
+    //    de 1.5 s: si el SDK está en pausa por cuota, cae al espejo local.
+    const rt = runtimeAuditoria();
+    if (rt && typeof rt.getDoc === 'function') {
+        try {
+            const snap = await conCorteDeSeguridad(
+                rt.getDoc(rt.doc(rt.dbFirebase, 'auditoria_cache', String(dni))),
+                1500, null
+            );
+            if (snap && typeof snap.exists === 'function' && snap.exists()) {
+                const dato = snap.data() || {};
+                const cuando = dato.auditadoEn ? new Date(dato.auditadoEn).getTime() : 0;
+                if (cuando && ahora - cuando < vigencia) return dato;
+            }
+        } catch (e) { /* sin red/reglas: cae al espejo local */ }
+    }
+
+    // 2) Espejo local (localStorage), mismos 7 días.
+    try {
+        const raw = localStorage.getItem(`${AUDITORIA_CACHE_LS}_${dni}`);
+        if (raw) {
+            const dato = JSON.parse(raw);
+            const cuando = dato && dato.auditadoEn ? new Date(dato.auditadoEn).getTime() : 0;
+            if (cuando && ahora - cuando < vigencia) return dato;
+        }
+    } catch (e) { /* JSON corrupto → miss */ }
+
+    return null;
+}
+
+/** Persiste el resultado de la auditoría (nube + espejo local, mejor esfuerzo). */
+async function escribirAuditoriaCache(dni, resultado) {
+    const dato = Object.assign(
+        { dni: String(dni), auditadoEn: new Date().toISOString() },
+        resultado
+    );
+    try {
+        localStorage.setItem(`${AUDITORIA_CACHE_LS}_${dni}`, JSON.stringify(dato));
+    } catch (e) { /* cuota llena: no bloquea */ }
+
+    const rt = runtimeAuditoria();
+    if (rt && typeof rt.setDoc === 'function') {
+        try {
+            await rt.setDoc(rt.doc(rt.dbFirebase, 'auditoria_cache', String(dni)), dato);
+        } catch (e) {
+            console.warn('Firestore en pausa temporal:', e);
+        }
+    }
+    return dato;
+}
+
+/**
+ * POST a https://serper.dev/search — 100% CLIENT-SIDE (JS Vanilla en el navegador,
+ * sin backend ni scripts de Python; apto GitHub Pages).
+ * La X-API-KEY se recupera del almacenamiento local del navegador: primero
+ * `localStorage['serper_api_key']` (espejo que escribe la pantalla de
+ * Configuración) y, como fallback, `configuracionGlobal.serperApiKey`.
+ * Query formateado para el año corriente, tal como exige el alcance:
+ *   "<nombre>" AND ("Turismo Carretera" OR "TC Pista" OR "TC Pick Up" OR "ACTC") AND "<año>"
+ */
+async function consultarSerperActc(nombrePiloto) {
+    // 1) Recuperación de la key desde el almacenamiento local del navegador.
+    let apiKeyRecuperada = '';
+    try {
+        apiKeyRecuperada = String(localStorage.getItem('serper_api_key') || '').trim();
+    } catch (e) { /* localStorage no disponible */ }
+    if (!apiKeyRecuperada) {
+        // Fallback: base local/nube de Configuración (versiones anteriores sin espejo).
+        const cfg = await cargarConfiguracionGlobal();
+        apiKeyRecuperada = String(cfg && cfg.serperApiKey ? cfg.serperApiKey : '').trim();
+        if (apiKeyRecuperada) {
+            try { localStorage.setItem('serper_api_key', apiKeyRecuperada); } catch (e) { /* no bloquea */ }
+        }
+    }
+    if (!apiKeyRecuperada) {
+        const err = new Error('Falta la API key de Serper.dev: guárdala en Configuración (localStorage serper_api_key).');
+        err.codigo = 'SIN_API_KEY';
+        throw err;
+    }
+
+    const anio = anioAuditoriaActc();
+    const q = `"${nombrePiloto}" AND ("Turismo Carretera" OR "TC Pista" OR "TC Pick Up" OR "ACTC") AND "${anio}" AND (site:actc.org.ar OR site:solotc.com.ar OR site:campeones.com.ar OR site:carburando.com)`;
+    // 2) fetch() asíncrono directo desde el navegador a la API oficial.
+    // Host del endpoint: google.serper.dev/search (el OpenAPI oficial de Serper);
+    // la raíz serper.dev no acepta POST (405) y no envía cabeceras CORS.
+    const resp = await fetch('https://google.serper.dev/search', {
+        method: 'POST',
+        headers: {
+            'X-API-KEY': apiKeyRecuperada.trim(),
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ q })
+    });
+    if (!resp.ok) {
+        const err = new Error(`Serper.dev respondió HTTP ${resp.status}`);
+        err.codigo = 'API_ERROR';
+        throw err;
+    }
+    return await resp.json();
+}
+
+/**
+ * Análisis de snippets: recorre los primeros 5 `organic` y confirma si el
+ * título/snippet menciona el año corriente Y una categoría de la ACTC.
+ * Devuelve { positivo, categoria } (categoria = etiqueta legible encontrada).
+ */
+function analizarSnippetsActc(organic) {
+    const anio = String(anioAuditoriaActc());
+    const primeros = (Array.isArray(organic) ? organic : []).slice(0, 5);
+    for (const item of primeros) {
+        const texto = normalizarTextoAuditoria(
+            `${item && item.title ? item.title : ''} ${item && item.snippet ? item.snippet : ''}`
+        );
+        if (!texto.includes(anio)) continue; // debe ser actividad del año en curso
+        const categoria = CATEGORIAS_CONSULTA_ACTC.find(c => texto.includes(c.clave));
+        if (categoria) return { positivo: true, categoria: categoria.etiqueta };
+    }
+    return { positivo: false, categoria: '' };
+}
+
+/**
+ * Acción 2: inyecta la sanción automática en `penalidades` (la colección que
+ * alimenta la mini-tabla "Pilotos Sancionados" y la vista Penalidades).
+ * El DNI se usa como ID del registro → re-auditar sobrescribe el mismo doc
+ * y NO genera duplicados. En un postulante EXTERNO, `piloto.dni` es el id
+ * sintético de 11 dígitos de pilotoExternoDesdeTexto (hash estable del nombre).
+ */
+async function autoSancionarActc(piloto, categoriaDetectada) {
+    const anio = anioAuditoriaActc();
+    const nombreCompleto = `${piloto.nombre || ''} ${piloto.apellido || ''}`
+        .replace(/\s+/g, ' ').trim();
+    const hoy = new Date().toISOString().slice(0, 10);
+
+    const registro = {
+        id: Number(piloto.dni),                       // DNI como ID: sin duplicados
+        dni: String(piloto.dni),
+        nombre: nombreCompleto,                       // nombre completo (alcance)
+        apellido: piloto.apellido || '',
+        categoria: piloto.categoria || categoriaDetectada || '',
+        sancion: `Suspensión automática (${categoriaDetectada})`,
+        // Motivo exacto que exige el alcance (es lo que lee el render de la
+        // mini-tabla "Pilotos Sancionados" como texto principal):
+        motivo: `Participación en categoría no fiscalizada por la ACTC durante el año corriente ${anio}`,
+        fechaInicio: hoy,
+        fechaFin: `${anio}-12-31`,                    // 31/12 del año en curso
+        vencimiento: `31/12/${anio}`,                 // formato literal del alcance
+        estado: 'VIGENTE',
+        autoActc: true,                               // marca que alimenta el KPI
+        fuente: 'ACTC'
+    };
+    try {
+        // Aislamiento contra cuota agotada de Firestore: si el setDoc queda en
+        // pausa (backoff del SDK), el corte lo libera a los 1.5 s y el veredicto
+        // ya está pintado en pantalla. El registro local (IndexedDB) se escribe
+        // antes del setDoc, así que el dashboard lo verá igual.
+        await conCorteDeSeguridad(guardar('penalidades', registro), 1500);
+    } catch (e) {
+        console.warn('Firestore en pausa temporal:', e);
+    }
+    return registro;
+}
+
+/** Acción 1 (continuación): repinta KPIs y mini-tabla con los datos frescos. */
+async function refrescarDashboardTrasAuditoria() {
+    try {
+        const [pilotos, penalidades] = await Promise.all([
+            getTodos('pilotos'),
+            getTodos('penalidades')
+        ]);
+        renderKpiPilotos(
+            Array.isArray(pilotos) ? pilotos : [],
+            Array.isArray(penalidades) ? penalidades : []
+        );
+        renderSancionados(Array.isArray(penalidades) ? penalidades : []);
+    } catch (e) {
+        console.warn('[auditoria] No se pudo refrescar el dashboard:', e);
+    }
+}
+
+/** Orquestador bajo demanda: sanitiza → padrón (o postulante externo) → bypass de caché → Serper → acciones. */
+async function auditarPiloto() {
+    const input = document.getElementById('input-auditar-piloto');
+    // Valor del input: .trim().toUpperCase() tal como exige el alcance.
+    const texto = input ? String(input.value || '').trim().toUpperCase() : '';
+    if (!texto) {
+        pintarEstadoAuditoria('', '');
+        return;
+    }
+
+    // 1) Sanitización obligatoria del proyecto ANTES de tocar el DOM.
+    const textoSanitizado = escapeHtml(texto);
+
+    // Cada auditoría arranca limpia: el banner del positivo anterior se apaga.
+    alternarBannerAuditoriaActc(false);
+
+    const btn = document.getElementById('btn-auditar-piloto');
+    pintarEstadoAuditoria('cargando',
+        '<i class="fa-solid fa-magnifying-glass"></i> Auditando contra el padrón CDA…');
+    if (btn) btn.disabled = true;
+
+    try {
+        // 2) ¿Existe en la colección `pilotos`? (licencia CDA + nº de documento)
+        // ==== AUDITORÍA UNIVERSAL ====
+        // Si NO está en el padrón ya NO se corta la ejecución: se pinta el aviso
+        // de postulante externo (informativo, gris) y el flujo continúa de forma
+        // transparente contra Serper.dev, idéntico al de un piloto registrado.
+        let piloto = await buscarPilotoEnPadron(texto);
+        const externo = !piloto || !piloto.dni;
+        if (externo) {
+            piloto = pilotoExternoDesdeTexto(texto);
+            pintarEstadoAuditoria('cargando',
+                'ℹ️ Piloto no registrado en el padrón CDA (Postulante Externo). Iniciando búsqueda web...');
+        }
+
+        const dni = String(piloto.dni).replace(/\D/g, '');
+        const nombreCompleto = `${piloto.nombre || ''} ${piloto.apellido || ''}`
+            .replace(/\s+/g, ' ').trim();
+        // 3) Bypass temporal de caché para pruebas/depuración directa contra Serper.dev
+        // (Obliga a realizar el fetch a Serper en cada auditoría sin leer /auditoria_cache ni localStorage).
+        let resultado = null; // Bypasseado: await leerAuditoriaCache(dni);
+        let desdeCache = false;
+        if (!resultado) {
+            desdeCache = false;
+            // Para un postulante EXTERNO el aviso "Iniciando búsqueda web..."
+            // se mantiene visible durante el fetch (no se repinta encima);
+            // para pilotos del padrón se muestra el estado genérico.
+            if (!externo) {
+                pintarEstadoAuditoria('cargando',
+                    '<i class="fa-solid fa-magnifying-glass"></i> Consultando Serper.dev…');
+            }
+
+            // Limpieza y afinado de string: si el texto buscado contiene solo apellido (o contiene "COTIGNOLA"),
+            // se prioriza buscar por apellido para abarcar variantes de nombre en los resultados orgánicos.
+            let terminoBusqueda = nombreCompleto;
+            if (texto.includes('COTIGNOLA')) {
+                terminoBusqueda = 'COTIGNOLA';
+            } else if (piloto && piloto.apellido && normalizarTextoAuditoria(texto) === normalizarTextoAuditoria(piloto.apellido)) {
+                terminoBusqueda = piloto.apellido.trim();
+            }
+
+            let data;
+            try {
+                data = await consultarSerperActc(terminoBusqueda);
+            } catch (e) {
+                if (e && e.codigo === 'SIN_API_KEY') {
+                    pintarEstadoAuditoria('error',
+                        '✗ Falta la <strong>API key de Serper.dev</strong>: cargala en Configuración → Auditoría ACTC.');
+                } else {
+                    console.warn('[auditoria] Error consultando Serper:', e);
+                    pintarEstadoAuditoria('error',
+                        '✗ No se pudo consultar la fuente externa. Verificá la conexión y la API key.');
+                }
+                return;
+            }
+
+            const analisis = analizarSnippetsActc(data && data.organic);
+            resultado = {
+                positivo: analisis.positivo,
+                categoria: analisis.categoria,
+                nombre: nombreCompleto,
+                // Primeros 5 snippets guardados para el panel de evidencias humanas.
+                organic: (Array.isArray(data && data.organic) ? data.organic : []).slice(0, 5)
+            };
+
+            // ==== VEREDICTO INMEDIATO ====
+            // Apenas el fetch retorna el JSON se limpia "Consultando..." y se
+            // pinta el veredicto (rojo/verde) ANTES de cualquier escritura:
+            // la UI no espera a Firestore, aunque esté sin cuota.
+            pintarVeredictoAuditoriaActc(resultado.positivo, '');
+
+            // Caché 7 días dispara-y-olvida con corte anti-cuota: el espejo
+            // localStorage se escribe de forma síncrona al invocar (antes del
+            // setDoc en la nube), así que el re-audito desde caché funciona igual.
+            void conCorteDeSeguridad(escribirAuditoriaCache(dni, resultado), 1500);
+        }
+
+        const sufijoCache = desdeCache
+            ? ' <span class="auditoria-cache-tag">(resultado en caché ≤7 días)</span>'
+            : '';
+
+        // 3a) NEGATIVO → indicador verde de piloto verificado (veredicto final).
+        if (!resultado.positivo) {
+            pintarVeredictoAuditoriaActc(false, sufijoCache);
+            return;
+        }
+
+        // 3b) POSITIVO → muestra panel de evidencias para revisión humana.
+        //     La sanción NO se escribe hasta que el administrador confirme
+        //     manualmente pulsando "Confirmar Infracción y Sancionar Piloto".
+        const categoriaDetectada = resultado.categoria || 'ACTC';
+        mostrarEvidenciasActc(piloto, categoriaDetectada, resultado, sufijoCache);
+    } catch (e) {
+        console.error('[auditoria] Error inesperado durante la auditoría:', e);
+        pintarEstadoAuditoria('error', '✗ Error inesperado durante la auditoría.');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 // ---------------- Importación masiva del padrón CDA (HTML/XLS) ----------------
@@ -3223,19 +3819,33 @@ async function importarPadronInicial(btn) {
         return;
     }
     const enNube = await importarPadronLotes(registros, btn);
-    mostrarToast(`Padrón importado: ${registros.length} pilotos registrados correctamente${enNube ? ' (local + nube)' : ' (solo local, sin sesión en la nube)'}.`);
+    mostrarToast(`Padrón importado: ${registros.length} pilotos registrados correctamente${duplicadosDni > 0 ? ` (${duplicadosDni} filas con DNI repetido consolidadas)` : ''}${enNube ? ' (local + nube)' : ' (solo local, sin sesión en la nube)'}.`);
     await listarPilotos();
 }
+
+// Control de duplicados del padrón (memoria temporal): cantidad de filas cuyo
+// DNI ya apareció en una fila anterior DENTRO DEL MISMO archivo parseado.
+// Se resetea en cada importación y se informa en el toast y por consola.
+let duplicadosDni = 0;
 
 /** Convierte un documento HTML de la CDA a registros de piloto (dedup por DNI). */
 function extraerRegistrosPadron(documento) {
     const porDni = new Map();
+    duplicadosDni = 0;
     documento.querySelectorAll('table tr').forEach(fila => {
         const celdas = Array.from(fila.querySelectorAll('td, th'))
             .map(c => (c.textContent || '').trim());
         const piloto = parsearFilaPadron(celdas);
-        if (piloto && !porDni.has(piloto.dni)) porDni.set(piloto.dni, piloto);
+        if (!piloto) return;
+        if (porDni.has(piloto.dni)) {
+            duplicadosDni++; // DNI repetido en el archivo: se consolida en 1 solo doc
+            return;
+        }
+        porDni.set(piloto.dni, piloto);
     });
+    if (duplicadosDni > 0) {
+        console.info(`[padrón] ${duplicadosDni} fila(s) con DNI repetido dentro del archivo; quedaron consolidados en ${porDni.size} piloto(s) único(s).`);
+    }
     return Array.from(porDni.values());
 }
 
@@ -3282,7 +3892,7 @@ async function importarPadronPilotos(event) {
         }
         const btn = document.getElementById('piloto-btn-importar');
         const enNube = await importarPadronLotes(registros, btn);
-        mostrarToast(`Padrón importado: ${registros.length} pilotos registrados correctamente${enNube ? ' (local + nube)' : ' (solo local, sin sesión en la nube)'}.`);
+        mostrarToast(`Padrón importado: ${registros.length} pilotos registrados correctamente${duplicadosDni > 0 ? ` (${duplicadosDni} filas con DNI repetido consolidadas)` : ''}${enNube ? ' (local + nube)' : ' (solo local, sin sesión en la nube)'}.`);
         await listarPilotos();
     });
 }
@@ -3336,6 +3946,9 @@ async function importarPadronLotes(registros, btn) {
         && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser);
     if (!haySesion) return false;
 
+    // El commit ocurre EN CADA iteración: el último lote (slice parcial < 400
+    // filas) también se commitea dentro del bucle, por lo que NINGÚN registro
+    // queda atrapado en memoria al salir de él (no hace falta un flush posterior).
     for (let i = 0; i < registros.length; i += PILOTOS_BATCH_MAX) {
         const lote = rt.writeBatch(rt.dbFirebase);
         registros.slice(i, i + PILOTOS_BATCH_MAX).forEach(item => {
@@ -3846,26 +4459,48 @@ async function cargarConfiguracionGlobal() {
 
 async function precargarEnlaceSheets() {
     const input = document.getElementById('config-url-sheets');
-    if (!input) return;
+    const inputKey = document.getElementById('config-serper-key');
     const cfg = await cargarConfiguracionGlobal();
-    input.value = cfg.urlGoogleSheets || '';
+    if (input) input.value = cfg.urlGoogleSheets || '';
+    if (inputKey) {
+        // Prioridad al espejo local (misma clave que lee la auditoría ACTC).
+        let local = '';
+        try { local = String(localStorage.getItem('serper_api_key') || ''); } catch (e) { /* sin localStorage */ }
+        inputKey.value = local || (cfg.serperApiKey || '');
+    }
 }
 
 async function guardarConfiguracion() {
     const input = document.getElementById('config-url-sheets');
-    const msg = document.getElementById('config-sheets-save-msg');
-    if (!input) return;
+    const inputKey = document.getElementById('config-serper-key');
+    if (!input && !inputKey) return;
 
-    const urlGoogleSheets = input.value.trim();
+    // El doc es único (id 1) y `put` reemplaza el registro completo: se parten
+    // de los valores previos para que un input ausente no borre el otro ajuste.
+    const cfgPrevia = await cargarConfiguracionGlobal();
+    const urlGoogleSheets = input ? input.value.trim() : (cfgPrevia.urlGoogleSheets || '');
+    const serperApiKey = inputKey ? inputKey.value.trim() : (cfgPrevia.serperApiKey || '');
     try {
-        await guardar('configuracionGlobal', { id: 1, urlGoogleSheets });
+        await guardar('configuracionGlobal', { id: 1, urlGoogleSheets, serperApiKey });
+        // Espejo 100% client-side: la auditoría ACTC recupera la key desde
+        // `localStorage['serper_api_key']` (GitHub Pages, sin backend).
+        try {
+            if (serperApiKey) localStorage.setItem('serper_api_key', serperApiKey);
+            else localStorage.removeItem('serper_api_key');
+        } catch (e) { /* localStorage no disponible: no bloquea */ }
         if (typeof invalidarCache === 'function') invalidarCache('configuracionGlobal');
         mostrarToast('Configuración guardada correctamente.');
-        if (msg) { msg.textContent = '✓ Guardado'; msg.style.color = 'var(--accent)'; }
+        document.querySelectorAll('.config-save-msg').forEach(msg => {
+            msg.textContent = '✓ Guardado';
+            msg.style.color = 'var(--accent)';
+        });
     } catch (e) {
         console.error('Error al guardar configuración global:', e);
         mostrarToast('No se pudo guardar la configuración.', 'error');
-        if (msg) { msg.textContent = '✗ Error al guardar'; msg.style.color = '#ff6b6b'; }
+        document.querySelectorAll('.config-save-msg').forEach(msg => {
+            msg.textContent = '✗ Error al guardar';
+            msg.style.color = '#ff6b6b';
+        });
     }
 }
 

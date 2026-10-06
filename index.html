@@ -1053,16 +1053,38 @@
                         </div>
                     </div>
 
-                    <!-- ÍTEM 4: Auditoría ACTC / alertas internacionales (borde de alerta) -->
-                    <div class="stat-card stat-card-alerta">
-                        <div class="stat-info">
-                            <h3>Alerta ACTC <span id="pilotos-kpi-actc-anio" style="font-weight:400;"></span></h3>
-                            <p id="pilotos-kpi-actc" class="stat-alerta-num">—</p>
-                            <span class="stat-delta" id="pilotos-kpi-actc-nota">Sin cruces con fuente externa</span>
+                    <!-- ÍTEM 4: Consulta Pilotos ACTC — auditoría manual bajo demanda.
+                         SIN spinner ni búsquedas automáticas: input + botón "Auditar"
+                         viven dentro de la propia tarjeta. 100% client-side (GitHub
+                         Pages): el fetch a Serper sale desde el navegador. -->
+                    <div class="stat-card stat-card-alerta" id="pilotos-kpi-actc-card">
+                        <div class="stat-fila-actc">
+                            <div class="stat-info">
+                                <h3>CONSULTA PILOTOS ACTC
+                                    <!-- Badge que se enciende en rojo cuando hay auto-sanciones ACTC vigentes -->
+                                    <span id="pilotos-kpi-actc-badge" class="alerta-badge" hidden>PELIGRO</span>
+                                </h3>
+                                <!-- Placeholders "26" (número gigante) y "N categoría sin
+                                     fiscalizar" ELIMINADOS: no pertenecen a este módulo.
+                                     El encabezado solo conserva título + badge + ícono. -->
+                            </div>
+                            <div class="stat-icon stat-icon-alerta" id="pilotos-kpi-actc-icono">
+                                <i class="fa-solid fa-triangle-exclamation"></i>
+                            </div>
                         </div>
-                        <div class="stat-icon stat-icon-alerta">
-                            <i class="fa-solid fa-triangle-exclamation"></i>
-                        </div>
+                        <!-- Auditoría ON DEMAND: solo se ejecuta al clickear "Auditar" (o Enter) -->
+                        <form class="auditoria-form auditoria-form--tarjeta"
+                              onsubmit="event.preventDefault(); auditarPiloto();">
+                            <input type="text" class="search-input" id="input-auditar-piloto"
+                                   placeholder="Nombre completo del piloto..."
+                                   autocomplete="off" aria-label="Nombre completo del piloto a auditar">
+                            <button type="submit" class="btn" id="btn-auditar-piloto">
+                                <i class="fa-solid fa-user-shield"></i> Auditar
+                            </button>
+                        </form>
+                        <div id="auditoria-estado" class="auditoria-estado" role="status" aria-live="polite"></div>
+                        <!-- Banner rojo flotante sobre el formulario: se enciende en positivo -->
+                        <div id="auditoria-banner" class="auditoria-banner" role="alert" hidden></div>
                     </div>
                 </div>
 
@@ -1076,27 +1098,30 @@
                         </div>
                     </div>
 
-                    <!-- ÍTEM 3: Pilotos sancionados (nombre, sanción/motivo, vencimiento) -->
+                    <!-- ÍTEM 3: Pilotos sancionados (nombre, categoría, sanción/motivo, vencimiento) -->
                     <div class="chart-card" id="pilotos-sancionados-card">
                         <h3>Pilotos Sancionados <span style="font-size:0.8rem; color:var(--text-secondary); font-weight:400;">Vigentes y cumplidas</span></h3>
                         <div class="table-responsive">
                             <table class="tabla-sancionados">
                                 <thead>
                                     <tr>
-                                        <th style="width:34%;">Nombre y Apellido</th>
-                                        <th style="width:44%;">Sanción / Motivo</th>
-                                        <th style="width:22%;">Vencimiento</th>
+                                        <th style="width:26%;">Nombre y Apellido</th>
+                                        <th style="width:15%;">Categoría</th>
+                                        <th style="width:39%;">Sanción / Motivo</th>
+                                        <th style="width:20%;">Vencimiento</th>
                                     </tr>
                                 </thead>
                                 <tbody id="pilotos-sancionados-body">
-                                    <tr><td colspan="3" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">Cargando sanciones…</td></tr>
+                                    <tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">Cargando sanciones…</td></tr>
                                 </tbody>
                             </table>
                         </div>
                     </div>
                 </div>
 
-                <!-- Pie: atajos a las vistas hijas + nota de alcance del cruce ACTC -->
+                <!-- Pie: atajos a las vistas hijas + aviso del alcance ACTC.
+                     (El formulario de auditoría ahora vive DENTRO de la tarjeta
+                      "Consulta Pilotos ACTC".) -->
                 <div class="charts-grid">
                     <div class="chart-card" style="grid-column: 1 / -1;">
                         <div class="dash-pie-links">
@@ -1104,7 +1129,7 @@
                             <a class="link-like" onclick="navegarDesdeDashboard('penalidades')" role="button" tabindex="0">Ver Penalidades</a>
                             <span class="dash-aviso-actc">
                                 <i class="fa-solid fa-circle-info"></i>
-                                Cruce ACTC en desarrollo: hoy se detecta por la categoría registrada, sin consulta a la fuente oficial.
+                                Auditoría ACTC: cruce en caliente con Serper.dev; los positivos se auto-sancionan con vigencia hasta el 31/12 del año en curso.
                             </span>
                         </div>
                     </div>
@@ -1428,7 +1453,27 @@
                     </div>
                     <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1.5rem; align-items: center;">
                         <button class="btn" onclick="guardarConfiguracion()"><i class="fa-solid fa-floppy-disk"></i> Guardar Configuración</button>
-                        <span id="config-sheets-save-msg" style="color: var(--text-secondary); font-size: 0.9rem;"></span>
+                        <span id="config-sheets-save-msg" class="config-save-msg" style="color: var(--text-secondary); font-size: 0.9rem;"></span>
+                    </div>
+                </div>
+
+                <!-- Auditoría ACTC: API key de Serper.dev (X-API-KEY) -->
+                <div class="form-card admin-only" style="margin-bottom: 2rem;">
+                    <h3 class="form-title" style="display: flex; align-items: center; gap: 8px;">
+                        <i class="fa-solid fa-user-shield" style="color: var(--accent);"></i> Auditoría ACTC (Serper.dev)
+                    </h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.95rem;">
+                        Clave de la API de Serper.dev que usa la tarjeta "Consulta Pilotos ACTC" del dashboard de Pilotos para cruzar al piloto con la fuente externa. Se guarda en este navegador (localStorage <code>serper_api_key</code> + base local, nunca se sincroniza a la nube): la consulta sale 100% desde el JavaScript del navegador, apta para despliegues estáticos en GitHub Pages (sin backend ni scripts de Python).
+                    </p>
+                    <div class="form-grid" style="grid-template-columns: 1fr;">
+                        <div class="form-group full-width">
+                            <label for="config-serper-key">API Key de Serper.dev (header X-API-KEY)</label>
+                            <input type="password" id="config-serper-key" placeholder="0a1b2c3d4e..." autocomplete="off" style="background: rgba(0,0,0,0.2); color: #fff; padding: 10px; border-radius: 4px; border: 1px solid var(--border); width: 100%; box-sizing: border-box;">
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1.5rem; align-items: center;">
+                        <button class="btn" onclick="guardarConfiguracion()"><i class="fa-solid fa-floppy-disk"></i> Guardar Configuración</button>
+                        <span id="config-serper-save-msg" class="config-save-msg" style="color: var(--text-secondary); font-size: 0.9rem;"></span>
                     </div>
                 </div>
 

@@ -143,7 +143,7 @@ test.describe('Menú lateral — submenús desplegables', () => {
 
     // Ítem 1 (total de pilotos) e Ítem 4 (alerta ACTC, con borde de alerta).
     await expect(page.locator('#pilotos-kpi-total')).toHaveText(/^[\d.]+$/);
-    await expect(page.locator('#pilotos-kpi-actc')).toHaveCount(1);
+    await expect(page.locator('#pilotos-kpi-actc')).toHaveCount(0);
     await expect(page.locator('#view-pilotos .stat-card-alerta')).toHaveCount(1);
 
     // Ítem 2 (distribución por categoría): sin datos muestra el placeholder
@@ -152,9 +152,9 @@ test.describe('Menú lateral — submenús desplegables', () => {
     await expect(cats).toHaveCount(1);
     await expect(cats).toHaveText(/Sin pilotos cargados|Cargando/);
 
-    // Ítem 3 (pilotos sancionados): mini-tabla de 3 columnas.
+    // Ítem 3 (pilotos sancionados): mini-tabla de 4 columnas.
     const colsSanc = await page.locator('#pilotos-sancionados-card thead th').allTextContents();
-    expect(colsSanc.map((t) => t.trim())).toEqual(['Nombre y Apellido', 'Sanción / Motivo', 'Vencimiento']);
+    expect(colsSanc.map((t) => t.trim())).toEqual(['Nombre y Apellido', 'Categoría', 'Sanción / Motivo', 'Vencimiento']);
     await expect(page.locator('#pilotos-sancionados-body')).toHaveCount(1);
 
     // 4) El hijo "Listado de Pilotos" navega a la vista con su formulario y tabla.
@@ -432,6 +432,188 @@ test.describe('Menú lateral — submenús desplegables', () => {
     expect(dnis).toEqual(['27654321', '30123456']);
     await expect(page.locator('#pilotos-table-body')).toContainText('JUAN PÉREZ');
     await expect(page.locator('#pilotos-table-body')).toContainText('ANA GÓMEZ');
+
+    expect(erroresPagina, `Excepciones JS:\n${erroresPagina.join('\n')}`).toEqual([]);
+  });
+
+  test('Pilotos > Auditoría ACTC: panel de evidencias para revisión humana y confirmación manual', async ({ page }) => {
+    const erroresPagina = [];
+    page.on('pageerror', (err) => erroresPagina.push(err.message));
+    await page.goto('/');
+    await page.waitForFunction(() => typeof window.__CDA_MODULES__?.vistas?.renderizarMenuLateral === 'function');
+
+    // Stubs puntuales: padrón con 2 pilotos, configuración con la API key,
+    // fetch de Serper (positivo solo para JUAN) y guardar() idempotente por id
+    // (replica el put por clave del IndexedDB real: re-auditar NO duplica).
+    await page.evaluate((cargadores) => {
+      window.__CDA_SANCIONES__ = [];
+      window.__CDA_FETCHES__ = [];
+      window.getTodos = async (store) => {
+        if (store === 'pilotos') return [
+          { dni: '30123456', nombre: 'JUAN', apellido: 'PÉREZ', categoria: 'Sport Histórico' },
+          { dni: '27654321', nombre: 'ANA', apellido: 'GÓMEZ', categoria: 'Sport Histórico' },
+        ];
+        if (store === 'penalidades') return window.__CDA_SANCIONES__;
+        if (store === 'configuracionGlobal') return [{ id: 1, serperApiKey: 'test-key-123' }];
+        return [];
+      };
+      window.guardar = async (store, item) => {
+        if (store === 'penalidades') {
+          const lista = window.__CDA_SANCIONES__;
+          const idx = lista.findIndex((x) => String(x.id) === String(item.id));
+          if (idx >= 0) lista[idx] = Object.assign({}, item);
+          else lista.push(Object.assign({}, item));
+        }
+        return item.id;
+      };
+      window.fetch = async (url, opts) => {
+        const q = JSON.parse(opts.body).q;
+        window.__CDA_FETCHES__.push({ url: String(url), clave: opts.headers['X-API-KEY'], q });
+        // Demora SOLO la consulta del externo negativo: mantiene a la vista el
+        // aviso "Postulante Externo" mientras el fetch corre (UI en caliente).
+        if (q.includes('NADIE')) await new Promise((r) => setTimeout(r, 700));
+        const positivo = q.includes('JUAN') || q.includes('EXTERNO');
+        return {
+          ok: true,
+          json: async () => (positivo
+            ? { organic: [
+                { title: 'Fecha vieja', snippet: 'Noticia sin relevancia de 2019.' },
+                { title: 'Juan Perez - Turismo Carretera', snippet: 'Confirma su participation en la temporada 2026 de Turismo Carretera.', link: 'https://solotc.com.ar/juan' },
+              ] }
+            : { organic: [
+                { title: 'Ana Gomez en karting', snippet: 'No menciona categorias de la ACTC ni el anio corriente.' },
+              ] }),
+        };
+      };
+      window.mostrarToast = () => {};
+      window.puedeEditar = () => true;
+      document.getElementById('app-main').style.display = 'flex';
+      const login = document.getElementById('login-screen');
+      if (login) login.style.display = 'none';
+      const usuario = { id: 'e2e-menu', nombre: 'E2E', rol: 'admin', permisos: null };
+      window.currentUser = usuario;
+      window.__CDA_MODULES__.vistas.renderizarMenuLateral(usuario);
+    }, CARGADORES);
+
+    // Navegar al dashboard de Pilotos (renderDashboardPilotos queda REAL).
+    await page.locator('#menu-pilotos').click();
+    await expect(page.locator('#view-pilotos')).toHaveClass(/active/);
+
+    // El formulario vive DENTRO de la tarjeta ACTC y NO hay spinner.
+    await expect(page.locator('#pilotos-kpi-actc-card #input-auditar-piloto')).toHaveCount(1);
+    await expect(page.locator('#pilotos-kpi-actc-card #btn-auditar-piloto')).toContainText('Auditar');
+    await expect(page.locator('#pilotos-kpi-actc-loader')).toHaveCount(0);
+    // Encabezado depurado: sin número gigante ni nota de categorías.
+    await expect(page.locator('#pilotos-kpi-actc')).toHaveCount(0);
+    await expect(page.locator('#pilotos-kpi-actc-nota')).toHaveCount(0);
+
+    // 1) Sin disparo automático: tipear NO llama a la API.
+    await page.fill('#input-auditar-piloto', 'Juan Perez');
+    await page.waitForTimeout(900);
+    expect(await page.evaluate(() => window.__CDA_FETCHES__.length)).toBe(0);
+    await expect(page.locator('#auditoria-estado')).toHaveText('');
+
+    // 2) Clic en "Auditar" → Serper responde positivo → aparece el panel de evidencias.
+    //    La sanción NO se escribe todavía (espera confirmación humana).
+    await page.click('#btn-auditar-piloto');
+
+    // El panel muestra el botón de confirmación y el de cancelar.
+    await expect(page.locator('#btn-confirmar-sancion-actc')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('#auditoria-estado .auditoria-btn-cancelar')).toBeVisible();
+
+    // El panel incluye al menos un snippet con link a la fuente.
+    expect(await page.locator('#auditoria-estado .auditoria-snippet-link').count()).toBeGreaterThanOrEqual(1);
+
+    // La consulta salió UNA sola vez, con X-API-KEY y el query del alcance.
+    const consultas = await page.evaluate(() => window.__CDA_FETCHES__);
+    expect(consultas).toHaveLength(1);
+    expect(consultas[0].url).toContain('serper.dev');
+    expect(consultas[0].clave).toBe('test-key-123');
+    expect(consultas[0].q).toContain('"JUAN PÉREZ"');
+    expect(consultas[0].q).toContain('"Turismo Carretera"');
+    expect(consultas[0].q).toContain('2026');
+    expect(consultas[0].q).toContain('site:actc.org.ar');
+
+    // 3) Aún no hay sanción: el admin NO pulsó confirmar todavía.
+    expect(await page.evaluate(() => window.__CDA_SANCIONES__.length)).toBe(0);
+    await expect(page.locator('#auditoria-banner')).toBeHidden();
+
+    // 4) El admin confirma manualmente → sanción registrada con los campos exactos.
+    await page.click('#btn-confirmar-sancion-actc');
+    await expect(page.locator('#auditoria-estado')).toHaveText('');
+    await expect(page.locator('#input-auditar-piloto')).toHaveValue('');
+
+    const sanciones = await page.evaluate(() => window.__CDA_SANCIONES__);
+    expect(sanciones).toHaveLength(1);
+    expect(sanciones[0].id).toBe(30123456);
+    expect(sanciones[0].dni).toBe('30123456');
+    expect(sanciones[0].nombre).toBe('JUAN PÉREZ');
+    expect(sanciones[0].motivo).toBe('Participación en categoría no fiscalizada por la ACTC durante el año corriente 2026');
+    expect(sanciones[0].sancion).toContain('Suspensión automática');
+    expect(sanciones[0].sancion).toContain('Turismo Carretera');
+    expect(sanciones[0].vencimiento).toBe('31/12/2026');
+    expect(sanciones[0].estado).toBe('VIGENTE');
+    expect(sanciones[0].fechaFin).toBe('2026-12-31');
+
+    // 5) Banner rojo flotante con el nuevo texto + badge y borde de peligro.
+    await expect(page.locator('#auditoria-banner')).toBeHidden();
+    await expect(page.locator('#pilotos-kpi-actc-badge')).toBeVisible();
+    await expect(page.locator('#view-pilotos .stat-card-alerta')).toHaveClass(/is-peligro/);
+
+    // 6) La mini-tabla de sancionados refleja la inyección.
+    await expect(page.locator('#pilotos-sancionados-body')).toContainText('JUAN PÉREZ');
+    await expect(page.locator('#pilotos-sancionados-body')).toContainText('31/12/2026');
+    await expect(page.locator('#pilotos-sancionados-body')).toContainText(
+      'Participación en categoría no fiscalizada por la ACTC');
+
+    // 7) Re-auditar bajo bypass de caché temporal: llama a Serper directamente
+    //    y muestra el panel de evidencias nuevamente. Cancelar → sin duplicar sanción.
+    await page.fill('#input-auditar-piloto', 'Juan Perez');
+    await page.click('#btn-auditar-piloto');
+    await expect(page.locator('#btn-confirmar-sancion-actc')).toBeVisible({ timeout: 5000 });
+    expect(await page.evaluate(() => window.__CDA_FETCHES__.length)).toBe(2); // bypass de caché activo
+    await page.click('#auditoria-estado .auditoria-btn-cancelar');
+    await expect(page.locator('#auditoria-estado')).toHaveText('');
+    expect(await page.evaluate(() => window.__CDA_SANCIONES__.length)).toBe(1); // sin duplicado
+
+    // 8) Postulante EXTERNO (auditoría universal): aviso informativo SIN return
+    //    y el fetch a Serper se ejecuta de todas formas (aquí: 2 → 3).
+    await page.fill('#input-auditar-piloto', 'Nadie Existe');
+    await page.click('#btn-auditar-piloto');
+    await expect(page.locator('#auditoria-estado')).toContainText(
+      'Piloto no registrado en el padrón CDA (Postulante Externo)', { timeout: 5000 });
+    // El stub demora 700 ms esta consulta; al retornar, el veredicto reemplaza al aviso.
+    await expect(page.locator('#auditoria-estado')).toContainText(
+      'Piloto Verificado: Sin anomalías en ACTC', { timeout: 5000 });
+    expect(await page.evaluate(() => window.__CDA_FETCHES__.length)).toBe(3);
+
+    // 9) Piloto sin novedades: indicador verde y banner apagado.
+    await page.fill('#input-auditar-piloto', 'Ana Gomez');
+    await page.click('#btn-auditar-piloto');
+    await expect(page.locator('#auditoria-estado')).toContainText('Piloto Verificado: Sin anomalías en ACTC', { timeout: 5000 });
+    await expect(page.locator('#auditoria-banner')).toBeHidden();
+    expect(await page.evaluate(() => window.__CDA_FETCHES__.length)).toBe(4);
+    expect(await page.evaluate(() => window.__CDA_SANCIONES__.length)).toBe(1);
+
+    // 10) Externo POSITIVO: "Confirmar Infracción y Sancionar" genera el documento
+    //     con id sintético de 11 dígitos (hash estable, fuera de rango DNI real) y
+    //     el Nombre/Apellido tipeados en el input.
+    await page.fill('#input-auditar-piloto', 'Pablo Externo');
+    await page.click('#btn-auditar-piloto');
+    await expect(page.locator('#btn-confirmar-sancion-actc')).toBeVisible({ timeout: 5000 });
+    expect(await page.evaluate(() => window.__CDA_FETCHES__.length)).toBe(5);
+    await page.click('#btn-confirmar-sancion-actc');
+    await expect(page.locator('#auditoria-estado')).toHaveText('');
+    await expect(page.locator('#input-auditar-piloto')).toHaveValue('');
+    const sancionesExt = await page.evaluate(() => window.__CDA_SANCIONES__);
+    expect(sancionesExt).toHaveLength(2);
+    expect(sancionesExt[1].nombre).toBe('PABLO EXTERNO');
+    expect(String(sancionesExt[1].id)).toHaveLength(11);
+    expect(String(sancionesExt[1].id).charAt(0)).toBe('9');
+    expect(sancionesExt[1].motivo).toBe(
+      'Participación en categoría no fiscalizada por la ACTC durante el año corriente 2026');
+    expect(sancionesExt[1].estado).toBe('VIGENTE');
+    expect(sancionesExt[1].fechaFin).toBe('2026-12-31');
 
     expect(erroresPagina, `Excepciones JS:\n${erroresPagina.join('\n')}`).toEqual([]);
   });

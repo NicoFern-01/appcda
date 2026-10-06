@@ -4,17 +4,176 @@
 
 ## Trabajo reciente (última sesión)
 
+**Recuperación de `app.js` (módulo de auditoría ACTC restaurado) + fix final de "Confirmar sanción"; bypass de caché y query por apellido VALIDADOS en verde.**
+
+### Cambios de esta sesión
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| **Restauración de `app.js`** | `app.js` | La sesión previa terminó con `app.js` sobrescrito (~14:15) por la versión de HEAD **sin** el módulo de auditoría (0 coincidencias de `auditarPiloto`/`serper`): `index.html` llamaba a una función inexistente y el test ACTC fallaba. Se restauró **byte a byte desde `dist/app.js`** (build válido de 14:00, copia de `viteStaticCopy`) y se aplicó encima el fix que intentaba el parche `fix_app.js` (quedó con sintaxis rota, nunca corrió). |
+| `confirmarSancionActc()` | `app.js` | Tras confirmar: solo `mostrarToast('Auditoría ACTC: sanción confirmada para X.')` + limpia `#input-auditar-piloto` + `cancelarAuditoriaActc()` → `#auditoria-estado` vacío, banner apagado, reset total para la próxima consulta. **Eliminados** el `pintarEstadoAuditoria('alerta', '⚠️ Sanción confirmada…')` y `alternarBannerAuditoriaActc(true)` (los exigía el test: estado `''`, input `''` y banner `hidden`). |
+| `nombreCompleto` (auditarPiloto) | `app.js` | Ahora `.replace(/\s+/g, ' ').trim()` antes de usarse como `terminoBusqueda`/`resultado.nombre` (evita dobles espacios del padrón dentro de las comillas del query). |
+| Bypass de caché (ya estaba; verificado) | `app.js` | `let resultado = null; // Bypasseado: await leerAuditoriaCache(dni);` → **cada clic en "Auditar" hace POST directo a `google.serper.dev/search`**, sin leer `/auditoria_cache` ni el espejo `localStorage`. La escritura `escribirAuditoriaCache()` sigue activa (dispara-y-olvida) para cuando se reactive la caché. |
+| Query por apellido + `site:` (ya estaba; verificado) | `app.js` | `terminoBusqueda`: `texto.includes('COTIGNOLA')` → `'COTIGNOLA'` solo (engancha Nicolás y Luciano); `texto === piloto.apellido` (normalizado sin tildes) → solo el apellido; si no, nombre completo. Query final: `"TÉRMINO" AND ("Turismo Carretera" OR "TC Pista" OR "TC Pick Up" OR "ACTC") AND "2026" AND (site:actc.org.ar OR site:solotc.com.ar OR site:campeones.com.ar OR site:carburando.com)`. |
+
+### Validaciones (esta sesión)
+
+- `node --check app.js` y `node --check tests/menu.spec.js` → exit 0.
+- `npx vite build` → **exit 0** (623 ms; volvió a copiar `app.js`/`db.js` a `dist/`).
+- `npx playwright test tests/menu.spec.js --workers=1` → **7 passed** (54,3 s, exit 0). El test ACTC (evidencias + confirmación manual + re-auditoría con `fetches === 2` bajo bypass) pasa.
+
+### Estado de git
+
+**COMMITTED (commit recién creado y sincronizado):** `M app.js`, `M index.html`, `M src/services/viewManager.js`, `M styles.css`, `M tests/menu.spec.js`, `M .context/activeContext.md`. Se elimina `fix_app.js` (parche roto, no ejecutable).
+
+### Auditoría universal (eliminar bloqueo de padrón local)
+
+**Auditoría universal: sin bloqueo del padrón local; postulante externo con búsqueda web transparente, sanción genérica con ID sintético y revisión humana.**
+
+### Cambios de esta sesión
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| Eliminar `return` de validación local | `app.js` | En `auditarPiloto` se elimina el `return` que cortaba la ejecución cuando el piloto no está en el padrón. Al no encontrarse, se pinta el aviso gris de postulante externo y se continúa con `fetch` a `google.serper.dev/search` en caliente (idéntico al de un piloto registrado). |
+| Postulante externo | `app.js` | `pilotoExternoDesdeTexto()` genera `dni` sintético de 11 dígitos (hash djb2, prefijo `9`); `apellido` = última palabra del input; `externo: true`. |
+| Mensaje informativo | `app.js` | `ℹ️ Piloto no registrado en el padrón CDA (Postulante Externo). Iniciando búsqueda web...` (clase `.es-cargando` = gris `var(--text-secondary)`). |
+| Sanción genérica de externo | `app.js` | `autoSancionarActc()` escribe `registro` en `penalidades` con `id: Number(piloto.dni)` (sintético de 11 dígitos), `dni: String(piloto.dni)`, `nombre: nombreCompleto`, `apellido: piloto.apellido || ''`. |
+| Confirmación manual | `app.js` | `confirmarSancionActc()` → `autoSancionarActc(piloto, categoriaDetectada)` → `guardar('penalidades', registro)`; toast + limpieza. |
+| E2E | `tests/menu.spec.js` | Nuevos tests de `Nadie Existe` (aviso + fetch ×3) y `Pablo Externo` (confirmar → sanción con ID sintético 11 dígitos). |
+
+### Validaciones (esta sesión)
+
+- `node --check app.js` → **exit 0**.
+- `npx vite build` → **exit 0** (vite v6.4.3, 1.14 s; los avisos de `type="module"` son preexistentes por el uso de scripts clásicos).
+- `npx playwright test tests/menu.spec.js --workers=1` → **7 passed** (1.1 m; exit 0). Los 6 fallos previos por `browserContext.close: ENOENT` desaparecen tras borrar `test-results`.
+
+---
+
+## Sesión anterior — Auditoría ACTC: auto-sanción eliminada → flujo 100% humano (bypass + site:)
+
+**Auditoría ACTC: auto-sanción eliminada → flujo de revisión 100% humana.**
+
+### Cambios de esa sesión
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| Estado pendiente | `app.js` | Nueva variable `let _pendienteActc = null` (módulo-level): guarda `{ piloto, categoriaDetectada, sufijoCache }` mientras el positivo aguarda confirmación. Se limpia al confirmar o al cancelar. |
+| `mostrarEvidenciasActc()` | `app.js` | Nueva función: en positivo, renderiza dentro de `#auditoria-estado` un panel con cabecera de alerta, lista `<ol>` de hasta 5 snippets (título como `<a target="_blank">` + párrafo snippet), y dos botones: **"⚠️ Confirmar Infracción y Sancionar Piloto"** + **"Cancelar"**. Todo el contenido externo (Serper) pasa por `escapeHtml()`. |
+| `cancelarAuditoriaActc()` | `app.js` | Limpia `_pendienteActc`, vacía el panel y apaga el banner. Sin escritura en ninguna base de datos. |
+| `confirmarSancionActc()` | `app.js` | Lee `_pendienteActc`, lo limpia, deshabilita el botón mientras procesa, llama `autoSancionarActc()` + `refrescarDashboardTrasAuditoria()` + `alternarBannerAuditoriaActc(true)`. Solo ocurre al clic manual del admin. |
+| `auditarPiloto()` | `app.js` | Rama POSITIVO: eliminada secuencia auto-sanción (`pintarVeredictoAuditoriaActc` + `autoSancionarActc` + `refrescarDashboard`). Reemplazada por `mostrarEvidenciasActc(piloto, categoriaDetectada, resultado, sufijoCache)`. |
+| `resultado` object | `app.js` | Agrega campo `organic: data.organic.slice(0,5)` para el panel. Si viene de caché sin `organic`, muestra aviso "Resultado en caché: no hay fuentes disponibles". |
+| Banner text | `app.js` | "Registrado **automáticamente**" → "sanción **confirmada** y registrada…" |
+| Bypass de Caché (Depuración) | `app.js` | Desactivada temporalmente la lectura de `/auditoria_cache` y `localStorage` en `auditarPiloto()`. Todas las auditorías viajan en caliente a Serper.dev consumiendo saldo real para validación de datos en vivo. |
+| Afinado de query + `site:` | `app.js` | Se agregaron restricciones de dominio al query de Serper: `(site:actc.org.ar OR site:solotc.com.ar OR site:campeones.com.ar OR site:carburando.com)`. Además, si se busca por apellido (ej. "COTIGNOLA"), se envía el apellido solo para capturar todas las variantes de nombres en los resultados orgánicos. |
+| Tests E2E adaptados | `tests/menu.spec.js` | Test actualizado para validar que el query lleve `site:actc.org.ar` y que las re-auditorías realicen el fetch directo bajo el bypass temporal. |
+
+### Validaciones
+
+- `npx vite build` → **exit 0** (724 ms).
+- `npx playwright test tests/menu.spec.js --workers=1` → **7 passed** (1.1m, exit 0). Suite completa en verde con bypass de caché y operadores `site:`.
+
+---
+
+## Sesión anterior — Tarjeta ACTC on-demand + anti-cuota
+
+**Tarjeta "CONSULTA PILOTOS ACTC" 100% client-side: input + botón "Auditar", fetch Serper, caché 7 días, banner, (antes) auto-sanción.**
+
+### Cambios de esta sesión (auditoría ACTC)
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| **Anti-cuota / veredicto inmediato** | `app.js` | La UI ya **no espera a Firestore**: (1) helper `conCorteDeSeguridad(promesa, ms=1500, valorPorDefecto=null)` (~línea 3286) que hace `Promise.race` con timeout y `catch` interno (`console.warn('Firestore en pausa temporal:', e)`) — necesario porque con `Quota exceeded` el SDK **no rechaza** el await (queda en backoff) y el `try/catch` solo no saltaba; (2) `pintarVeredictoAuditoriaActc(positivo, sufijoCache)` (~línea 3265) pinta apenas retorna el JSON de Serper: positivo → `⚠️ Actividad detectada en ACTC 2026. Piloto Inhabilitado.` (clase `es-alerta`, rojo bold), negativo → `✓ Piloto Verificado: Sin anomalías en ACTC 2026` (clase `es-ok`, verde bold), limpiando "Consultando Serper.dev…" en el mismo paso; (3) `escribirAuditoriaCache()` en la nube se dispara **sin await** (`void conCorteDeSeguridad(...)`, el espejo `localStorage` es síncrono antes del `setDoc`); (4) `autoSancionarActc()` envuelve `guardar('penalidades', ...)` en `try/catch` + corte de 1.5 s (el `setDoc` va DESPUÉS del `put` IndexedDB dentro de `guardar()`, así que lo local siempre persiste); (5) `getDoc` de `leerAuditoriaCache()` y `buscarPilotoEnPadron()` también con corte de 1.5 s (fallback al espejo local). El mensaje positivo final conserva `auto-sancionado` + `vencimiento` + sufijo de caché tras la sanción. Veredicto pintado en <1 s tras el fetch, muy por debajo del objetivo de 3 s. |
+| Vista | `index.html` | Tarjeta **CONSULTA PILOTOS ACTC** `#pilotos-kpi-actc-card` en columna, **encabezado depurado**: título `<h3>CONSULTA PILOTOS ACTC` (sin span de año; se removió `#pilotos-kpi-actc-anio`), badge `#pilotos-kpi-actc-badge` ("PELIGRO", `hidden`) e ícono `#pilotos-kpi-actc-icono`. **Removidos** el número gigante `<p id="pilotos-kpi-actc" class="stat-alerta-num">` y la nota `<span id="pilotos-kpi-actc-nota">` ("N categoría sin fiscalizar") — no pertenecen al módulo. Abajo: formulario `.auditoria-form--tarjeta` con `#input-auditar-piloto` + `#btn-auditar-piloto` ("Auditar", `type=submit` → `auditarPiloto()`), `#auditoria-estado` y `#auditoria-banner` (`role="alert"`, `hidden`). **Eliminados**: loader `#pilotos-kpi-actc-loader` y la `.chart-card` separada `#pilotos-auditoria-card`. Configuración: card `admin-only` con `#config-serper-key` (`type=password`), spans `.config-save-msg`. |
+| Lógica | `app.js` | Sección `PILOTOS: AUDITORÍA ACTC EN CALIENTE (SERPER)` (~línea 3211): **100% on-demand** — sin debounce ni timer; `auditarPiloto()` solo por clic/Enter. Flujo: `input.value.trim().toUpperCase()` + `escapeHtml` antes de tocar el DOM → `buscarPilotoEnPadron()` (`getTodos('pilotos')` + hot `getDoc` `/pilotos/{dni}` si hay sesión) → no registrado ⇒ mensaje exacto **"Piloto no registrado en el padrón CDA"** y corte → `leerAuditoriaCache()`/`escribirAuditoriaCache()` (`/auditoria_cache/{dni}` ≤7 días + espejo `localStorage`) → `consultarSerperActc()` (POST **`https://google.serper.dev/search`** — endpoint oficial (OpenAPI de Serper); **la raíz `serper.dev/search` NO sirve**: responde 405 y no envía cabeceras CORS (por eso el error de consola previo) — verificado con preflight: `access-control-allow-origin: *` y `X-API-KEY` permitido —, **directo desde el navegador — 100% client-side, sin backend ni scripts de Python; apto GitHub Pages** —, headers **`X-API-KEY` + `Content-Type` exactos** con `'X-API-KEY': apiKeyRecuperada.trim()`, key recuperada de `localStorage['serper_api_key']` con fallback a `configuracionGlobal.serperApiKey` — base híbrida `/configuracion/global` con fallback IndexedDB —, body **`JSON.stringify({ q })`** con `` q = `"${nombre}" AND ("Turismo Carretera" OR "TC Pista" OR "TC Pick Up" OR "ACTC") AND "${año}"` `` → evalúa a `"2026"` en el año en curso) → `analizarSnippetsActc()` (primeros 5 `organic`: año + categoría ⇒ positivo) → `autoSancionarActc()` (`motivo` literal *"Participación en categoría no fiscalizada por la ACTC durante el año corriente 2026"*, `fechaFin` `${año}-12-31`, `vencimiento` `31/12/${año}`, `sancion` corta con la categoría, `autoActc:true`, DNI como `id` vía `guardar` = `setDoc` idempotente) + `refrescarDashboardTrasAuditoria()` + banner `alternarBannerAuditoriaActc(true)` (texto exacto **"⚠️ Piloto inhabilitado: Registrado automáticamente en la lista de sancionados"**, se apaga al iniciar cada nueva auditoría). |
+
+| KPI reactivo | `app.js` | `renderKpiPilotos()`: el contador/nota ACTC (`#pilotos-kpi-actc`, `#pilotos-kpi-actc-nota`) se **eliminó del DOM y de la función** (ya no hay número gigante ni "N categoría sin fiscalizar"); también cayó `#pilotos-kpi-actc-anio` (el título es fijo **CONSULTA PILOTOS ACTC**). Solo quedan `badgeActc.hidden = autoActc === 0` y `.is-peligro` en `#pilotos-kpi-actc-card` + `#pilotos-kpi-actc-icono` cuando hay auto-sanciones vigentes. |
+| Config | `app.js` | `precargarEnlaceSheets()` precarga `#config-serper-key` priorizando `localStorage['serper_api_key']`; `guardarConfiguracion()` guarda `{id:1, urlGoogleSheets, serperApiKey}` **fusionando con la cfg previa** (un input ausente no borra el otro), **espeja la key a `localStorage['serper_api_key']`** (removeItem si vacía) y actualiza todos `.config-save-msg`. `configuracionGlobal` sigue en `STORES_NO_SYNC` → la key nunca viaja a la nube. |
+| CSS | `styles.css` | Bloque "Auditoría ACTC" antes de "Filtro por mes del Calendario": `.auditoria-form`/`.auditoria-estado` + variantes `.es-cargando/.es-ok/.es-alerta/.es-error`, `.auditoria-nombre`, `.auditoria-cache-tag`, `.alerta-badge` (rojo con glow), `.stat-card-alerta.is-peligro`. **Nuevo en esta sesión:** `.stat-card-alerta` en columna (`flex-direction:column; position:relative`), `.stat-fila-actc` (KPI + ícono en fila), `.auditoria-form--tarjeta` (compacto dentro de la tarjeta) y `.auditoria-banner` (absoluto, rojo, flotante sobre el formulario, `@keyframes auditoria-banner-in`, regla `[hidden]{display:none}`). **Eliminados** `.audit-spinner` y `@keyframes audit-spin`. Media query ≤760px sigue apilando el formulario. |
+| Test | `tests/menu.spec.js` | Test "Pilotos > Auditoría ACTC bajo demanda: sin spinner, cruce Serper, caché de 7 días y auto-sanción" (stubs de `getTodos`, `guardar` idempotente por id y `fetch`): formulario **dentro de** `#pilotos-kpi-actc-card`, `#pilotos-kpi-actc-loader` count 0, **`#pilotos-kpi-actc` y `#pilotos-kpi-actc-nota` count 0** (placeholders removidos, también en el test del dashboard), tipear NO dispara nada (900ms ⇒ 0 llamadas), clic ⇒ UNA llamada con `X-API-KEY` y query del alcance, sanción con DNI-ID + `motivo` literal *"…durante el año corriente 2026"* + `fechaFin '2026-12-31'`, **banner visible** con *"⚠️ Piloto inhabilitado: Registrado automáticamente en la lista de sancionados"*, badge + `.is-peligro`, mini-tabla (prefijo del motivo), caché 7 días sin 2ª llamada, inexistente ⇒ *"Piloto no registrado en el padrón CDA"* sin llamada, verde "Piloto Verificado" con banner apagado. |
+
+### Notas / decisiones de diseño
+- **Post-Confirmación (esta sesión)**: Tras confirmar manualmente una infracción ACTC (botón `Confirmar Infracción y Sancionar Piloto`), el input `#input-auditar-piloto` se limpia, y el panel de evidencias (junto con el banner de alerta) se resetea inmediatamente llamando a `cancelarAuditoriaActc()`. El feedback de éxito se traslada exclusivamente al toast (`mostrarToast`), dejando la tarjeta 100% limpia para realizar consultas consecutivas sin molestias visuales. Las aserciones de E2E fueron actualizadas para validar esta limpieza.
+
+
+- El encargo pedía `setDoc` con DNI como ID en "la colección de sancionados": se cumple vía `guardar('penalidades', { id: Number(dni) })` → mismo doc ID local y en `/penalidades/{dni}`, preservando el esquema real que consume el render (`fechaFin` para el badge "Vigente", `apellido` vacío con `nombre` completo). Los campos literales del encargo (`vencimiento`, `estado`) se guardan además por compatibilidad.
+- `/auditoria_cache` requiere sesión Firebase para la nube; sin ella manda el espejo `localStorage` (misma vigencia de 7 días). Las reglas wildcard ya cubren la colección (lectura `signedIn`, escritura roles operativos): **sin cambios en `firestore.rules`**.
+- La API key de Serper queda solo en el navegador (`localStorage['serper_api_key']` + `configuracionGlobal`, lista negra de sync). Riesgo aceptado y documentado (análogo al de Firebase, que también va en el bundle). **Sin backend ni scripts de Python: el POST a serper.dev sale del navegador (GitHub Pages compatible).**
+- **Sin disparo automático**: no hay debounce ni polling; si el usuario solo tipea, no se consume saldo de Serper. El texto se sanitiza con `.toUpperCase()` + `escapeHtml()` antes de tocar el DOM; la query conserva el nombre canónico del padrón.
+- El banner `#auditoria-banner` es la única superficie "flotante": se inyecta con `textContent` (fijo, sin HTML del usuario) **abajo del input** y se apaga al inicio de cada nueva auditoría. Texto exacto de éxito: *"⚠️ Piloto inhabilitado: Registrado automáticamente en la lista de sancionados"*.
+- **Limpieza de placeholders (esta sesión)**: se removieron de la tarjeta el número gigante (`#pilotos-kpi-actc`, ej. "26") y la nota `#pilotos-kpi-actc-nota` ("N categoría sin fiscalizar") + su lógica en `renderKpiPilotos`; el badge/borde `.is-peligro` siguen reaccionando a `autoActc`. El `motivo` de la sanción ahora es literal *"Participación en categoría no fiscalizada por la ACTC durante el año corriente 2026"* (año dinámico) y el body de Serper es solo `{ q }` (sin `num`).
+
+### Validaciones (esta sesión)
+
+- `node --check app.js` y `node --check tests/menu.spec.js` → exit 0.
+- `npx vite build` → exit 0. Los avisos sobre `db.js`/`app.js` sin
+  `type="module"` son preexistentes (scripts clásicos by design).
+- `npx playwright test tests/menu.spec.js --workers=1` → **6 passed /
+  1 failed**: pasa el test de la auditoría ACTC (`...cruce Serper, caché de
+  7 días y auto-sanción` ✓, 4.6 s) y falla solo `Pilotos > Penalidades`;
+  el fallo **se reprodujo también con `git stash` sobre HEAD limpio** →
+  preexistente/ambiental (cuota Firebase, ver advertencia abajo).
+
+### ⚠️ Advertencia operativa: test Penalidades falla por cuota Firebase
+
+- **Síntoma**: el alta en `#form-nuevo-tipo-sancion` no pinta en
+  `#lista-tipos-sancion` (timeout 10 s); los 5 tipos por defecto aparecen
+  **sin `id`** (fallback en memoria → sin botones Editar/Eliminar).
+- **Causa raíz** (diagnosticada con spec temporal + probe): en
+  `src/services/persistenceService.js` `guardar()` hace
+  `await rt.setDoc(...)` (comentario dice "No bloqueante" pero se espera) y
+  Firestore del proyecto `controlcda-e5f97` responde
+  `FirebaseError [resource-exhausted]: Quota exceeded` → SDK entra en
+  *maximum backoff* → el `await` queda **colgado >60 s** → ni el toast ni
+  `renderizarListaTiposSancion()` se ejecutan (lo mismo bloquea el seed
+  `migrarTiposSancionV14`, por eso los defaults sin `id`).
+- **Fix posibles** (pendiente de decisión, fuera del alcance ACTC):
+  (a) revisar cuota/billing/plan del proyecto Firebase y esperar el reset;
+  (b) hacer el `setDoc` de `guardar()` realmente fire-and-forget
+  (`void rt.setDoc(...).catch(warn)`), coherente con el comentario "No
+  bloqueante" y con el diseño local-first — la app seguiría funcionando
+  con la nube caída.
+- **Mitigación YA aplicada en el flujo ACTC (esta sesión)**: `app.js` ya no
+  espera a Firestore en ninguna lectura/escritura de la auditoría (ver fila
+  "Anti-cuota / veredicto inmediato"): `conCorteDeSeguridad()` (carrera con
+  timeout de 1.5 s + `console.warn('Firestore en pausa temporal:', e)`),
+  escritura de caché dispara-y-olvida y veredicto rojo/verde pintado apenas
+  retorna el JSON de Serper. La auditoría muestra el resultado en <1 s aunque
+  la cuota siga agotada. **El seed/`guardar()` del resto de la app (vista
+  Penalidades, altas de tipos de sanción) sigue afectado** hasta aplicar (a) o (b).
+
+### Estado de git
+
+**SIN COMMIT (esperando confirmación del usuario):** working tree con
+`M app.js`, `M index.html`, `M styles.css`, `M tests/menu.spec.js`,
+`M .context/activeContext.md` → incluye la columna **Categoría** de la sesión
+anterior (aún no commiteada) + la auditoría ACTC de esta sesión. Commit
+sugerido al dar luz verde: `feat(pilotos): columna Categoría y auditoría ACTC en caliente con Serper`.
+
+### Próximos pasos
+
+1. Commit + push de los 5 archivos pendientes (previa confirmación).
+2. Cargar la API key real de Serper en Configuración y probar un cruce real
+   desde el navegador. **Restricción de diseño**: la consulta debe ser 100%
+   client-side (GitHub Pages, sin backend ni Python); si serper.dev no envía
+   cabeceras CORS que habiliten el POST desde el navegador, escalar al usuario
+   (el alcance prohíbe montar un servidor proxy).
+3. Backlog abierto: cruce ACTC por DNI contra padrón oficial, reactividad del
+   dashboard al alta de pilotos, filtros por categoría/sanción.
+
+## Sesión anterior — Dashboard de Pilotos (conservada por referencia)
+
 **Paso 2 resuelto: la vista padre "Pilotos" pasa de placeholder a dashboard dinámico de 4 ítems.**
 
 ### Cambios de esta sesión
 
 | Aspecto | Archivo | Detalle |
 |---|---|---|
-| Vista | `index.html` | `#view-pilotos` reemplaza "Módulo en construcción" por: `header` (`page-title` "Control de Pilotos"), fila 1 `.stats-grid` con 3 `.stat-card` (KPI total `#pilotos-kpi-total`, sanciones vigentes `#pilotos-kpi-vigentes`, alerta ACTC `#pilotos-kpi-actc` en `.stat-card-alerta` + `.stat-alerta-num`), fila 2 `.charts-grid` con `.chart-card` de barras (`#pilotos-categorias-body`, cabecera `#pilotos-cat-total`) y mini-tabla `.tabla-sancionados` (`thead` Nombre y Apellido / Sanción / Motivo / Vencimiento, `tbody#pilotos-sancionados-body`), más un tercer `.charts-grid` de pie con `.dash-pie-links` (`.link-like` que llaman a `navegarDesdeDashboard('listado-pilotos'|'penalidades')`) y `.dash-aviso-actc` (texto de alcance del cruce). Los dos primeros `.stat-card` son `role="link"` navegables. |
+| Vista | `index.html` | `#view-pilotos` reemplaza "Módulo en construcción" por: `header` (`page-title` "Control de Pilotos"), fila 1 `.stats-grid` con 3 `.stat-card` (KPI total `#pilotos-kpi-total`, sanciones vigentes `#pilotos-kpi-vigentes`, alerta ACTC `#pilotos-kpi-actc` en `.stat-card-alerta` + `.stat-alerta-num`), fila 2 `.charts-grid` con `.chart-card` de barras (`#pilotos-categorias-body`, cabecera `#pilotos-cat-total`) y mini-tabla `.tabla-sancionados` (`thead` Nombre y Apellido / Categoría / Sanción / Motivo / Vencimiento, `tbody#pilotos-sancionados-body`), más un tercer `.charts-grid` de pie con `.dash-pie-links` (`.link-like` que llaman a `navegarDesdeDashboard('listado-pilotos'|'penalidades')`) y `.dash-aviso-actc` (texto de alcance del cruce). Los dos primeros `.stat-card` son `role="link"` navegables. |
 | CSS | `styles.css` | Bloque nuevo antes de "Filtro por mes del Calendario": `.cat-bar-*` (row/head/name/count/track/fill, `.is-alerta`), estados `.cat-bar-placeholder`/`.pilotos-vacio`, skeleton `.cat-bar-skeleton` + `@keyframes cat-shimmer`, `.tabla-sancionados*`, `.stat-card-alerta`/`.stat-icon-alerta`/`.stat-alerta-num`, `.dash-pie-links`/`.dash-aviso-actc` y media query móvil. Todo lo demás reutiliza vocabulario existente (`.stats-grid`, `.stat-card`, `.chart-card`, `.charts-grid`, `.badge-*`, `.tag`): **sin librerías de gráficos ni `.card`/`.progress-bar` nuevos**. |
-| Lógica | `app.js` | Bloque `// ==================== PILOTOS: DASHBOARD DEL MÓDULO ====================` (~línea 2948, antes de la sección de importación del padrón): `renderDashboardPilotos()` (skeleton → `Promise.all(getTodos('pilotos'), getTodos('penalidades'))` → KPIs/barras/sancionados; `catch` → `mostrarToast`), `pintarSkeletonPilotos()`, `normalizarCategoriaPiloto()` (**NFD quita tildes** + colapsa espacios: "Sport Histórico" y "SPORT HISTORICO" caen en la misma barra), `categoriaEnAlertaActc()` + `CATEGORIAS_ACTC_NO_FISCALIZADAS` (heurística actual), `conteoPorCategoriaPilotos()` (dedup por DNI con `Set`, orden desc), `fechaPenalidadAMs()` (parseo local de `YYYY-MM-DD`, evita el corrimiento UTC), `inicioDeHoy()`, `clasificarPenalidades()` (vigente = sin `fechaFin` o `fin >= hoy`; cumplidas en caso contrario), `renderKpiPilotos()` (`Intl.NumberFormat('es-AR')`), `renderBarrasCategorias()` (ancho % del máximo, mínimo 3%, `background` de `TONOS_CATEGORIA` salvo en alerta) y `renderSancionados()` (top 12, vigentes ordenadas por vencimiento más próximo, `escapeHtml` + `formatearFechaVisual`, badges `badge-warning`/`badge-success`). |
+| Lógica | `app.js` | Bloque `// ==================== PILOTOS: DASHBOARD DEL MÓDULO ====================` (~línea 2948, antes de la sección de importación del padrón): `renderDashboardPilotos()` (skeleton → `Promise.all(getTodos('pilotos'), getTodos('penalidades'))` → KPIs/barras/sancionados; `catch` → `mostrarToast`), `pintarSkeletonPilotos()`, `normalizarCategoriaPiloto()` (**NFD quita tildes** + colapsa espacios: "Sport Histórico" y "SPORT HISTORICO" caen en la misma barra), `categoriaEnAlertaActc()` + `CATEGORIAS_ACTC_NO_FISCALIZADAS` (heurística actual), `conteoPorCategoriaPilotos()` (dedup por DNI con `Set`, orden desc), `fechaPenalidadAMs()` (parseo local de `YYYY-MM-DD`, evita el corrimiento UTC), `inicioDeHoy()`, `clasificarPenalidades()` (vigente = sin `fechaFin` o `fin >= hoy`; cumplidas en caso contrario), `renderKpiPilotos()` (`Intl.NumberFormat('es-AR')`), `renderBarrasCategorias()` (ancho % del máximo, mínimo 3%, `background` de `TONOS_CATEGORIA` salvo en alerta) y `renderSancionados()` (top 12, vigentes ordenadas por vencimiento más próximo, `escapeHtml` + `formatearFechaVisual`, badges `badge-warning`/`badge-success`, columna **Categoría** de `p.categoria` con fallback `—`). |
 | Disparador | `src/services/viewManager.js` | `cargarDatosVista()` `case 'pilotos': await invocarGlobal('renderDashboardPilotos')` (antes era `break` vacío). Función global en `app.js` → visible en `window`, mismo patrón que `listarPilotos`. |
-| Test | `tests/menu.spec.js` | El test de "Pilotos" pasa de validar el placeholder a validar el dashboard: `page-title`, ausencia de "Módulo en construcción", 1 `.stats-grid` + 2 `.charts-grid`, `#pilotos-kpi-total` con número, `.stat-card-alerta` presente, estado vacío de `#pilotos-categorias-body` (`Sin pilotos cargados`/`Cargando`) y las 3 columnas del `thead` de sancionados. **`renderDashboardPilotos` queda sin stub a propósito** (documentado en el comentario de `CARGADORES`): con IndexedDB vacía renderiza `0` + placeholder. |
+| Test | `tests/menu.spec.js` | El test de "Pilotos" pasa de validar el placeholder a validar el dashboard: `page-title`, ausencia de "Módulo en construcción", 1 `.stats-grid` + 2 `.charts-grid`, `#pilotos-kpi-total` con número, `.stat-card-alerta` presente, estado vacío de `#pilotos-categorias-body` (`Sin pilotos cargados`/`Cargando`) y las 4 columnas del `thead` de sancionados (incluye **Categoría** de la penalidad). **`renderDashboardPilotos` queda sin stub a propósito** (documentado en el comentario de `CARGADORES`): con IndexedDB vacía renderiza `0` + placeholder. |
 | `.context` | `activeContext.md`, `productContext.md` | Paso 2 marcado como resuelto y descripción del dashboard agregada al flujo de Pilotos. |
 
 ### Bug real detectado con tests aislados
@@ -190,29 +349,42 @@ Commiteado y pusheado en `df84126` "pilotos: dashboard de la vista padre
 
 ## Próximos pasos lógicos
 
-1. **Crear `.env`** en esta máquina (`copy .env.example .env` + claves de Firebase).
-   Sin él, la app arranca sin identidad en la nube y la importación del padrón solo
-   escribe en local.
-2. ~~**Diseñar la vista "Pilotos" (overview)**~~ → **RESUELTO en esta sesión**:
-   `#view-pilotos` ahora es un dashboard dinámico de 4 ítems (KPI total,
-   barras por categoría, sancionados y alerta ACTC) disparado por
-   `invocarGlobal('renderDashboardPilotos')`. Mejoras posibles: cruce REAL con
-   la fuente ACTC (hoy es heurística por `CATEGORIAS_ACTC_NO_FISCALIZADAS`),
-   reactividad al alta de pilotos desde la misma sesión y filtrado por
-   categoría/sanción en los paneles.
-3. Evaluar **edición** de penalidades (hoy alta + baja; las `funciones` del
-   catálogo no incluyen `editar` a propósito) y exportación/imprenta del listado.
-4. Recordar: usuarios no-admin con permisos personalizados persistidos no ven
-   los módulos nuevos hasta que un admin edite su matriz de permisos.
-5. Pendientes de sesiones previas: migración ESM de `app.js`, auditoría
+1. **Commit + push** de los archivos modificados (`app.js`, `index.html`,
+   `styles.css`, `src/services/viewManager.js`, `tests/menu.spec.js`,
+   `.context/activeContext.md`) y considerar eliminar `?? fix_app.js`
+   (parche roto de la sesión previa; su intención ya está aplicada en
+   `confirmarSancionActc()`).
+2. **Revertir el bypass de caché** al terminar la fase de depuración: en
+   `auditarPiloto()` restaurar `const resultado = await leerAuditoriaCache(dni);`
+   y el sufijo "(resultado en caché ≤7 días)". La escritura
+   `escribirAuditoriaCache()` nunca se apagó, así que la caché a 7 días
+   seguirá vigente al reactivar la lectura.
+3. **Warnings de consola `persistenceService.js:347`** (`tiposMovimiento`,
+   `tiposSancion`, `ubicacionesInventario`): diagnóstico a medias — son las
+   ÚNICAS stores sincronizables con **índice único** en IndexedDB
+   (`valor`/`nombre`) y a la vez las 3 últimas alfabéticamente del sync;
+   candidatas: `ConstraintError` al hacer `store.put` de docs nube con id
+   distinto pero mismo `valor`/`nombre`, o cuota IndexedDB. Falta abrir el
+   Object del warn (`codigo`/`mensaje`) en consola del navegador para
+   confirmar antes de tocar `sincronizarFirebaseALocal()`.
+4. **Crear `.env`** en esta máquina (`copy .env.example .env` + claves de
+   Firebase). Sin él, la app arranca sin identidad en la nube y la
+   importación del padrón solo escribe en local.
+5. Mejoras del dashboard de Pilotos (cruce REAL con la fuente ACTC, hoy
+   heurística por `CATEGORIAS_ACTC_NO_FISCALIZADAS`; reactividad al alta;
+   filtros por categoría/sanción). Evaluar **edición** de penalidades (hoy
+   alta + baja) y exportación/imprenta del listado. Recordar: usuarios
+   no-admin no ven módulos nuevos hasta que un admin edite su matriz.
+6. Pendientes históricos: migración ESM de `app.js`, auditoría
    `technical_analysis.md` (S1 XSS / S2 CSV injection), tests E2E aislados.
-
-> El paso 1 anterior ("Commitear el Listado de Pilotos") quedó **resuelto**: todo
-> está commiteado y pusheado en `58077e7` "Carga de PIlotod" (`main` = `origin/main`).
-> El árbol de trabajo estaba limpio al iniciar esta sesión.
 
 ## Advertencias operativas
 
+- **`app.js` arrastra trabajo sin commitear**: en la sesión previa una
+  sobrescritura/git checkout borró TODO el módulo de auditoría (solo
+  sobrevivió en `dist/app.js`, la copia de `viteStaticCopy`). Commitear
+  temprano; ante una pérdida, `dist/app.js` sirve como snapshot de
+  recuperación (copia byte a byte del fuente al hacer build).
 - **Máquina nueva / repo recién clonado**: el setup mínimo es
   `npm install` **+ `npx playwright install chromium`** (los navegadores viven en
   `%LOCALAPPDATA%\ms-playwright`, fuera del repo, así que no viajan con el clone;

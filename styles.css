@@ -1129,6 +1129,11 @@ tr:hover td {
     overflow-wrap: anywhere;
 }
 
+.tabla-sancionados .categoria-piloto {
+    white-space: nowrap;
+    color: var(--text-secondary);
+}
+
 .tabla-sancionados .vencimiento {
     white-space: nowrap;
 }
@@ -1186,6 +1191,237 @@ tr:hover td {
 @media (max-width: 760px) {
     .dash-aviso-actc {
         margin-left: 0;
+    }
+}
+
+/* ==================== Auditoría ACTC (dashboard de Pilotos) ==================== */
+/* Formulario de cruce en caliente: input + botón + estados de resultado. */
+.auditoria-form {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.auditoria-form .search-input {
+    flex: 1 1 260px;
+    min-width: 0;
+}
+
+/* Área de estado: altura mínima estable para que la tarjeta no salte. */
+.auditoria-estado {
+    min-height: 1.4rem;
+    font-size: 0.88rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+}
+
+.auditoria-estado:empty {
+    display: none;
+}
+
+.auditoria-estado.es-cargando {
+    color: var(--text-secondary);
+}
+
+.auditoria-estado.es-ok {
+    color: var(--accent-green, #2ecc71);
+    font-weight: 600;
+}
+
+.auditoria-estado.es-alerta,
+.auditoria-estado.es-error {
+    color: #ff6b6b;
+    font-weight: 600;
+}
+
+.auditoria-nombre {
+    font-weight: 700;
+}
+
+.auditoria-cache-tag {
+    font-weight: 400;
+    font-style: italic;
+    color: var(--text-secondary);
+}
+
+/* --- Tarjeta "Consulta Pilotos ACTC" con el módulo de auditoría DENTRO --- */
+/* De fila a columna: cabecera (KPI + ícono) arriba, formulario debajo. */
+.stat-card-alerta {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+    position: relative;          /* ancla del banner rojo flotante */
+}
+
+/* Fila superior: dato + ícono, como en las demás tarjetas. */
+.stat-fila-actc {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+/* Formulario compacto dentro de la tarjeta (input + botón acentuado). */
+.auditoria-form--tarjeta {
+    margin-bottom: 0;
+    gap: 0.5rem;
+}
+
+.auditoria-form--tarjeta .search-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+}
+
+.auditoria-form--tarjeta .btn {
+    padding: 0.5rem 1.1rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+/* Banner rojo flotante que cubre el formulario cuando hay positivo. */
+.auditoria-banner {
+    position: absolute;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.6rem;
+    padding: 0.6rem 0.8rem;
+    background-color: #e53e3e;
+    color: #fff;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    line-height: 1.4;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+    z-index: 5;
+    animation: auditoria-banner-in 0.25s ease-out;
+}
+
+.auditoria-banner[hidden] {
+    display: none;
+}
+
+@keyframes auditoria-banner-in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Badge de peligro de la tarjeta "Consulta Pilotos ACTC" (auto-sanciones vigentes). */
+.alerta-badge {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: #fff;
+    background-color: #e53e3e;
+    box-shadow: 0 0 8px rgba(229, 62, 62, 0.6);
+    vertical-align: middle;
+}
+
+/* (Spinner de auditoría ELIMINADO: la tarjeta ya no carga nada en segundo
+   plano; la auditoría solo corre al clickear "Auditar"). */
+
+/* ---- Panel de evidencias para revisión humana (positivo ACTC) ---- */
+.auditoria-ev-header {
+    margin: 0.4rem 0 0.6rem;
+    font-size: 0.88rem;
+    line-height: 1.45;
+}
+
+.auditoria-snippets-list {
+    margin: 0 0 0.75rem 1.1rem;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    font-size: 0.82rem;
+}
+
+.auditoria-snippet-item {
+    line-height: 1.4;
+}
+
+.auditoria-snippet-link {
+    display: block;
+    color: #63b3ed;          /* azul claro legible sobre fondo oscuro */
+    font-weight: 600;
+    word-break: break-word;
+    text-decoration: none;
+}
+.auditoria-snippet-link:hover { text-decoration: underline; }
+
+.auditoria-snippet-texto {
+    margin: 0.15rem 0 0;
+    color: var(--text-secondary);
+    font-weight: 400;
+    font-size: 0.8rem;
+}
+
+.auditoria-sin-snippets {
+    margin: 0 0 0.75rem;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+/* Fila de acciones: confirmar (rojo) + cancelar (secundario). */
+.auditoria-acciones {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.25rem;
+}
+
+.auditoria-btn-confirmar {
+    background-color: #c53030;
+    color: #fff;
+    border-color: #c53030;
+    font-size: 0.82rem;
+    padding: 0.45rem 0.9rem;
+}
+.auditoria-btn-confirmar:hover:not(:disabled) {
+    background-color: #9b2c2c;
+    border-color: #9b2c2c;
+}
+.auditoria-btn-confirmar:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.auditoria-btn-cancelar {
+    font-size: 0.82rem;
+    padding: 0.45rem 0.9rem;
+}
+
+
+/* Estado "peligro": la tarjeta y su ícono se encienden en rojo intenso. */
+.stat-card-alerta.is-peligro {
+    border-color: #e53e3e;
+    box-shadow: inset 0 0 0 1px rgba(229, 62, 62, 0.35),
+                0 0 12px rgba(229, 62, 62, 0.25);
+}
+
+.stat-card-alerta.is-peligro .stat-icon-alerta,
+.stat-icon-alerta.is-peligro {
+    color: #fff;
+    background-color: #e53e3e;
+}
+
+@media (max-width: 760px) {
+    .auditoria-form {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .auditoria-form .search-input {
+        min-width: 0;
+        width: 100%;
     }
 }
 
