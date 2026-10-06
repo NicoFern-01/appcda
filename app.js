@@ -3706,9 +3706,7 @@ async function auditarPiloto() {
         const dni = String(piloto.dni).replace(/\D/g, '');
         const nombreCompleto = `${piloto.nombre || ''} ${piloto.apellido || ''}`
             .replace(/\s+/g, ' ').trim();
-        // 3) Bypass temporal de caché para pruebas/depuración directa contra Serper.dev
-        // (Obliga a realizar el fetch a Serper en cada auditoría sin leer /auditoria_cache ni localStorage).
-        let resultado = null; // Bypasseado: await leerAuditoriaCache(dni);
+        let resultado = await leerAuditoriaCache(dni);
         let desdeCache = false;
         if (!resultado) {
             desdeCache = false;
