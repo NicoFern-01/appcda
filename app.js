@@ -34,6 +34,41 @@ const PALETA_GRAFICOS = [
  * @param {number} n cantidad de categorías o barras
  * @returns {string[]} n colores en notación hex
  */
+/**
+ * Lee el valor computado de una variable CSS del tema activo.
+ * Chart.js NO resuelve var(--x): hay que pasarle el valor ya resuelto.
+ * Se lee al crear el gráfico, por eso refrescamos los gráficos al cambiar
+ * de tema para que tomen los colores nuevos.
+ * @param {string} nombre nombre de la variable, p. ej. "--text-secondary"
+ * @returns {string} valor computado (color) listo para Chart.js
+ */
+function cssVar(nombre) {
+    return getComputedStyle(document.documentElement).getPropertyValue(nombre).trim();
+}
+
+/**
+ * Refresca los gráficos visibles tras un cambio de tema.
+ * Chart.js hornea los colores al crear la instancia: hay que volver a crearlas
+ * para que ejes, grillas, leyendas y bordes tomen las variables del nuevo tema.
+ * Solo se recrea lo que está en pantalla (dashboard o inventario).
+ */
+async function refrescarGraficosTema() {
+    const dashboardActivo = document.getElementById('view-dashboard')?.classList.contains('active');
+    const inventarioActivo = document.getElementById('view-inventario')?.classList.contains('active');
+    try {
+        if (dashboardActivo) {
+            if (typeof window !== 'undefined') window.dashboardDirty = true;
+            dashboardDirty = true;
+            await renderDashboard();
+        }
+        if (inventarioActivo && typeof renderDashboardInventario === 'function') {
+            await renderDashboardInventario();
+        }
+    } catch (err) {
+        console.warn('No se pudieron refrescar los gráficos al cambiar de tema:', err);
+    }
+}
+
 function paletaGraficos(n) {
     const cantidad = Math.max(0, Number(n) || 0);
     return Array.from({ length: cantidad }, (_, i) => PALETA_GRAFICOS[i % PALETA_GRAFICOS.length]);
@@ -106,6 +141,48 @@ function toggleCalendarioFilters() {
 // ==================== INICIALIZACIÓN ====================
 document.addEventListener('DOMContentLoaded', async () => {
     try {
+
+        // THEME SWITCH (pildora neumorfica en header) - oscuro por defecto.
+        // El <html> SIN data-theme = oscuro (:root). Con data-theme=light = claro.
+        const THEME_KEY = 'cda_theme';
+        const themeChk = document.getElementById('theme-checkbox-toggle');
+        const themeLbl = document.getElementById('theme-label');
+
+        // Actualiza el texto del switch para que SIEMPRE refleje el modo activo.
+        // Sin esto el label quedaba congelado en "Modo Oscuro" y no coincidía.
+        function actualizarLabelTema(temaLight) {
+            if (themeLbl) themeLbl.textContent = temaLight ? 'Modo Claro' : 'Modo Oscuro';
+        }
+
+        // Aplica el tema al <html> y sincroniza checkbox + label.
+        // Si swap=true, anula transiciones durante un frame para evitar el
+        // parpadeo de fondos/textos que produce --transition: all 0.3s.
+        function aplicarTema(temaLight, swap) {
+            const root = document.documentElement;
+            if (swap) {
+                // Anula transiciones, cambia el tema y las restaura al frame siguiente.
+                root.classList.add('theme-swap');
+                requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-swap')));
+            }
+            if (temaLight) { root.setAttribute('data-theme', 'light'); }
+            else { root.removeAttribute('data-theme'); }
+            if (themeChk) { themeChk.checked = !!temaLight; }
+            actualizarLabelTema(temaLight);
+        }
+
+        // Estado inicial (sin swap: la primera carga no necesita animación).
+        aplicarTema(localStorage.getItem(THEME_KEY) === 'light', false);
+
+        if (themeChk) {
+            themeChk.addEventListener('change', () => {
+                const temaLight = themeChk.checked;
+                localStorage.setItem(THEME_KEY, temaLight ? 'light' : 'dark');
+                aplicarTema(temaLight, true);
+                // Chart.js hornea los colores al crear cada instancia: hay que
+                // volver a renderizar para que tomen las variables del tema nuevo.
+                refrescarGraficosTema();
+            });
+        }
         await inicializarFirebase();
         await inicializarDatosPorDefecto();
 
@@ -648,7 +725,9 @@ async function renderDashboard() {
                 // Un color por categoría (matiz distinto, no variaciones de un azul).
                 backgroundColor: paletaGraficos(catKeys.length || 1),
                 borderWidth: 2,
-                borderColor: '#1f2a40',
+                // Borde de cada sector = color de la tarjeta del tema activo:
+                // en oscuro separa sobre fondo oscuro, en claro sobre fondo claro.
+                borderColor: cssVar('--bg-card'),
                 hoverOffset: 6
             }]
         },
@@ -659,7 +738,7 @@ async function renderDashboard() {
             plugins: {
                 // Punto circular en la leyenda: el color del punto es el mismo
                 // que el del sector, así se cruzan sin leer dos veces.
-                legend: { position: 'right', labels: { color: '#94a3b8', usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 14, font: { family: 'Outfit' } } },
+                legend: { position: 'right', labels: { color: cssVar('--text-secondary'), usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 14, font: { family: 'Outfit' } } },
                 tooltip: { callbacks: { label: (ctx) => ` $${ctx.raw.toLocaleString()}` } }
             }
         }
@@ -749,14 +828,14 @@ async function renderDashboard() {
             datasets: [{
                 label: etiquetaSerie,
                 data: dataPoints,
-                borderColor: '#00d2d3',
-                backgroundColor: 'rgba(0,210,211,0.1)',
+                borderColor: cssVar('--accent-blue'),
+                backgroundColor: cssVar('--chart-fill'),
                 fill: true,
                 tension: 0.3,
                 borderWidth: 3,
                 pointRadius: 4,
-                pointBackgroundColor: '#00d2d3',
-                pointBorderColor: '#1a2332',
+                pointBackgroundColor: cssVar('--accent-blue'),
+                pointBorderColor: cssVar('--bg-card'),
                 pointBorderWidth: 2,
                 // Cada tramo se tiñe comparando el período actual con el anterior:
                 // si el valor BAJA, tramo rojo; si SUBE, tramo verde. Permite leer
@@ -765,7 +844,7 @@ async function renderDashboard() {
                     borderColor: (ctx) => {
                         const previo = Number(ctx.p0.parsed.y);
                         const actual = Number(ctx.p1.parsed.y);
-                        if (previo === actual) return '#00d2d3';
+                        if (previo === actual) return cssVar('--accent-blue');
                         return actual < previo ? COLOR_VARIACION_BAJA : COLOR_VARIACION_SUBIDA;
                     }
                 }
@@ -814,7 +893,7 @@ async function renderDashboard() {
                 // Cada concepto con su propio color: el degradado monocromo
                 // anterior volvía indistinguibles las barras contiguas.
                 backgroundColor: paletaGraficos(top.length || 1),
-                hoverBackgroundColor: '#ffffff',
+                hoverBackgroundColor: cssVar('--text-primary'),
                 borderRadius: 6,
                 borderSkipped: false,
                 barThickness: 22
@@ -830,12 +909,12 @@ async function renderDashboard() {
             },
             scales: {
                 x: {
-                    grid: { color: 'rgba(255,255,255,0.05)' },
-                    ticks: { color: '#94a3b8', callback: (v) => `$${Number(v).toLocaleString('es-AR')}` }
+                    grid: { color: cssVar('--chart-grid') },
+                    ticks: { color: cssVar('--text-secondary'), callback: (v) => `$${Number(v).toLocaleString('es-AR')}` }
                 },
                 y: {
                     grid: { display: false },
-                    ticks: { color: '#94a3b8', font: { family: 'Outfit' } }
+                    ticks: { color: cssVar('--text-secondary'), font: { family: 'Outfit' } }
                 }
             }
         }
@@ -1027,8 +1106,10 @@ function chartLineOptions() {
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ` $${ctx.raw.toLocaleString()}` } } },
         scales: {
-            y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
-            x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
+            // Colores del tema activo (ejes/grilla): leídos vía cssVar() para que
+            // respondan al cambio oscuro/claro en vez de quedar gris fijo.
+            y: { grid: { color: cssVar('--chart-grid') }, ticks: { color: cssVar('--text-secondary') } },
+            x: { grid: { display: false }, ticks: { color: cssVar('--text-secondary') } }
         }
     };
 }
@@ -8590,7 +8671,7 @@ async function renderDashboardInventario() {
                 // el mismo orden azul -> verde -> ambar -> violeta -> turquesa.
                 backgroundColor: paletaGraficos(invCatLabels.length),
                 borderWidth: 2,
-                borderColor: '#1f2a40',
+                borderColor: cssVar('--bg-card'),
                 hoverOffset: 6
             }]
         },
@@ -8600,7 +8681,7 @@ async function renderDashboardInventario() {
             cutout: '62%',
             plugins: {
                 // Punto circular con el color del sector: se cruza sin releer.
-                legend: { position: 'right', labels: { color: '#94a3b8', usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 12, font: { size: 11, family: 'Outfit' } } }
+                legend: { position: 'right', labels: { color: cssVar('--text-secondary'), usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 12, font: { size: 11, family: 'Outfit' } } }
             }
         }
     });
@@ -8617,7 +8698,7 @@ async function renderDashboardInventario() {
                 // Un color por categoría, en el mismo orden que la torta: ambas
                 // vistas del inventario se leen como una sola.
                 backgroundColor: paletaGraficos(invStockLabels.length),
-                hoverBackgroundColor: '#ffffff',
+                hoverBackgroundColor: cssVar('--text-primary'),
                 borderRadius: 6,
                 borderSkipped: false
             }]
@@ -8627,8 +8708,8 @@ async function renderDashboardInventario() {
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-                y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
-                x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
+                y: { grid: { color: cssVar('--chart-grid') }, ticks: { color: cssVar('--text-secondary') } },
+                x: { grid: { display: false }, ticks: { color: cssVar('--text-secondary') } }
             }
         }
     });

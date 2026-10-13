@@ -11,10 +11,102 @@
     --accent-green: #2ed573; /* Verde para saldos positivos / éxito */
     --border-color: rgba(255, 255, 255, 0.08);
     --border-hover: rgba(255, 255, 255, 0.2);
+    --chart-grid: rgba(255, 255, 255, 0.05);
+    --chart-fill: rgba(0, 210, 211, 0.12);
     --font-sans: 'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     --sidebar-width: 260px;
 }
+
+/* ==================== MODO CLARO ==================== */
+[data-theme=light] {
+    --bg-primary: #f7fafc;
+    --bg-secondary: #edf2f7;
+    --bg-card: #ffffff;
+    --text-primary: #1a202c;
+    --text-secondary: #718096;
+    --accent: #e53e3e;
+    --accent-blue: #3182ce;
+    --accent-green: #38a169;
+    --border-color: rgba(0, 0, 0, 0.12);
+    --border-hover: rgba(0, 0, 0, 0.22);
+    --chart-grid: rgba(0, 0, 0, 0.08);
+    --chart-fill: rgba(49, 130, 206, 0.12);
+    --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --sidebar-width: 260px;
+}
+
+
+/* ==================== SWAP DE TEMA SIN PARPADEO ==================== */
+/* Mientras se cambia el tema se añade .theme-swap a <html>. Esa clase anula
+   TODA transición (declarada con !important) para que fondos, textos y bordes
+   cambien de golpe. Sin esto, --transition: all 0.3s anima decenas de elementos
+   a la vez y el texto pasa por grises de bajo contraste (el "parpadeo").
+   Se quita en el siguiente requestAnimationFrame para restaurar los hovers. */
+html.theme-swap, html.theme-swap *, html.theme-swap *::before, html.theme-swap *::after {
+    transition: none !important;
+    animation: none !important;
+}
+
+/* ==================== SWITCH TEMA (NEUMORFICO PÍLDORA) ==================== */
+
+.theme-switch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.theme-switch-container {
+    position: relative;
+    width: 55px;
+    height: 28px;
+    border-radius: 50px;
+    background-color: #2d3748;
+    transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: inset 2px 2px 5px rgba(0, 0, 0, 0.2);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.theme-switch-container input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.theme-slider {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background-color: #ffffff;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    pointer-events: none;
+}
+
+.theme-switch-container input:checked + .theme-slider {
+    transform: translateX(26px);
+    background-color: #22c55e;
+}
+
+.theme-switch-container input:checked + .theme-slider::after {
+    content: '';
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background-color: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
 
 /* RESET DE ESCALA GENERAL (ROOT FLUIDO) */
 html, body {
@@ -64,7 +156,7 @@ aside {
     width: 38px;
     height: 38px;
     object-fit: contain;
-    mix-blend-mode: lighten;
+    mix-blend-mode: normal;
     background: radial-gradient(circle, rgba(0, 210, 211, 0.1) 0%, transparent 70%);
     border-radius: 50%;
     padding: 4px;
@@ -1943,7 +2035,7 @@ tr:hover td {
     object-fit: contain;
     filter: drop-shadow(0 0 18px rgba(255, 167, 0, 0.45));
     animation: pulse-logo 3s ease-in-out infinite;
-    mix-blend-mode: lighten;
+    mix-blend-mode: normal;
     background: radial-gradient(circle, rgba(255, 167, 0, 0.08) 0%, transparent 70%);
     border-radius: 50%;
     padding: 8px;

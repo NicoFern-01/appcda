@@ -412,3 +412,68 @@ Commiteado y pusheado en `df84126` "pilotos: dashboard de la vista padre
 - El botón "Adjuntar" existe también en el modal de Carga Detallada: en tests,
   acotar el selector a `#form-penalidad`.
 
+## SESIÓN 10/06/2026 (3): SWITCH DE TEMA FUNCIONAL + GRÁFICOS SENSIBLES AL TEMA
+
+### Qué se hizo
+
+Problemas reportados: default oscuro OK pero el switch "no cambiaba", el label
+decía "Modo Oscuro" sin coincidir, y la transición parpadeaba/texto feo.
+
+- **app.js** (bloque THEME en `DOMContentLoaded`): reescrito completo:
+  - `actualizarLabelTema(light)`: label `#theme-label` dinámico -> "Modo Claro"
+    / "Modo Oscuro". Antes estaba congelado en el HTML (no coincidía nunca).
+  - `aplicarTema(temaLight, swap)`: con `swap=true` añade `html.theme-swap` (clase
+    que anula transiciones), cambia `data-theme` y la quita a los 2 frames vía
+    `requestAnimationFrame`. Esto elimina el parpadeo.
+  - Init `aplicarTema(..., false)` sin swap; listener `change` en
+    `#theme-checkbox-toggle` persiste en `localStorage["cda_theme"]` y llama a
+    `refrescarGraficosTema()`.
+- **app.js** (auditoría de gráficos Chart.js):
+  - Nuevo helper `cssVar(nombre)` = `getComputedStyle(documentElement).getPropertyValue()`
+    (Chart.js no resuelve `var(--x)`; hay que pasarle el valor ya resuelto).
+  - Nueva `refrescarGraficosTema()`: si la vista activa es dashboard o inventario,
+    marca `dashboardDirty=true` y re-renderiza para que las instancias tomen los
+    colores nuevos (Chart.js hornea los colores al crear la instancia).
+  - `chartLineOptions()`: grid `--chart-grid`, ticks `--text-secondary` (antes hex fijo).
+  - Torta dashboard + inventario: `borderColor -> --bg-card`, leyenda `-> --text-secondary`.
+  - Barras concepto + stock: hover `-> --text-primary`, grid/ticks `-> vars`.
+  - Línea evolución: `borderColor/pointBackgroundColor -> --accent-blue`,
+    `backgroundColor relleno -> --chart-fill`, `pointBorderColor -> --bg-card`,
+    tramo recto del `segment` -> `--accent-blue` (se evalúa en cada draw).
+  - NO se tocaron los `#1f2a40` de reportes de impresión (HTML estático de
+    print, correctos con fondo fijo).
+- **styles.css**:
+  - Nuevas vars `--chart-grid` y `--chart-fill` en `:root` (dark) y
+    `[data-theme=light]`.
+  - Nueva regla `html.theme-swap, * ... { transition:none!important; animation:none!important; }`
+    que suprime toda transición mientras dura el swap de tema.
+- **index.html**: labels inline `color:#94a3b8` (Año/Mes/títulos de gráficos)
+  -> `color:var(--text-secondary)` (49 ocurrencias) para responder al tema.
+
+### Validaciones
+
+- `npx vite build` → **exit 0** (654 ms; warnings pre-existentes de `db.js`/`app.js`
+  sin `type="module"`).
+- 0 secuencias mojibake en app.js / styles.css / index.html (UTF-8 sin BOM).
+- Colores de gráficos restantes con hex: solo en bloques de impresión (OK).
+
+### Estado de git
+
+- `M app.js`, `M styles.css`, `M index.html`, `M .context/activeContext.md`
+
+### Próximos pasos
+
+- Verificación visual/manual: default oscuro en cache limpio; alternar el switch
+  actualiza label + tema sin parpadeo; logo visible en ambos temas; gráficos
+  cambian ejes/leyendas/bordes al alternar (dashboard y inventario).
+- Correr `npx playwright test --workers=1` si se quiere regresión E2E.
+
+### Advertencias operativas nuevas
+
+- PowerShell 5.1 rompe el escaping de comillas en comandos largos con JS/template
+  literals: falla en parseo y NO escribe. Para inserts complejos usar el tool
+`editor` con `insert_line`/`old_text` (respeta UTF-8) en vez de construir strings
+  gigantes en una línea.
+- Chart.js hornea colores al crear la instancia: cambiar `data-theme` NO repinta
+  gráficos ya creados. Por eso `refrescarGraficosTema()` re-renderiza la vista activa.
+

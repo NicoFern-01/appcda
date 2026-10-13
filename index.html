@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
@@ -92,17 +92,20 @@
 
         <!-- MAIN CONTENT -->
         <main>
-            <!-- VIEW: DASHBOARD -->
+
+        <!-- VIEW: DASHBOARD -->
             <section id="view-dashboard" class="view active">
+
+                    <div class="theme-switch" style="margin-left:1rem; display:flex; align-items:center; gap:8px; color:var(--text-secondary); font-size:0.85rem; flex-wrap:wrap;"><label class="theme-switch-container"><input type="checkbox" id="theme-checkbox-toggle"><span class="theme-slider"></span></label><span id="theme-label">Modo Oscuro</span></div>
                 <header style="margin-bottom: 1.2rem;">
                     <div>
                         <h1 class="page-title">Resumen Ejecutivo</h1>
                         <p class="page-subtitle">Monitoreo de costos y competencias en tiempo real</p>
                     </div>
                     <div class="dashboard-filtros" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                        <label for="dashboard-anio" style="font-size:0.85rem; color:#94a3b8;">Año</label>
+                        <label for="dashboard-anio" style="font-size:0.85rem; color:var(--text-secondary);">Año</label>
                         <select id="dashboard-anio" style="font-size:0.9rem;" onchange="dashboardDirty=true; renderDashboard();"></select>
-                        <label for="dashboard-mes" style="font-size:0.85rem; color:#94a3b8;">Mes</label>
+                        <label for="dashboard-mes" style="font-size:0.85rem; color:var(--text-secondary);">Mes</label>
                         <select id="dashboard-mes" style="font-size:0.9rem;" onchange="dashboardDirty=true; renderDashboard();">
                             <option value="all">Todo el año</option>
                             <option value="1">Enero</option>
@@ -164,7 +167,7 @@
 
                 <div class="charts-grid">
                     <div class="chart-card">
-                        <h3>Gastos por Categoría <span id="dash-cat-periodo" style="font-size:0.8rem; color:#94a3b8; font-weight:400;"></span></h3>
+                        <h3>Gastos por Categoría <span id="dash-cat-periodo" style="font-size:0.8rem; color:var(--text-secondary); font-weight:400;"></span></h3>
                         <div class="chart-container">
                             <canvas id="chart-categorias"></canvas>
                         </div>
@@ -185,7 +188,7 @@
 
                 <div class="charts-grid">
                     <div class="chart-card" style="grid-column: 1 / -1;">
-                        <h3>Top 5 Conceptos de Mayor Gasto <span id="dash-conc-periodo" style="font-size:0.8rem; color:#94a3b8; font-weight:400;"></span></h3>
+                        <h3>Top 5 Conceptos de Mayor Gasto <span id="dash-conc-periodo" style="font-size:0.8rem; color:var(--text-secondary); font-weight:400;"></span></h3>
                         <div class="chart-container" style="height: 260px;">
                             <canvas id="chart-concepto"></canvas>
                         </div>
