@@ -229,9 +229,9 @@ test.describe('Menú lateral — submenús desplegables', () => {
     page.on('pageerror', (err) => erroresPagina.push(err.message));
     await prepararMenu(page);
 
-    // 1) El submenú de Pilotos ahora tiene DOS hijos.
+    // 1) El submenú de Pilotos ahora tiene TRES hijos.
     const items = await page.locator('#submenu-pilotos .submenu-item').allTextContents();
-    expect(items).toEqual(['Listado de Pilotos', 'Penalidades']);
+    expect(items).toEqual(['Listado de Pilotos', 'Penalidades', 'Autorizaciones']);
 
     // 2) Navegación a la vista y campos esperados de la planilla.
     await page.locator('#menu-pilotos').click();
@@ -332,6 +332,154 @@ test.describe('Menú lateral — submenús desplegables', () => {
     // 7) El formulario se limpia para la próxima carga.
     await expect(page.locator('#penalidad-nombre')).toHaveValue('');
     await expect(page.locator('#penalidad-adjuntos-list')).toContainText('Sin archivos adjuntos.');
+
+    expect(erroresPagina, `Excepciones JS:\n${erroresPagina.join('\n')}`).toEqual([]);
+  });
+
+  test('Pilotos > Autorizaciones: submenú, alta manual, "Ver Archivos" y baja', async ({ page }) => {
+    const erroresPagina = [];
+    page.on('pageerror', (err) => erroresPagina.push(err.message));
+    await prepararMenu(page);
+
+    // 1) Navegación a la vista hija y campos esperados de la planilla.
+    await page.locator('#menu-pilotos').click();
+    await page.locator('.submenu-item[data-view="autorizaciones"]').click();
+    await expect(page.locator('#view-autorizaciones')).toHaveClass(/active/);
+    await expect(page.locator('#view-autorizaciones .page-title')).toHaveText('Autorizaciones');
+    await expect(page.locator('.submenu-item[data-view="autorizaciones"]')).toHaveClass(/active/);
+
+    for (const id of ['autorizacion-nombre', 'autorizacion-apellido', 'autorizacion-categoria', 'autorizacion-enlace']) {
+      await expect(page.locator(`#${id}`), `Falta el campo #${id}`).toHaveCount(1);
+    }
+    // Botón de importación + input oculto (acepta .xls).
+    await expect(page.locator('#autorizacion-btn-importar')).toContainText('Importar');
+    await expect(page.locator('#autorizacion-import-file')).toBeHidden();
+    await expect(page.locator('#autorizacion-import-file')).toHaveAttribute('accept', /xls/);
+
+    // 2) Ruedita de categorías: agregar una categoría en caliente (se refleja en el datalist).
+    await page.locator('#form-autorizacion .gear-btn').click();
+    await expect(page.locator('#subModalCategoriasAuth')).toHaveClass(/active/);
+    const CAT = 'Zzz Cat Test A';
+    await page.fill('#nueva-categoria-auth', CAT);
+    await page.locator('#form-nueva-categoria-auth button[type="submit"]').click();
+    await expect(page.locator('#lista-categorias-auth')).toContainText(CAT);
+    // Alta duplicada rechazada.
+    await page.fill('#nueva-categoria-auth', CAT);
+    await page.locator('#form-nueva-categoria-auth button[type="submit"]').click();
+    await expect(page.locator('#lista-categorias-auth > div', { hasText: CAT })).toHaveCount(1);
+    // Editar la categoría recién creada.
+    await page.locator('#lista-categorias-auth > div', { hasText: CAT }).locator('button[title="Editar categoría"]').click();
+    await expect(page.locator('#nueva-categoria-auth')).toHaveValue(CAT);
+    await expect(page.locator('#nueva-categoria-auth-cancel')).toBeVisible();
+    const CAT2 = 'Zzz Cat Test B';
+    await page.fill('#nueva-categoria-auth', CAT2);
+    await page.locator('#form-nueva-categoria-auth button[type="submit"]').click();
+    await expect(page.locator('#lista-categorias-auth')).toContainText(CAT2);
+    await expect(page.locator('#lista-categorias-auth')).not.toContainText(CAT);
+    // Cerrar el sub-modal: el datalist del form debe repoblarse con la categoría editada.
+    await page.locator('#subModalCategoriasAuth .modal-close').click();
+    await expect(page.locator('#subModalCategoriasAuth')).not.toHaveClass(/active/);
+    await expect(page.locator(`#categorias-autorizacion option[value="${CAT2}"]`)).toHaveCount(1);
+
+    // 3) Alta manual con enlace SIN esquema (pegado típico de Drive/OneDrive): debe guardar igual.
+    await page.fill('#autorizacion-nombre', 'Juan');
+    await page.fill('#autorizacion-apellido', 'Pérez');
+    await page.fill('#autorizacion-categoria', CAT2);
+    await page.fill('#autorizacion-enlace', 'drive.google.com/drive/folders/ejemplo');
+    await page.locator('#autorizacion-btn-guardar').click();
+
+    // 4) El registro aparece en el listado con el botón "Ver Archivos".
+    await expect(page.locator('#autorizaciones-table-body tr')).toHaveCount(1);
+    await expect(page.locator('#autorizaciones-table-body')).toContainText('Juan Pérez');
+    await expect(page.locator('#autorizaciones-table-body')).toContainText(CAT2);
+    const verArchivos = page.locator('#autorizaciones-table-body a:has-text("Ver Archivos")');
+    await expect(verArchivos).toHaveCount(1);
+    await expect(verArchivos).toHaveAttribute('href', 'drive.google.com/drive/folders/ejemplo');
+    await expect(verArchivos).toHaveAttribute('target', '_blank');
+
+    // 5) El formulario se limpia para la próxima carga.
+    await expect(page.locator('#autorizacion-nombre')).toHaveValue('');
+
+    // 6) Baja de la autorización con el modal de confirmación de la app.
+    await page.locator('#autorizaciones-table-body button[title="Eliminar autorización"]').click();
+    await expect(page.locator('#modal-alerta')).toHaveClass(/active/);
+    await page.locator('#alerta-btn-confirmar').click();
+    await expect(page.locator('#autorizaciones-table-body')).toContainText('No hay autorizaciones registradas.');
+
+    // 7) Baja de la categoría creada por el test (limpia el store compartido).
+    await page.locator('#form-autorizacion .gear-btn').click();
+    await page.locator('#lista-categorias-auth > div', { hasText: CAT2 }).locator('button[title="Eliminar categoría"]').click();
+    await expect(page.locator('#modal-alerta')).toHaveClass(/active/);
+    await page.locator('#alerta-btn-confirmar').click();
+    await expect(page.locator('#lista-categorias-auth')).not.toContainText(CAT2);
+
+    expect(erroresPagina, `Excepciones JS:\n${erroresPagina.join('\n')}`).toEqual([]);
+  });
+
+  test("Migración V18: repara el store 'autorizaciones' faltante y permite guardar", async ({ page }) => {
+    const erroresPagina = [];
+    page.on('pageerror', (err) => erroresPagina.push(err.message));
+
+    // Reproduce el estado del usuario: la base ya estaba en V17 pero el store
+    // 'autorizaciones' quedó SIN materializar físicamente (el onupgradeneeded de
+    // V17 no volvió a correr). Abrimos la misma DB en V17 creando otros stores
+    // básicos pero deliberadamente SIN 'autorizaciones'.
+    await page.addInitScript(() => {
+      return new Promise((done) => {
+        const req = indexedDB.open('ControlAutomovilismoDB', 17);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains('categorias')) {
+            db.createObjectStore('categorias', { keyPath: 'id', autoIncrement: true });
+          }
+          // A propósito NO se crea 'autorizaciones' acá: simula el bug.
+        };
+        req.onsuccess = () => { req.result.close(); done(); };
+        req.onerror = () => done();
+      });
+    });
+
+    await page.goto('/');
+    await page.waitForFunction(() => typeof window.__CDA_MODULES__?.vistas?.renderizarMenuLateral === 'function');
+
+    // La app (ahora en V18) debe haber creado físicamente el store 'autorizaciones'.
+    const existeStore = await page.evaluate(async () => {
+      const db = await new Promise((resolve, reject) => {
+        const r = indexedDB.open('ControlAutomovilismoDB');
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+      });
+      const existe = db.objectStoreNames.contains('autorizaciones');
+      db.close();
+      return existe;
+    });
+    expect(existeStore, "El store 'autorizaciones' debió crearse en la migración V18").toBe(true);
+
+    // Y ahora el alta manual debe funcionar (sin el error "no disponible en IndexedDB").
+    await page.evaluate((cargadores) => {
+      cargadores.forEach((fn) => { window[fn] = async () => {}; });
+      window.mostrarToast = () => {};
+      document.getElementById('app-main').style.display = 'flex';
+      const login = document.getElementById('login-screen');
+      if (login) login.style.display = 'none';
+      window.currentUser = { id: 'e2e-menu', nombre: 'E2E', rol: 'admin', permisos: null };
+      window.__CDA_MODULES__.vistas.renderizarMenuLateral(window.currentUser);
+    }, ['renderDashboard', 'cargarYParsearCalendario', 'listarCompetencias', 'listarGastos',
+        'listarRendiciones', 'cargarPersonalCompetencia', 'renderDashboardInventario',
+        'listarArticulos', 'listarMovimientosInventario', 'listarCategoriasInventario',
+        'listarEntregas', 'listarStaff', 'listarEstadisticasPersonal', 'listarPilotos',
+        'listarAlojamientos', 'listarCategoriasCircuitos', 'listarConfiguraciones']);
+
+    await page.locator('#menu-pilotos').click();
+    await page.locator('.submenu-item[data-view="autorizaciones"]').click();
+    await expect(page.locator('#view-autorizaciones')).toHaveClass(/active/);
+
+    await page.fill('#autorizacion-nombre', 'Juan');
+    await page.fill('#autorizacion-apellido', 'Pérez');
+    await page.fill('#autorizacion-categoria', 'TC2000');
+    await page.locator('#autorizacion-btn-guardar').click();
+    await expect(page.locator('#autorizaciones-table-body tr')).toHaveCount(1);
+    await expect(page.locator('#autorizaciones-table-body')).toContainText('Juan Pérez');
 
     expect(erroresPagina, `Excepciones JS:\n${erroresPagina.join('\n')}`).toEqual([]);
   });

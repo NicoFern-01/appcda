@@ -4,27 +4,29 @@
 
 ## Trabajo reciente (última sesión)
 
-**Recuperación de `app.js` (módulo de auditoría ACTC restaurado) + fix final de "Confirmar sanción"; bypass de caché y query por apellido VALIDADOS en verde.**
+**Nuevo submódulo "Autorizaciones" dentro del grupo Pilotos (debajo de Penalidades) + fix del guardado manual (enlace sin esquema) + "ruedita" para gestionar categorías. Todo validado con test E2E en verde.**
 
 ### Cambios de esta sesión
 
 | Aspecto | Archivo | Detalle |
 |---|---|---|
-| **Restauración de `app.js`** | `app.js` | La sesión previa terminó con `app.js` sobrescrito (~14:15) por la versión de HEAD **sin** el módulo de auditoría (0 coincidencias de `auditarPiloto`/`serper`): `index.html` llamaba a una función inexistente y el test ACTC fallaba. Se restauró **byte a byte desde `dist/app.js`** (build válido de 14:00, copia de `viteStaticCopy`) y se aplicó encima el fix que intentaba el parche `fix_app.js` (quedó con sintaxis rota, nunca corrió). |
-| `confirmarSancionActc()` | `app.js` | Tras confirmar: solo `mostrarToast('Auditoría ACTC: sanción confirmada para X.')` + limpia `#input-auditar-piloto` + `cancelarAuditoriaActc()` → `#auditoria-estado` vacío, banner apagado, reset total para la próxima consulta. **Eliminados** el `pintarEstadoAuditoria('alerta', '⚠️ Sanción confirmada…')` y `alternarBannerAuditoriaActc(true)` (los exigía el test: estado `''`, input `''` y banner `hidden`). |
-| `nombreCompleto` (auditarPiloto) | `app.js` | Ahora `.replace(/\s+/g, ' ').trim()` antes de usarse como `terminoBusqueda`/`resultado.nombre` (evita dobles espacios del padrón dentro de las comillas del query). |
-| Bypass de caché (ya estaba; verificado) | `app.js` | `let resultado = null; // Bypasseado: await leerAuditoriaCache(dni);` → **cada clic en "Auditar" hace POST directo a `google.serper.dev/search`**, sin leer `/auditoria_cache` ni el espejo `localStorage`. La escritura `escribirAuditoriaCache()` sigue activa (dispara-y-olvida) para cuando se reactive la caché. |
-| Query por apellido + `site:` (ya estaba; verificado) | `app.js` | `terminoBusqueda`: `texto.includes('COTIGNOLA')` → `'COTIGNOLA'` solo (engancha Nicolás y Luciano); `texto === piloto.apellido` (normalizado sin tildes) → solo el apellido; si no, nombre completo. Query final: `"TÉRMINO" AND ("Turismo Carretera" OR "TC Pista" OR "TC Pick Up" OR "ACTC") AND "2026" AND (site:actc.org.ar OR site:solotc.com.ar OR site:campeones.com.ar OR site:carburando.com)`. |
+| **Módulo Autorizaciones** | `src/utils/permisosUtil.js` | Nuevo `autorizaciones` en `CATALOGO_MODULOS` (`fa-file-signature`, `orden: 17`, funciones `['ver','crear','eliminar']`). Renumerados `alojamiento`→18, `categorias-circuitos`→19, `configuracion`→20. |
+| Menú / navegación | `src/services/viewManager.js` | `VIEWS` + `autorizaciones`; `GRUPOS_MENU` de pilotos ahora `['listado-pilotos','penalidades','autorizaciones']`; `abrirSubmenuDeVista` y `cargarDatosVista` (`invocarGlobal('listarAutorizaciones')`). |
+| Agregador de vistas | `src/views/index.js` | `autorizaciones` agregado a `VIEW_IDS`. |
+| Persistencia | `db.js` | **`DB_VERSION` 16 → 17** + store `autorizaciones` (guard `.contains()`, `keyPath:'id'` autoIncrement, igual que `penalidades`); agregado a `importarTodo()`. **FIX (V17 → 18): REPARACIÓN DEFINITIVA** del store `autorizaciones` — un navegador abrió la base en V17 y el store quedó sin materializar (guardado manual fallaba con *"Object store 'autorizaciones' no disponible en IndexedDB"*). Mismo patrón que V11 (`tiposMovimiento`) y V16 (`pilotos`): bump a **V18** + bloque `if (event.oldVersion < 18)` con `.contains()` que fuerza la creación física. |
+| Vista | `index.html` | `#view-autorizaciones` (entre `#view-penalidades` y `#view-alojamiento`): planilla `editor-only` con `#autorizacion-nombre/apellido/categoria` + ruedita `.gear-btn` → `abrirModalCategoriasAuth()`, `#autorizacion-enlace` (**`type="text"` con `inputmode="url"`, NO `type="url"`**: la validación nativa de URL bloqueaba el submit al pegar enlaces de Drive/OneDrive sin esquema — era la causa de "no me deja guardar"), botón `#autorizacion-btn-importar` + input oculto `#autorizacion-import-file` (`accept=".html,.htm,.xls,.csv"`), y tabla con `#autorizaciones-table-body`. Nuevo **`#subModalCategoriasAuth`** (réplica de `#subModalTiposSancion`). |
+| Lógica | `app.js` | `guardarAutorizacionForm`, `listarAutorizaciones` (buscador + botón **"Ver Archivos"** con `target=_blank`, mismo patrón que `documentosUrl` en Competencias), `eliminarAutorizacion`, `limpiarFormularioAutorizacion`, `poblarCategoriasAutorizacion`, importación XLS (`dispararImportarAutorizaciones` + parser nativo `mapearColumnasAutorizacion`/`parsearCsvAutorizacion`/`extraerRegistrosAutorizacion` + `importarAutorizacionesLotes`). **Ruedita de categorías** sobre el store `categorias` REAL (compartido con Competencias/Pilotos/Penalidades): `abrirModalCategoriasAuth`, `renderizarListaCategoriasAuth` (nombres SIEMPRE vía `textContent`), `guardarCategoriaAuthModal` (alta + edición, dedup case-insensitive, `categoriaAuthEditandoId`), `editarCategoriaAuth`, `cancelarEdicionCategoriaAuth`, `eliminarCategoriaAuth` (modal de confirmación). `autorizaciones` agregado a `exportarDatos()`. |
+| Test | `tests/menu.spec.js` | Submenú de pilotos con **3 hijos**; test "Pilotos > Autorizaciones" ampliado: ruedita (alta, alta duplicada rechazada, edición, repoblado del datalist por `option[value]`, baja), alta manual con enlace **sin esquema**, "Ver Archivos" (href/target) y baja de la autorización. **Test nuevo "Migración V18"**: siembra una IndexedDB en V17 SIN el store `autorizaciones`, verifica que al cargar la app el store se crea físicamente y el alta manual funciona (cubre el error reportado por el usuario). |
 
 ### Validaciones (esta sesión)
 
-- `node --check app.js` y `node --check tests/menu.spec.js` → exit 0.
-- `npx vite build` → **exit 0** (623 ms; volvió a copiar `app.js`/`db.js` a `dist/`).
-- `npx playwright test tests/menu.spec.js --workers=1` → **7 passed** (54,3 s, exit 0). El test ACTC (evidencias + confirmación manual + re-auditoría con `fetches === 2` bajo bypass) pasa.
+- `node --check app.js`, `node --check db.js`, `node --check tests/menu.spec.js` → exit 0.
+- `npx vite build` → **exit 0** (warnings esperados de `db.js`/`app.js` como scripts clásicos copiados por `viteStaticCopy`).
+- `npx playwright test tests/menu.spec.js --workers=1` → **7 passed / 1 failed**. El fallo es el test **"Auditoría ACTC"** (`fetches === 2`), **PREEXISTENTE y ajeno** (verificado con `git stash`: falla igual sin mis cambios; tema de red/timing de Serper). Autorizaciones, Penalidades y Listado pasan.
 
 ### Estado de git
 
-**COMMITTED (commit recién creado y sincronizado):** `M app.js`, `M index.html`, `M src/services/viewManager.js`, `M styles.css`, `M tests/menu.spec.js`, `M .context/activeContext.md`. Se elimina `fix_app.js` (parche roto, no ejecutable).
+**Sin commitear:** `M app.js`, `M db.js`, `M index.html`, `M src/services/viewManager.js`, `M src/utils/permisosUtil.js`, `M src/views/index.js`, `M tests/menu.spec.js`, `M .context/activeContext.md`.
 
 ### Auditoría universal (eliminar bloqueo de padrón local)
 

@@ -1298,6 +1298,71 @@
                 </div>
             </section>
 
+            <!-- VIEW: AUTORIZACIONES (autorizaciones a pilotos con enlace a Drive/archivo) -->
+            <section id="view-autorizaciones" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Autorizaciones</h1>
+                        <p class="page-subtitle">Autorizaciones de pilotos con enlace a la documentación (Drive / archivo)</p>
+                    </div>
+                </header>
+
+                <!-- Planilla de carga (solo usuarios con permiso de edición) -->
+                <form id="form-autorizacion" class="form-card editor-only" onsubmit="guardarAutorizacionForm(event)">
+                    <div class="form-title"><i class="fa-solid fa-file-signature"></i> Nueva Autorización</div>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="autorizacion-nombre">Nombre *</label>
+                            <input type="text" id="autorizacion-nombre" placeholder="Ej: Juan" autocomplete="off" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="autorizacion-apellido">Apellido *</label>
+                            <input type="text" id="autorizacion-apellido" placeholder="Ej: Pérez" autocomplete="off" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="autorizacion-categoria">Categoría *</label>
+                            <div class="input-con-gear">
+                                <input type="text" id="autorizacion-categoria" placeholder="Ej: TC2000" autocomplete="off" required list="categorias-autorizacion">
+                                <button type="button" class="action-btn gear-btn" onclick="abrirModalCategoriasAuth()" title="Gestionar categorías"><i class="fa-solid fa-gear"></i></button>
+                            </div>
+                            <datalist id="categorias-autorizacion"></datalist>
+                        </div>
+                        <div class="form-group full-width">
+                            <label for="autorizacion-enlace">Enlace a Documentos / Drive (PDFs, planillas, etc.)</label>
+                            <input type="text" id="autorizacion-enlace" inputmode="url" placeholder="https://drive.google.com/...">
+                            <small style="color:var(--text-secondary);">Opcional. Pegá el enlace compartido de Drive/OneDrive. Se muestra como botón &ldquo;Ver Archivos&rdquo; en el listado.</small>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:0.5rem;justify-content:flex-end;flex-wrap:wrap;">
+                        <button type="button" class="btn btn-secondary" id="autorizacion-btn-importar" onclick="dispararImportarAutorizaciones()"><i class="fa-solid fa-file-import"></i> Importar XLS</button>
+                        <input type="file" id="autorizacion-import-file" accept=".html,.htm,.xls,.csv" style="display:none" onchange="importarAutorizacionesPilotos(event)">
+                        <button type="button" class="btn btn-secondary" onclick="limpiarFormularioAutorizacion()"><i class="fa-solid fa-rotate-left"></i> Limpiar</button>
+                        <button type="submit" class="btn" id="autorizacion-btn-guardar"><i class="fa-solid fa-floppy-disk"></i> Guardar Autorización</button>
+                    </div>
+                </form>
+
+                <!-- Listado de autorizaciones registradas -->
+                <div class="table-card">
+                    <div class="table-header-tools">
+                        <h3>Autorizaciones Registradas</h3>
+                        <input type="text" id="buscar-autorizacion" class="search-input" placeholder="Buscar por nombre, apellido o categoría..." oninput="listarAutorizaciones()">
+                    </div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Piloto</th>
+                                    <th>Categoría</th>
+                                    <th style="text-align:center;">Archivos</th>
+                                    <th class="editor-only" style="text-align: right;">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="autorizaciones-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
             <!-- VIEW: ALOJAMIENTO -->
             <section id="view-alojamiento" class="view">
                 <header>
@@ -2784,6 +2849,36 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('subModalTiposSancion'); poblarTiposSancion();">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SUB-MODAL: GESTIÓN DE CATEGORÍAS (desde el módulo Autorizaciones) -->
+    <div id="subModalCategoriasAuth" class="modal-overlay">
+        <div class="modal" style="max-width: 520px;">
+            <div class="modal-header">
+                <h2 class="modal-title"><i class="fa-solid fa-tags"></i> Gestionar Categorías</h2>
+                <button class="modal-close" onclick="closeModal('subModalCategoriasAuth')">&times;</button>
+            </div>
+            <div class="modal-content">
+                <form id="form-nueva-categoria-auth" onsubmit="event.preventDefault(); guardarCategoriaAuthModal();" style="display:flex;gap:0.5rem;align-items:flex-end;margin-bottom:1rem;">
+                    <div class="form-group" style="flex:1;margin-bottom:0;">
+                        <label for="nueva-categoria-auth" id="nueva-categoria-auth-label">Nombre de la categoría</label>
+                        <input type="text" id="nueva-categoria-auth" placeholder="Ej: TC2000" maxlength="60">
+                    </div>
+                    <button type="submit" class="btn" id="nueva-categoria-auth-btn" style="padding:0.5rem 1rem;" title="Agregar categoría"><i class="fa-solid fa-plus"></i></button>
+                    <button type="button" class="btn btn-secondary" id="nueva-categoria-auth-cancel" style="padding:0.5rem 1rem;display:none;" title="Cancelar edición" onclick="cancelarEdicionCategoriaAuth()">Cancelar</button>
+                </form>
+                <div class="form-title" style="font-size:0.95rem;margin-bottom:0.5rem;"><i class="fa-solid fa-list"></i> Categorías Actuales</div>
+                <div id="lista-categorias-auth" style="display:flex;flex-direction:column;gap:0.5rem;max-height:280px;overflow-y:auto;">
+                    <!-- Se renderiza dinámicamente desde renderizarListaCategoriasAuth() -->
+                </div>
+                <p style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-secondary);">
+                    <i class="fa-solid fa-circle-info"></i> Estas categorías son las mismas de todo el sistema (Competencias, Pilotos, Penalidades).
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('subModalCategoriasAuth'); poblarCategoriasAutorizacion();">Cerrar</button>
             </div>
         </div>
     </div>

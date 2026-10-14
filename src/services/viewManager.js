@@ -10,7 +10,7 @@ import { CATALOGO_MODULOS, MODULOS_MAP, verificarPermiso as verificarPermisoES }
 export const GRUPOS_MENU = [
     { padreId: 'menu-gastos',     submenuId: 'submenu-gastos',     padre: 'gastos',     hijos: ['carga-detallada', 'personal-competencia'] },
     { padreId: 'menu-personal',   submenuId: 'submenu-personal',   padre: 'staff',      hijos: ['estadisticas-personal'] },
-    { padreId: 'menu-pilotos',    submenuId: 'submenu-pilotos',    padre: 'pilotos',    hijos: ['listado-pilotos', 'penalidades'] },
+    { padreId: 'menu-pilotos',    submenuId: 'submenu-pilotos',    padre: 'pilotos',    hijos: ['listado-pilotos', 'penalidades', 'autorizaciones'] },
     { padreId: 'menu-inventario', submenuId: 'submenu-inventario', padre: 'inventario', hijos: ['articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario'] }
 ];
 
@@ -18,7 +18,7 @@ export const VIEWS = [
     'dashboard', 'calendario', 'competencias', 'gastos', 'carga-detallada',
     'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario',
     'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal',
-    'pilotos', 'listado-pilotos', 'penalidades', 'alojamiento', 'categorias-circuitos', 'configuracion'
+    'pilotos', 'listado-pilotos', 'penalidades', 'autorizaciones', 'alojamiento', 'categorias-circuitos', 'configuracion'
 ];
 
 function getCurrentUser() {
@@ -201,6 +201,7 @@ export function abrirSubmenuDeVista(viewId) {
         'estadisticas-personal': ['submenu-personal', 'menu-personal'],
         'listado-pilotos': ['submenu-pilotos', 'menu-pilotos'],
         'penalidades': ['submenu-pilotos', 'menu-pilotos'],
+        'autorizaciones': ['submenu-pilotos', 'menu-pilotos'],
         'articulos': ['submenu-inventario', 'menu-inventario'],
         'movimientos-inventario': ['submenu-inventario', 'menu-inventario'],
         'categorias-inventario': ['submenu-inventario', 'menu-inventario'],
@@ -365,6 +366,9 @@ export async function cargarDatosVista(viewId) {
             break;
         case 'penalidades':
             await invocarGlobal('listarPenalidades');
+            break;
+        case 'autorizaciones':
+            await invocarGlobal('listarAutorizaciones');
             break;
         case 'alojamiento':
             await invocarGlobal('listarAlojamientos');

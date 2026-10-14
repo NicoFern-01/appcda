@@ -4510,6 +4510,461 @@ async function eliminarPenalidad(id) {
     await listarPenalidades();
 }
 
+// ==================== PILOTOS > AUTORIZACIONES ====================
+// Submódulo del grupo Pilotos (debajo de Penalidades): autorizaciones a pilotos
+// con nombre, apellido, categoría y un enlace opcional a Drive/archivo que se
+// muestra como botón "Ver Archivos" (mismo patrón que `documentosUrl` en
+// Competencias). Persistencia: store 'autorizaciones' (DB_VERSION 17, keyPath
+// 'id' autoIncrement), igual que 'penalidades'. Alta manual + importación masiva
+// desde un archivo HTML/XLS/CSV (parser 100% nativo, sin librerías), con el
+// mismo patrón de escritura por lotes (IndexedDB + Firestore) del padrón.
+
+/** Restablece la planilla de autorizaciones. */
+function limpiarFormularioAutorizacion() {
+    const form = document.getElementById('form-autorizacion');
+    if (form) form.reset();
+}
+
+/** Carga las categorías existentes en el datalist de la planilla (autocompletado). */
+async function poblarCategoriasAutorizacion() {
+    const datalist = document.getElementById('categorias-autorizacion');
+    if (!datalist) return;
+    try {
+        const categorias = await getTodos('categorias');
+        datalist.innerHTML = categorias
+            .map(c => `<option value="${escapeHtml(c.nombre || '')}"></option>`)
+            .join('');
+    } catch (e) {
+        // Sin categorías cargadas la planilla sigue siendo usable (campo libre).
+    }
+}
+
+/** Guarda la autorización (alta manual) y refresca el listado. */
+async function guardarAutorizacionForm(e) {
+    e.preventDefault();
+    if (!puedeEditar()) return;
+
+    const nombre = document.getElementById('autorizacion-nombre').value.trim();
+    const apellido = document.getElementById('autorizacion-apellido').value.trim();
+    const categoria = document.getElementById('autorizacion-categoria').value.trim();
+    const enlaceArchivo = document.getElementById('autorizacion-enlace').value.trim();
+
+    if (!nombre || !apellido || !categoria) {
+        mostrarToast('Completá nombre, apellido y categoría.', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('autorizacion-btn-guardar');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Guardando...';
+
+    try {
+        const id = await guardar('autorizaciones', {
+            nombre, apellido, categoria,
+            enlaceArchivo,
+            usuarioCreacion: currentUser ? currentUser.id : null,
+            fechaCreacion: new Date().toISOString()
+        });
+        if (!id) {
+            mostrarToast('No se pudo guardar la autorización (validación de esquema).', 'error');
+            return;
+        }
+        mostrarToast(`Autorización de ${nombre} ${apellido} registrada correctamente.`);
+        limpiarFormularioAutorizacion();
+        await listarAutorizaciones();
+    } catch (err) {
+        console.error(err);
+        mostrarToast('Error al guardar la autorización: ' + (err && err.message ? err.message : err), 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Guardar Autorización';
+    }
+}
+
+/** Renderiza el listado de autorizaciones (+ buscador y botón "Ver Archivos"). */
+async function listarAutorizaciones() {
+    const tbody = document.getElementById('autorizaciones-table-body');
+    if (!tbody) return;
+
+    await poblarCategoriasAutorizacion();
+
+    const autorizaciones = await getTodos('autorizaciones');
+
+    const busqueda = (document.getElementById('buscar-autorizacion')?.value || '').trim().toLowerCase();
+    let filtradas = [...autorizaciones].sort((a, b) => Number(b.id) - Number(a.id));
+    if (busqueda) {
+        filtradas = filtradas.filter(a =>
+            [a.nombre, a.apellido, a.categoria]
+                .some(v => String(v === null || v === undefined ? '' : v).toLowerCase().includes(busqueda))
+        );
+    }
+
+    if (filtradas.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">${busqueda ? 'Sin resultados para la búsqueda.' : 'No hay autorizaciones registradas.'}</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = filtradas.map(a => {
+        const piloto = `${escapeHtml(a.nombre || '')} ${escapeHtml(a.apellido || '')}`.trim();
+        // "Ver Archivos": mismo enlace externo que Competencias (target _blank).
+        const enlace = a.enlaceArchivo
+            ? `<a href="${escapeHtml(a.enlaceArchivo)}" target="_blank" rel="noopener noreferrer" class="action-btn" title="Ver archivos" style="color:var(--accent);display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-folder-open"></i> Ver Archivos</a>`
+            : '<span style="color:var(--text-secondary);">—</span>';
+
+        return `<tr>
+            <td style="font-weight:600;">${piloto}</td>
+            <td>${escapeHtml(String(a.categoria || ''))}</td>
+            <td style="text-align:center;white-space:nowrap;">${enlace}</td>
+            <td class="editor-only" style="text-align:right;white-space:nowrap;">
+                <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.6rem;" title="Eliminar autorización" onclick="eliminarAutorizacion(${Number(a.id)})"><i class="fa-solid fa-trash"></i></button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+/** Elimina una autorización, con el modal de confirmación de la app. */
+async function eliminarAutorizacion(id) {
+    if (!puedeEditar()) return;
+    const autorizacion = await obtenerPorId('autorizaciones', id);
+    const etiqueta = autorizacion
+        ? `${autorizacion.nombre || ''} ${autorizacion.apellido || ''}`.trim()
+        : '';
+
+    // mostrarConfirmacion() asigna el mensaje con textContent: no hay que escapar nada.
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar autorización',
+        `¿Eliminar la autorización ${etiqueta ? 'de ' + etiqueta : 'seleccionada'}? Esta acción no se puede deshacer.`,
+        'warning'
+    );
+    if (!confirmado) return;
+
+    await eliminar('autorizaciones', id);
+    mostrarToast('Autorización eliminada correctamente.');
+    await listarAutorizaciones();
+}
+
+// ---------------- Importación masiva de autorizaciones (HTML/XLS/CSV) ----------------
+// Parser 100% nativo (FileReader + DOMParser, sin librerías), mismo enfoque que el
+// padrón de pilotos. Se acepta el archivo HTML/XLS que exporta Excel ("Guardar como
+// página web") y, como fallback, un CSV/TSV. Las columnas se mapean por su encabezado
+// (Nombre, Apellido, Categoría, Enlace/Link/URL) cuando existe; si no hay encabezado
+// reconocible se usan las posiciones por defecto 0=Nombre, 1=Apellido, 2=Categoría,
+// 3=Enlace. La escritura por lotes (IndexedDB + Firestore) vive en
+// importarAutorizacionesLotes().
+
+const AUTORIZACIONES_BATCH_MAX = 400;
+
+/** Dispara el selector de archivo oculto de autorizaciones. */
+function dispararImportarAutorizaciones() {
+    if (!puedeEditar()) return;
+    document.getElementById('autorizacion-import-file')?.click();
+}
+
+/** Detecta el índice de cada campo a partir de una fila de encabezados. */
+function mapearColumnasAutorizacion(encabezados) {
+    const norm = encabezados.map(h => String(h || '').trim().toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+    const buscar = (...claves) => norm.findIndex(h => claves.some(c => h.includes(c)));
+    return {
+        nombre: buscar('nombre'),
+        apellido: buscar('apellido'),
+        categoria: buscar('categoria'),
+        enlace: buscar('enlace', 'link', 'url', 'drive', 'archivo')
+    };
+}
+
+/** Convierte un texto CSV/TSV en una lista de filas de celdas. */
+function parsearCsvAutorizacion(texto) {
+    const lineas = texto.split(/\r?\n/).filter(l => l.trim() !== '');
+    // Detectar separador: tabulación, punto y coma o coma (el que más divisiones dé).
+    const primera = lineas[0] || '';
+    const sep = ['\t', ';', ','].sort((a, b) => (primera.split(b).length - primera.split(a).length))[0];
+    return lineas.map(l => l.split(sep).map(c => c.trim()));
+}
+
+/** Lee filas (HTML o CSV) y devuelve registros de autorización listos para guardar. */
+function extraerRegistrosAutorizacion(filas) {
+    if (!filas || filas.length === 0) return [];
+    const porClave = new Map();
+    let base = Date.now();
+    let contador = 0;
+
+    // Intento de mapeo por encabezado: solo si la primera fila trae al menos "nombre".
+    const mapa = mapearColumnasAutorizacion(filas[0]);
+    const tieneEncabezado = mapa.nombre >= 0;
+    const inicio = tieneEncabezado ? 1 : 0;
+    const idx = tieneEncabezado ? mapa : { nombre: 0, apellido: 1, categoria: 2, enlace: 3 };
+
+    for (let f = inicio; f < filas.length; f++) {
+        const celdas = filas[f];
+        if (!celdas || celdas.length === 0) continue;
+
+        const nombre = String(celdas[idx.nombre] || '').trim().toUpperCase();
+        const apellido = String(celdas[idx.apellido] || '').trim().toUpperCase();
+        const categoria = String(celdas[idx.categoria] || '').trim().toUpperCase();
+        const enlaceArchivo = String(celdas[idx.enlace] || '').trim();
+
+        if (!nombre || !apellido || !categoria) continue; // fila corrupta: se salta
+
+        const clave = `${nombre}|${apellido}|${categoria}`;
+        if (porClave.has(clave)) continue; // dedup dentro del mismo archivo
+
+        porClave.set(clave, {
+            id: base + (contador++),
+            nombre, apellido, categoria,
+            enlaceArchivo,
+            usuarioCreacion: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null,
+            fechaCreacion: new Date().toISOString()
+        });
+    }
+    return Array.from(porClave.values());
+}
+
+/** Lee el archivo elegido y lo importa por lotes (con feedback en el botón). */
+async function importarAutorizacionesPilotos(event) {
+    if (!puedeEditar()) return;
+    const input = (event && event.target) || document.getElementById('autorizacion-import-file');
+    const archivo = input && input.files ? input.files[0] : null;
+    if (!archivo) return;
+
+    const btn = document.getElementById('autorizacion-btn-importar');
+    const htmlPrevio = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Procesando...'; }
+
+    try {
+        const texto = await new Promise((resolve, reject) => {
+            const lector = new FileReader();
+            lector.onload = () => resolve(String(lector.result || ''));
+            lector.onerror = () => reject(lector.error || new Error('No se pudo leer el archivo.'));
+            lector.readAsText(archivo, 'UTF-8');
+        });
+
+        let filas = [];
+        const documento = new DOMParser().parseFromString(texto, 'text/html');
+        const trs = documento.querySelectorAll('table tr');
+        if (trs.length > 0) {
+            // HTML/XLS exportado por Excel: cada <tr> es una fila de celdas.
+            filas = Array.from(trs).map(tr =>
+                Array.from(tr.querySelectorAll('td, th')).map(c => (c.textContent || '').trim())
+            );
+        } else {
+            // Fallback CSV/TSV.
+            filas = parsearCsvAutorizacion(texto);
+        }
+
+        const registros = extraerRegistrosAutorizacion(filas);
+        if (registros.length === 0) {
+            mostrarToast('El archivo no contiene autorizaciones válidas (se requieren nombre, apellido y categoría).', 'warning');
+            return;
+        }
+
+        const enNube = await importarAutorizacionesLotes(registros, btn);
+        mostrarToast(`Autorizaciones importadas: ${registros.length} registros${enNube ? ' (local + nube)' : ' (solo local, sin sesión en la nube)'}.`);
+        await listarAutorizaciones();
+    } catch (err) {
+        console.error('[autorizaciones] Error al importar:', err);
+        mostrarToast('Error al importar autorizaciones: ' + (err && err.message ? err.message : err), 'error');
+    } finally {
+        if (input) input.value = ''; // permite re-elegir el mismo archivo
+        if (btn) { btn.disabled = false; btn.innerHTML = htmlPrevio; }
+    }
+}
+
+/** Guarda los registros en IndexedDB + Firestore en lotes (sin congelar la UI). */
+async function importarAutorizacionesLotes(registros, btn) {
+    invalidarCache('autorizaciones');
+    const dbLocal = await openDB();
+    const tx = abrirTransaccionDefensiva(dbLocal, 'autorizaciones', 'readwrite');
+    if (!tx) throw new Error("El store local 'autorizaciones' no está disponible.");
+    const storeLocal = tx.objectStore('autorizaciones');
+    registros.forEach(item => { try { storeLocal.put(item); } catch (e) { /* dedup ya aplicado */ } });
+    await new Promise((resolve, reject) => {
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error || new Error('Error al guardar las autorizaciones en local.'));
+        tx.onabort = () => reject(tx.error || new Error('Importación local cancelada.'));
+    });
+
+    const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+    const haySesion = !!(rt && rt.dbFirebase && typeof rt.writeBatch === 'function'
+        && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser);
+    if (!haySesion) return false;
+
+    for (let i = 0; i < registros.length; i += AUTORIZACIONES_BATCH_MAX) {
+        const lote = rt.writeBatch(rt.dbFirebase);
+        registros.slice(i, i + AUTORIZACIONES_BATCH_MAX).forEach(item => {
+            lote.set(rt.doc(rt.dbFirebase, 'autorizaciones', String(item.id)), item, { merge: true });
+        });
+        await lote.commit();
+        const subidos = Math.min(i + AUTORIZACIONES_BATCH_MAX, registros.length);
+        if (btn) btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Subiendo ${subidos}/${registros.length}...`;
+        await new Promise(r => setTimeout(r, 0)); // cede el hilo: no congela el navegador
+    }
+    return true;
+}
+
+// ---------------- Catálogo de categorías (ruedita) desde Autorizaciones ----------------
+// Réplica del patrón de la ruedita de tipos de sanción (#subModalTiposSancion), pero
+// operando sobre el store 'categorias' REAL del sistema (el mismo que usan Competencias,
+// Pilotos y Penalidades). Permite agregar, editar y borrar categorías en caliente; al
+// cerrar/guardar se repobla el datalist #categorias-autorizacion. Nombres SIEMPRE vía
+// textContent (sin innerHTML) para respetar la regla de seguridad contra XSS.
+
+// Modo edición del sub-modal: id de la categoría que se está renombrando (null = alta).
+let categoriaAuthEditandoId = null;
+
+/** Abre el sub-modal de gestión de categorías (solo usuarios con permiso de edición). */
+async function abrirModalCategoriasAuth() {
+    if (!puedeEditar()) return;
+    cancelarEdicionCategoriaAuth();
+    await renderizarListaCategoriasAuth();
+    openModal('subModalCategoriasAuth');
+}
+
+/** Lista las categorías con botones Editar/Eliminar (nombres SIEMPRE vía textContent). */
+async function renderizarListaCategoriasAuth() {
+    const container = document.getElementById('lista-categorias-auth');
+    if (!container) return;
+    const categorias = deduplicarCategorias(await getTodos('categorias'));
+    // Orden alfabético para encontrarlas rápido en el catálogo.
+    categorias.sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
+    container.innerHTML = '';
+
+    if (categorias.length === 0) {
+        container.innerHTML = '<span style="color:var(--text-secondary);font-size:0.85rem;text-align:center;padding:0.5rem;">No hay categorías registradas.</span>';
+        return;
+    }
+
+    categorias.forEach(c => {
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0.75rem;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border-color);';
+
+        const span = document.createElement('span');
+        span.textContent = c.nombre || '';
+        span.style.cssText = 'font-weight:500;';
+        div.appendChild(span);
+
+        const btns = document.createElement('span');
+        btns.style.cssText = 'display:flex;align-items:center;gap:0.3rem;';
+
+        const btnEditar = document.createElement('button');
+        btnEditar.type = 'button';
+        btnEditar.className = 'action-btn';
+        btnEditar.title = 'Editar categoría';
+        btnEditar.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
+        btnEditar.onclick = () => editarCategoriaAuth(c.id);
+        btns.appendChild(btnEditar);
+
+        const btnEliminar = document.createElement('button');
+        btnEliminar.type = 'button';
+        btnEliminar.className = 'action-btn';
+        btnEliminar.title = 'Eliminar categoría';
+        btnEliminar.innerHTML = '<i class="fa-solid fa-trash"></i>';
+        btnEliminar.onclick = () => eliminarCategoriaAuth(c.id, c.nombre || '');
+        btns.appendChild(btnEliminar);
+
+        div.appendChild(btns);
+        container.appendChild(div);
+    });
+}
+
+/** Vuelve el sub-modal al modo "Agregar" y limpia el input. */
+function cancelarEdicionCategoriaAuth() {
+    categoriaAuthEditandoId = null;
+    const input = document.getElementById('nueva-categoria-auth');
+    const label = document.getElementById('nueva-categoria-auth-label');
+    const btn = document.getElementById('nueva-categoria-auth-btn');
+    const cancel = document.getElementById('nueva-categoria-auth-cancel');
+    if (input) input.value = '';
+    if (label) label.textContent = 'Nombre de la categoría';
+    if (btn) { btn.title = 'Agregar categoría'; btn.innerHTML = '<i class="fa-solid fa-plus"></i>'; }
+    if (cancel) cancel.style.display = 'none';
+}
+
+/** Pone el sub-modal en modo "Editar" con la categoría precargada en el input. */
+async function editarCategoriaAuth(id) {
+    if (!puedeEditar()) return;
+    const categoria = await obtenerPorId('categorias', Number(id));
+    if (!categoria) return;
+
+    categoriaAuthEditandoId = Number(id);
+    const input = document.getElementById('nueva-categoria-auth');
+    const label = document.getElementById('nueva-categoria-auth-label');
+    const btn = document.getElementById('nueva-categoria-auth-btn');
+    const cancel = document.getElementById('nueva-categoria-auth-cancel');
+
+    if (input) input.value = categoria.nombre || '';
+    if (label) label.textContent = 'Editar categoría';
+    if (btn) { btn.title = 'Guardar cambios'; btn.innerHTML = '<i class="fa-solid fa-check"></i>'; }
+    if (cancel) cancel.style.display = '';
+    if (input) { input.focus(); input.select(); }
+}
+
+/** Alta o edición (según `categoriaAuthEditandoId`) de la categoría en el sub-modal. */
+async function guardarCategoriaAuthModal() {
+    if (!puedeEditar()) return;
+    const input = document.getElementById('nueva-categoria-auth');
+    if (!input) return;
+
+    const nombre = input.value.trim();
+    if (!nombre) { mostrarToast('Ingresá el nombre de la categoría.', 'warning'); return; }
+
+    const categorias = await getTodos('categorias');
+    const norm = (s) => String(s || '').trim().toLowerCase();
+
+    // ---------- MODO EDICIÓN ----------
+    if (categoriaAuthEditandoId !== null) {
+        // No puede quedar un duplicado de OTRA categoría.
+        if (categorias.some(c => Number(c.id) !== Number(categoriaAuthEditandoId) && norm(c.nombre) === norm(nombre))) {
+            mostrarToast('Esa categoría ya existe.', 'error');
+            return;
+        }
+        const categoria = await obtenerPorId('categorias', categoriaAuthEditandoId);
+        if (!categoria) { cancelarEdicionCategoriaAuth(); return; }
+        categoria.nombre = nombre;
+        await guardar('categorias', categoria);
+
+        cancelarEdicionCategoriaAuth();
+        await renderizarListaCategoriasAuth();
+        await poblarCategoriasAutorizacion();
+        mostrarToast(`Categoría actualizada a "${nombre}".`);
+        return;
+    }
+
+    // ---------- MODO ALTA ----------
+    if (categorias.some(c => norm(c.nombre) === norm(nombre))) {
+        mostrarToast('Esa categoría ya existe.', 'error');
+        return;
+    }
+    await guardar('categorias', { nombre, activo: true });
+    input.value = '';
+    await renderizarListaCategoriasAuth();
+    await poblarCategoriasAutorizacion();
+    mostrarToast(`Categoría "${nombre}" agregada.`);
+}
+
+/** Elimina una categoría del catálogo (con el modal de confirmación de la app). */
+async function eliminarCategoriaAuth(id, label) {
+    if (!puedeEditar()) return;
+    if (typeof id === 'undefined' || id === null) return;
+
+    // mostrarConfirmacion() asigna el mensaje con textContent: no hace falta escapar.
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar categoría',
+        `¿Eliminar la categoría "${label}"? Es la misma que usan Competencias, Pilotos y Penalidades; los registros ya guardados conservan su texto.`,
+        'warning'
+    );
+    if (!confirmado) return;
+
+    await eliminar('categorias', id);
+    // Si la categoría eliminada era la que estaba en edición, volver al modo alta.
+    if (categoriaAuthEditandoId !== null && Number(categoriaAuthEditandoId) === Number(id)) {
+        cancelarEdicionCategoriaAuth();
+    }
+    await renderizarListaCategoriasAuth();
+    await poblarCategoriasAutorizacion();
+    mostrarToast('Categoría eliminada.');
+}
+
 // ==================== CONFIGURACIÓN: CATEGORÍAS & CIRCUITOS ====================
 
 async function listarConfiguraciones() {
@@ -5956,7 +6411,8 @@ async function exportarDatos() {
         personalCompetencia: await getTodos('personalCompetencia'),
         ubicacionesInventario: await getTodos('ubicacionesInventario'),
         penalidades: await getTodos('penalidades'),
-        tiposSancion: await getTodos('tiposSancion')
+        tiposSancion: await getTodos('tiposSancion'),
+        autorizaciones: await getTodos('autorizaciones')
     };
     const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(backup, null, 2))}`;
     const a = document.createElement('a');

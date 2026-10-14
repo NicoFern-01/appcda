@@ -21,7 +21,18 @@ const DB_NAME = 'ControlAutomovilismoDB';
 // camino), por eso el import lanzaba "El store local 'pilotos' no está disponible".
 // Al subir a V16 el navegador ejecuta OBLIGATORIAMENTE esta actualización y el
 // guard con .contains() garantiza la creación física del store /pilotos/{dni}.
-const DB_VERSION = 16;
+// V17: agrega el store 'autorizaciones' (submódulo del grupo Pilotos, debajo de
+// Penalidades): autorizaciones a pilotos con nombre, apellido, categoría y un
+// enlace opcional a Drive/archivo ("Ver Archivos", mismo patrón que competencias).
+// keyPath 'id' con autoIncrement, igual que 'penalidades'. Se importa además desde XLS.
+// V18: REPARACIÓN DEFINITIVA del store 'autorizaciones'. Mismo caso que V11 y V16:
+// un navegador pudo abrir la base en V17 (p. ej. tras recargar la app desplegada)
+// y el store 'autorizaciones' quedó SIN materializar físicamente, por lo que el
+// guardado manual fallaba con "Object store 'autorizaciones' no disponible en
+// IndexedDB". Al subir a V18 el navegador ejecuta OBLIGATORIAMENTE esta
+// actualización (oldVersion 17 < 18) y el guard con .contains() garantiza la
+// creación física del store /autorizaciones/{id}.
+const DB_VERSION = 18;
 
 let dbInstance = null;
 
@@ -689,6 +700,15 @@ function openDB() {
                 tiposSancionStore.createIndex('valor', 'valor', { unique: true });
             }
 
+            // ============ NUEVO EN DB_VERSION 17: AUTORIZACIONES A PILOTOS ============
+            // Submódulo del grupo Pilotos (debajo de Penalidades). Campos: nombre,
+            // apellido, categoria y enlaceArchivo (URL a Drive/archivo). Mismo
+            // patrón de clave que 'penalidades' (keyPath 'id', autoIncrement).
+            // Guard .contains() idempotente para no romper bases ya abiertas.
+            if (!db.objectStoreNames.contains('autorizaciones')) {
+                db.createObjectStore('autorizaciones', { keyPath: 'id', autoIncrement: true });
+            }
+
             // ============ NUEVO EN DB_VERSION 15/16: LISTADO DE PILOTOS ============
             // keyPath 'dni' (string, SIN autoIncrement): el DNI es la clave
             // primaria y el doc ID `/pilotos/{dni}` en Firestore. El keyPath
@@ -731,6 +751,24 @@ function openDB() {
                         db.createObjectStore('pilotos', { keyPath: 'dni' });
                     } catch (storeErrV16) {
                         console.warn('[db] V16: no se pudo crear el store pilotos:', storeErrV16?.message || storeErrV16);
+                    }
+                }
+            }
+
+            // ============ DB_VERSION 18: REPARACIÓN DEFINITIVA DE 'autorizaciones' ============
+            // MOTIVO DEL BUMP: mismo caso que V11 (tiposMovimiento) y V16 (pilotos).
+            // Un navegador pudo abrir la base en V17 sin materializar físicamente el
+            // store 'autorizaciones', lo que hacía fallar el guardado manual con
+            // "Object store 'autorizaciones' no disponible en IndexedDB". Al subir a
+            // V18 el navegador ejecuta OBLIGATORIAMENTE esta actualización (oldVersion
+            // 17 < 18) y el guard con .contains() garantiza la creación física del
+            // store (keyPath 'id', autoIncrement, igual que 'penalidades').
+            if (event.oldVersion < 18) {
+                if (!db.objectStoreNames.contains('autorizaciones')) {
+                    try {
+                        db.createObjectStore('autorizaciones', { keyPath: 'id', autoIncrement: true });
+                    } catch (storeErrV18) {
+                        console.warn('[db] V18: no se pudo crear el store autorizaciones:', storeErrV18?.message || storeErrV18);
                     }
                 }
             }
@@ -1528,7 +1566,7 @@ async function sincronizarLocalAFirebase() {
 async function importarTodo(datos) {
     limpiarCacheCompleto(); // limpiar todo el caché antes de importar
     const db = await openDB();
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos', 'ubicacionesInventario', 'tiposMovimiento', 'penalidades', 'tiposSancion', 'pilotos'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos', 'ubicacionesInventario', 'tiposMovimiento', 'penalidades', 'tiposSancion', 'pilotos', 'autorizaciones'];
     
     for (const storeName of stores) {
         if (datos[storeName]) {

@@ -26,9 +26,10 @@ export const CATALOGO_MODULOS = Object.freeze([
   { id: 'pilotos',                nombre: 'Pilotos',                       icono: 'fa-id-card',         orden: 14, funciones: ['ver'] },
   { id: 'listado-pilotos',        nombre: 'Listado de Pilotos',            icono: 'fa-list-ul',         orden: 15, funciones: ['ver'] },
   { id: 'penalidades',            nombre: 'Penalidades',                   icono: 'fa-gavel',           orden: 16, funciones: ['ver', 'crear', 'eliminar'] },
-  { id: 'alojamiento',            nombre: 'Alojamiento',                   icono: 'fa-hotel',           orden: 17, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-  { id: 'categorias-circuitos',   nombre: 'Categorías y Circuitos',        icono: 'fa-flag-checkered',  orden: 18, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-  { id: 'configuracion',          nombre: 'Configuración',                 icono: 'fa-gear',            orden: 19, funciones: ['ver'], soloAdmin: true }
+  { id: 'autorizaciones',         nombre: 'Autorizaciones',                icono: 'fa-file-signature',  orden: 17, funciones: ['ver', 'crear', 'eliminar'] },
+  { id: 'alojamiento',            nombre: 'Alojamiento',                   icono: 'fa-hotel',           orden: 18, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+  { id: 'categorias-circuitos',   nombre: 'Categorías y Circuitos',        icono: 'fa-flag-checkered',  orden: 19, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+  { id: 'configuracion',          nombre: 'Configuración',                 icono: 'fa-gear',            orden: 20, funciones: ['ver'], soloAdmin: true }
 ]);
 
 export const MODULOS_MAP = Object.freeze(
