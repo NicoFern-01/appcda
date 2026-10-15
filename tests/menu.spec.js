@@ -224,7 +224,7 @@ test.describe('Menú lateral — submenús desplegables', () => {
     expect(Math.max(...renglonesAbiertos)).toBe(1);
   });
 
-  test('Pilotos > Penalidades: submenú, planilla y alta de registro con PDF adjunto', async ({ page }) => {
+  test('Pilotos > Penalidades: submenú, planilla y alta de registro con enlace externo', async ({ page }) => {
     const erroresPagina = [];
     page.on('pageerror', (err) => erroresPagina.push(err.message));
     await prepararMenu(page);
@@ -242,7 +242,7 @@ test.describe('Menú lateral — submenús desplegables', () => {
     const campos = [
       'penalidad-nombre', 'penalidad-apellido', 'penalidad-dni', 'penalidad-auto',
       'penalidad-categoria', 'penalidad-sancion', 'penalidad-motivo',
-      'penalidad-fecha-inicio', 'penalidad-fecha-fin', 'penalidad-adjuntos',
+      'penalidad-fecha-inicio', 'penalidad-fecha-fin', 'penalidad-enlace',
     ];
     for (const id of campos) {
       await expect(page.locator(`#${id}`), `Falta el campo #${id}`).toHaveCount(1);
@@ -250,8 +250,8 @@ test.describe('Menú lateral — submenús desplegables', () => {
     // Sanción: input de TEXTO LIBRE con datalist (ya no es un <select> cerrado).
     await expect(page.locator('#penalidad-sancion')).toHaveAttribute('list', 'tipos-sancion');
     await expect(page.locator('#tipos-sancion option')).not.toHaveCount(0);
-    await expect(page.locator('#penalidad-adjuntos')).toHaveAttribute('multiple', /.?/);
-    await expect(page.locator('#penalidad-adjuntos')).toHaveAttribute('accept', /pdf/);
+    // El adjuntar de PDFs fue reemplazado por un enlace externo (patrón Autorizaciones).
+    await expect(page.locator('#penalidad-enlace')).toHaveAttribute('inputmode', 'url');
 
     // Layout: los 8 campos básicos deben caber en UN solo renglón.
     const tops = await page.evaluate(() => {
@@ -311,27 +311,37 @@ test.describe('Menú lateral — submenús desplegables', () => {
     await page.fill('#penalidad-fecha-inicio', '2026-04-10');
     await page.fill('#penalidad-fecha-fin', '2026-04-20');
 
-    // 5) Adjuntar un PDF (se valida tipo y se previsualiza en la lista).
-    await page.setInputFiles('#penalidad-adjuntos', {
-      name: 'acta-infraccion.pdf',
-      mimeType: 'application/pdf',
-      buffer: Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF'),
-    });
-    await page.locator('#form-penalidad button:has-text("Adjuntar")').click();
-    await expect(page.locator('#penalidad-adjuntos-list')).toContainText('acta-infraccion.pdf');
+    // 5) Adjuntar la documentación vía ENLACE EXTERNO (mismo patrón que Autorizaciones).
+    await page.fill('#penalidad-enlace', 'https://drive.google.com/drive/folders/ejemplo-penalidad');
 
-    // 6) Guardar: el registro debe aparecer en el listado con su PDF y fechas.
+    // 6) Guardar: el registro debe aparecer en el listado con su enlace y fechas.
     await page.locator('#penalidad-btn-guardar').click();
     await expect(page.locator('#penalidades-table-body tr')).toHaveCount(1);
     await expect(page.locator('#penalidades-table-body')).toContainText('Juan Pérez');
     await expect(page.locator('#penalidades-table-body')).toContainText('Suspensión de 2 fechas');
     await expect(page.locator('#penalidades-table-body')).toContainText('10/04/2026');
     await expect(page.locator('#penalidades-table-body')).toContainText('20/04/2026');
-    await expect(page.locator('#penalidades-table-body button[title^="Abrir PDF"]')).toHaveCount(1);
+    const verArchivos = page.locator('#penalidades-table-body a:has-text("Ver Archivos")');
+    await expect(verArchivos).toHaveCount(1);
+    await expect(verArchivos).toHaveAttribute('href', 'https://drive.google.com/drive/folders/ejemplo-penalidad');
+    await expect(verArchivos).toHaveAttribute('target', '_blank');
 
     // 7) El formulario se limpia para la próxima carga.
     await expect(page.locator('#penalidad-nombre')).toHaveValue('');
-    await expect(page.locator('#penalidad-adjuntos-list')).toContainText('Sin archivos adjuntos.');
+    await expect(page.locator('#penalidad-enlace')).toHaveValue('');
+
+    // 8) Edición: el botón Editar precarga el registro y permite cambiar/quitar el enlace.
+    await page.locator('#penalidades-table-body button[title^="Editar penalidad"]').click();
+    await expect(page.locator('#modal-editar-penalidad')).toHaveClass(/active/);
+    await expect(page.locator('#editar-penalidad-nombre')).toHaveValue('Juan');
+    await expect(page.locator('#editar-penalidad-enlace')).toHaveValue('https://drive.google.com/drive/folders/ejemplo-penalidad');
+    await page.fill('#editar-penalidad-enlace', 'https://drive.google.com/drive/folders/penalidad-v2');
+    await page.locator('#editar-penalidad-btn-guardar').click();
+    await expect(page.locator('#modal-editar-penalidad')).not.toHaveClass(/active/);
+    // Un solo registro (el id se reutiliza: no se duplica).
+    await expect(page.locator('#penalidades-table-body tr')).toHaveCount(1);
+    await expect(page.locator('#penalidades-table-body a:has-text("Ver Archivos")'))
+      .toHaveAttribute('href', 'https://drive.google.com/drive/folders/penalidad-v2');
 
     expect(erroresPagina, `Excepciones JS:\n${erroresPagina.join('\n')}`).toEqual([]);
   });
@@ -764,5 +774,38 @@ test.describe('Menú lateral — submenús desplegables', () => {
     expect(sancionesExt[1].fechaFin).toBe('2026-12-31');
 
     expect(erroresPagina, `Excepciones JS:\n${erroresPagina.join('\n')}`).toEqual([]);
+  });
+});
+
+// ============================================================
+// CONTROL DE USUARIOS — MATRIZ DE PERMISOS
+// ============================================================
+// Regresión: "Listado de Pilotos" solo ofrecía el checkbox 'ver' en el modal
+// de usuario, a diferencia de módulos con CRUD completo (p. ej. Alojamiento).
+// El catálogo (CATALOGO_MODULOS) es la ÚNICA fuente de la matriz: si 'funciones'
+// no incluye una acción, el checkbox no se renderiza y además
+// normalizarPermisos() la descarta al persistir.
+test.describe('Control de usuarios — matriz de permisos', () => {
+  test('Listado de Pilotos ofrece las 4 acciones para tildar (igual que Alojamiento)', async ({ page }) => {
+    await prepararMenu(page);
+
+    // Renderiza la matriz igual que el modal de usuario con un rol no-admin
+    // (preset viewer: solo 'ver' tildado, pero el resto de acciones EDITABLES).
+    await page.evaluate(() => renderizarMatrizPermisos(DICCIONARIO_ROLES.viewer.preset));
+
+    const accionesDe = (modulo) =>
+      page.locator(`#usuario-permisos-container .permisos-modulo[data-modulo="${modulo}"] input`)
+        .evaluateAll((cbs) => cbs.map((cb) => cb.dataset.funcion));
+
+    // Listado de Pilotos: Ver + Crear + Editar + Eliminar (antes: solo 'ver').
+    expect(await accionesDe('listado-pilotos')).toEqual(['ver', 'crear', 'editar', 'eliminar']);
+    // Penalidades y Autorizaciones: ahora incluyen Editar (antes: solo ver/crear/eliminar);
+    // ambos módulos ya exponen botón "Editar" + modal propio en su vista.
+    expect(await accionesDe('penalidades')).toEqual(['ver', 'crear', 'editar', 'eliminar']);
+    expect(await accionesDe('autorizaciones')).toEqual(['ver', 'crear', 'editar', 'eliminar']);
+    // Alojamiento conserva exactamente las mismas acciones (referencia del usuario).
+    expect(await accionesDe('alojamiento')).toEqual(['ver', 'crear', 'editar', 'eliminar']);
+    // El dashboard "Pilotos" (solo lectura) NO cambia.
+    expect(await accionesDe('pilotos')).toEqual(['ver']);
   });
 });

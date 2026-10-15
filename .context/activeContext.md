@@ -2,6 +2,213 @@
 
 > **Mantener actualizado al finalizar cada sesión de código** (ver `.clinerules`).
 
+## Sesión 10/06/2026 (7): BORRADO DE USUARIOS — fix: "eliminado correctamente" pero el usuario seguía en la lista
+
+> Tarea del usuario: al eliminar el usuario "prueba" aparecía el mensaje de éxito
+> pero el usuario seguía visible en Gestión de Usuarios (imagen adjunta).
+
+### Causa raíz (asimetría de banderas en `src/services/userDirectoryService.js`)
+
+- **La LECTURA de usuarios ignora la bandera `VITE_CDA_SYNC_USUARIOS_NUBE`**:
+  `listarPerfiles()` / `listarPerfilesConEstado()` leen Firestore siempre que hay
+  SDK + sesión. Por eso "prueba" (un perfil de la nube) se veía en la lista.
+- **El BORRADO respetaba la bandera**: `eliminarPerfil()` empezaba con
+  `if (!SYNC_USUARIOS_NUBE) return { ok: true, nube: false };` — un **no-op que
+  devuelve `ok:true`**. Como no hay `.env` (solo `.env.example` con `false`), la
+  bandera está apagada → el borrado no hacía nada → `app.js` mostraba "Usuario
+  eliminado correctamente." → `listarUsuarios()` relee la nube → seguía ahí.
+- Con la bandera **encendida** el bug no existía. La lectura y el borrado
+  debían usar la misma condición.
+
+### Cambios
+
+| Archivo | Cambio |
+|---|---|
+| `src/services/userDirectoryService.js` | `eliminarPerfil()` ya NO gatea el BORRADO con `SYNC_USUARIOS_NUBE`. Ahora: valida `id`, y solo retorna `{ok:true, nube:false}` si `!firestoreDisponible() \|\| !conSesion` (no hay nube que borrar → el llamador sigue con el local). El borrado es seguro sin la bandera porque las reglas de Firestore ya lo protegen (`allow delete: if esAdmin() && userId != miId()`) y no es vector de autoescalada (la bandera protege ALTA/EDICIÓN, no baja). Docstring actualizado. |
+| `app.js` (`eliminarUsuario`, ~6416) | Borrado **local** robustecido: además de por id numérico, limpia por `username` cualquier copia local duplicada (un usuario de la nube tiene id = username/string, así que el borrado por id numérico se la saltaba y quedaba como fantasma en IndexedDB). Usa `getTodos('usuarios', { soloLocal: true })`. |
+
+### Validaciones
+
+- `npx vite build` → **exit 0** (`✓ built in 639ms`).
+- No existe test unitario de `eliminarUsuario`/`eliminarPerfil` (verificado). La
+  corrección es de comportamiento en runtime contra Firebase.
+
+### Limitación / verificación manual
+
+- **Requiere verificación manual en la UI con Firebase real**: borrar un usuario
+  de la nube y comprobar que desaparece de la lista. No se puede automatizar sin
+  credenciales (no tocar Firebase de producción desde tests).
+- Nota: el entorno de comandos de esta sesión inyectaba `\r` en los comandos
+  PowerShell (abría REPLs de Node por error). Los edits multilinea con el tool
+  `editor` fallaban por CRLF; se resolvió usando anclas de UNA sola línea y, para
+  `userDirectoryService.js`, un script ESM temporal (`.mjs`) ya borrado.
+
+---
+
+
+## Sesión 10/06/2026 (6): CONTROL DE USUARIOS — "Listado de Pilotos", "Penalidades" y "Autorizaciones" con las 4 acciones en la matriz de permisos
+
+> Tarea del usuario: en **Control de Usuarios**, la matriz "Permisos por módulo" no
+> ofrecía todas las acciones para tildar en tres filas: "Listado de Pilotos" solo
+> tenía Ver; y "Penalidades"/"Autorizaciones" tenían Ver/Crear/Eliminar pero **les
+> faltaba el check Editar** (foto del usuario mostrando ambas filas sin Editar).
+> Deben quedar como Alojamiento (Ver/Crear/Editar/Eliminar).
+
+### Causa raíz
+
+La matriz del modal (`renderizarMatrizPermisos()` → `_crearFilaPermisosModulo()` en `app.js`)
+genera un checkbox **por cada elemento de `modulo.funciones`** de `CATALOGO_MODULOS`.
+`listado-pilotos` declaraba `funciones: ['ver']` y `penalidades`/`autorizaciones`
+`['ver','crear','eliminar']` (sin `'editar'`), por lo que `normalizarPermisos()` además
+descartaba los flags no listados al persistir. (Dato verificado: la copia clásica raíz
+`permisosUtil.js` **ya no existe**; el comentario de cabecera de `src/utils/permisosUtil.js`
+que la menciona está desactualizado — la única fuente es el módulo ES.)
+
+### Cambios de esta sesión
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| Catálogo | `src/utils/permisosUtil.js` | `listado-pilotos`: `['ver']` → **`['ver','crear','editar','eliminar']`**. `penalidades` y `autorizaciones`: `['ver','crear','eliminar']` → **`['ver','crear','editar','eliminar']`**. Mismo patrón que `alojamiento`. Único cambio funcional: la matriz, los presets de rol y `verificarPermiso()` derivan todos de `CATALOGO_MODULOS`. El dashboard `pilotos` (solo lectura) **no** cambia. |
+| Test | `tests/menu.spec.js` | Test "Listado de Pilotos ofrece las 4 acciones para tildar (igual que Alojamiento)" (describe "Control de usuarios — matriz de permisos"): renderiza la matriz con preset viewer y exige `['ver','crear','editar','eliminar']` en **`listado-pilotos`, `penalidades`, `autorizaciones` y `alojamiento`**, y `['ver']` en `pilotos`. |
+
+### Alcance y limitación (importante)
+
+- Penalidades y Autorizaciones **ya tenían** botón "Editar" + modal propio en su vista
+  (sesiones 4/5: `editarPenalidad`/`guardarEdicionPenalidad` y
+  `editarAutorizacion`/`guardarEdicionAutorizacion`, gateados por `puedeEditar()` por rol);
+  el flag `'editar'` faltaba solo en el catálogo. No hay ningún
+  `verificarPermiso(..., 'penalidades'|'autorizaciones', ...)` en uso hoy.
+- Los flags `crear/editar/eliminar` ahora **se pueden tildar y se persisten**, pero las
+  vistas todavía no ocultan botones según ellos: el enforcement intra-vista es solo por
+  rol (`.editor-only` ↔ viewer/supervisor) y por `ver` a nivel de menú/navegación —
+  igual que en TODOS los demás módulos (Alojamiento, Staff, etc.). Si se desea que al
+  desmarcar "Crear" se oculte el formulario de alta, habrá que agregar
+  `verificarPermiso()` por acción dentro de la vista (trabajo aparte).
+- Usuarios existentes no-admin: al normalizar, les quedan `crear/editar/eliminar` en
+  `false` hasta que el admin los tilde y guarde (el preset "Editor" ahora sí los
+  incluye efectivamente para estos módulos).
+
+### Validaciones (esta sesión)
+
+- `npx vite build` → **exit 0** (982 ms; warnings pre-existentes sin `type="module"`).
+- `npx playwright test tests/menu.spec.js --workers=1 -g "matriz de permisos"` → **1 passed**.
+- Ampliación posterior (penalidades/autorizaciones): build y test de matriz
+  **re-ejecutados tras los cambios → exit 0 y 1 passed** con las aserciones nuevas.
+- Suite completa `menu.spec.js` → **9 passed, 1 failed**: el único fallo es "Pilotos >
+  Auditoría ACTC" (`__CDA_FETCHES__.length` esperaba 2, recibió 1) — **pre-existente**,
+  ya reproducido con los cambios stash-eados en la sesión anterior.
+
+### Estado de git
+
+**Sin commitear:** `M src/utils/permisosUtil.js`, `M tests/menu.spec.js` (además de los
+pendientes de la sesión (5): `M app.js`, `M index.html`, `.context/activeContext.md`).
+
+### Próximos pasos
+
+1. Commit de la sesión (5) + esta sesión juntos, o en dos commits temáticos.
+2. (Opcional) Enforcement por acción dentro de la vista Listado de Pilotos
+   (`verificarPermiso(usuario, 'listado-pilotos', 'crear'|'editar'|'eliminar')`).
+3. Investigar por separado el fallo pre-existente de "Auditoría ACTC" (conteo de fetches con bypass de caché).
+
+---
+
+## Sesión 10/06/2026 (5): PENALIDADES — adjuntar PDF → ENLACE EXTERNO + modal Editar
+
+> Tarea del usuario: en **Pilotos > Penalidades**, cambiar "Documentación adjunta
+> (PDF)" (`input file` + botón Adjuntar) por un **enlace externo**, igual a como
+> funciona en Autorizaciones. A elección del usuario se replicó también el botón
+> **Editar** por fila con modal (mismo criterio que `#modal-editar-autorizacion`).
+
+### Cambios de esta sesión
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| Formulario | `index.html` | Grupo "Documentación adjunta": se reemplazó el `input file` + botón "Adjuntar" + `#penalidad-adjuntos-list` por **`#penalidad-enlace`** (`type="text" inputmode="url"`, placeholder de Drive, `small` explicativo). Subtítulo de la vista → "…por enlace externo"; `<th>PDFs</th>` → **Archivos**. |
+| Modal de edición | `index.html` | Nuevo `#modal-editar-penalidad` (max-width 640px) insertado **ANTES** de `#subModalTiposSancion` (la ruedita de tipos de sanción apila encima). Contiene TODOS los campos de la planilla + enlace; botón `#editar-penalidad-btn-guardar` → `guardarEdicionPenalidad()`. ⚠️ Lección repetida: `insert_line` usa el NÚMERO DE LÍNEA ACTUAL; tras ediciones previas el ancla se corrige sola — verificar siempre con un read posterior (esta vez cayó dentro del sub-modal y se corrigió). |
+| Alta | `app.js` | `guardarPenalidadForm()` lee `enlaceArchivo` y lo persiste en 'penalidades'; ya **no** escribe en 'adjuntos'. Eliminados `penalidadAdjuntosTemporales`, `PENALIDAD_MAX_PDF_BYTES`, `agregarAdjuntoPenalidad()`, `renderizarAdjuntosPenalidad()`, `eliminarAdjuntoPenalidad()`. `limpiarFormularioPenalidad()` = solo `form.reset()`. |
+| Listado | `app.js` | `listarPenalidades()`: columna Archivos = **"Ver Archivos"** (`escapeHtml` en el href, `target="_blank" rel="noopener noreferrer"`) + PDFs heredados ("Abrir PDF 1..N"); se conserva `penalidadPdfsCache` y `abrirPdfPenalidad()`. Celda ACCIONES: botón **Editar** (`fa-pen-to-square`, `title="Editar penalidad (agregar o cambiar enlace)"`) antes de Eliminar. |
+| Edición | `app.js` | `editarPenalidad(id)`: precarga los 10 campos + datalists (`poblarCategoriasPenalidad`, `poblarTiposSancion`), guarda el id en `modal.dataset.penalidadId`. `guardarEdicionPenalidad()`: valida igual que alta (incl. fin ≥ inicio), parte de `...existente` (preserva creación/versionado), escribe `fechaModificacion`/`usuarioModificacion`; mismo `id` ⇒ `put()`/`set(merge)` sin duplicar. |
+| Test | `tests/menu.spec.js` | Test renombrado a "…alta de registro con enlace externo"; campo `penalidad-enlace` en el listado de campos; aserciones `multiple/accept` → `inputmode=url`; paso 5 = `fill('#penalidad-enlace', …)`; aserciones de "Ver Archivos" (href + target); **paso 8 nuevo**: abrir Editar → precarga correcta → cambiar enlace → guardar → 1 solo registro y href actualizado. |
+
+### Compatibilidad y datos existentes
+
+- PDFs heredados en store `adjuntos` (`penalidadId`): **NO se borran ni se ocultan**;
+  siguen mostrándose como "Abrir PDF 1..N" y `eliminarPenalidad()` los sigue limpiando.
+- El nuevo `enlaceArchivo` es opcional y no requiere migración: los registros viejos
+  quedan sin botón hasta que se los complete vía Editar.
+- Backup/importación no cambia (`adjuntos` sigue en `exportarDatos()`/`importarTodo()`).
+
+### Validaciones (esta sesión)
+
+- `node --check app.js` → **exit 0**.
+- `npx vite build` → **exit 0** (664 ms; warnings pre-existentes sin `type="module"`).
+- `npx playwright test tests/menu.spec.js --workers=1 -g "Penalidades"` → **1 passed**.
+- Suite completa `menu.spec.js` → **8 passed, 1 failed**: el fallo es "Pilotos > Auditoría
+  ACTC" (`__CDA_FETCHES__.length` esperaba 2, vino 1) y se **reproduce idéntico con
+  `git stash` de los cambios de esta sesión** ⇒ **pre-existente, no relacionado**.
+  (Durante la verificación se hizo `stash push` + `stash pop`; stash list = vacío,
+  cambios restaurados y re-validados.)
+
+### Estado de git
+
+- `M app.js`, `M index.html`, `M tests/menu.spec.js`, `M .context/activeContext.md` — sin commitear.
+  (Antes de esta sesión solo estaba pendiente `.context/activeContext.md`; el trabajo de
+  las sesiones (3) y (4) ya está en HEAD `5892679`.)
+
+### Próximos pasos
+
+- Verificación manual: crear una penalidad con enlace → aparece "Ver Archivos"; Editar →
+  cambiar y vaciar el enlace; si hay PDFs heredados, confirmar que siguen abriéndose.
+- Investigar aparte el fallo **pre-existente** del test "Auditoría ACTC" (bypass de caché).
+- Commit de los 4 archivos modificados.
+
+---
+
+## Sesión 10/06/2026 (4): EDITAR AUTORIZACIÓN (agregar/cambiar enlace por fila)
+
+> Tarea del usuario: en **Pilotos > Autorizaciones**, la tabla solo tenía Eliminar.
+> Se pidió poder **agregar el enlace** a un registro cargado sin él, o **modificar**
+> el registro. Ahora cada fila tiene un botón **Editar** (ícono lápiz) que abre el
+> modal `#modal-editar-autorizacion`.
+
+### Cambios de esta sesión
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| Botón Editar por fila | `app.js` | `listarAutorizaciones()`: en la celda ACCIONES se agregó, ANTES del botón Eliminar, un botón `title="Editar autorización (agregar o cambiar enlace)"` que llama a `editarAutorizacion(id)`. Clase `btn btn-secondary` + `fa-pen-to-square`. |
+| Modal de edición | `index.html` | Nuevo `#modal-editar-autorizacion` (`.modal-overlay`, max-width 560px), insertado **ANTES** de `#subModalCategoriasAuth` para que la ruedita de categorías apile correctamente encima (mismo criterio que los sub-modales sobre `#modal-alerta`). Campos: `#editar-autorizacion-info`, `#editar-autorizacion-nombre/apellido/categoria` (categoría con `.input-con-gear` + ruedita y `list="categorias-autorizacion"`), y **`#editar-autorizacion-enlace`** (`type="text" inputmode="url"`, NO `type="url"` — misma lección del formulario principal: la validación nativa bloqueaba enlaces de Drive/OneDrive sin esquema). Botón `#editar-autorizacion-btn-guardar` → `guardarEdicionAutorizacion()`. |
+| Abrir y precargar | `app.js` | `editarAutorizacion(id)`: `puedeEditar()`; `obtenerPorId`; `poblarCategoriasAutorizacion()`; rellena info + los 4 campos; guarda el id en `modal.dataset.autorizacionId`; `openModal`. |
+| Guardar cambios | `app.js` | `guardarEdicionAutorizacion()`: valida nombre/apellido/categoría; **parte del registro existente** (`...existente`) para no perder `usuarioCreacion`/`fechaCreacion`/versionado; sobrescribe los editados + `fechaModificacion`/`usuarioModificacion`; `guardar()` (id ya presente ⇒ el validador acepta la edición); toast + `closeModal` + `listarAutorizaciones()`. El enlace vacío **quita** el botón "Ver Archivos". |
+
+### Nota de comportamiento
+
+- El registro SIN enlace ahora es editable: se le puede pegar el enlace y pasa a
+  mostrar el botón "Ver Archivos". Con enlace ya existente se puede cambiar o vaciar.
+- No se duplican registros: se reutiliza el `id` ⇒ `put()` sobrescribe en IndexedDB
+  y `set(..., {merge:true})` en Firestore. Se preserva el `id` y el `dataset` del modal.
+- El modal de edición reutiliza el **mismo datalist `#categorias-autorizacion`** que la
+  planilla de alta (una sola fuente de categorías).
+
+### Validaciones (esta sesión)
+
+- `node --check app.js` → **exit 0**.
+- `npx vite build` → **exit 0** (626 ms; warnings pre-existentes de `db.js`/`app.js` sin `type="module"`).
+- `npx playwright test tests/menu.spec.js --workers=1 -g "Autorizaciones"` → **2 passed** (alta manual/Ver Archivos/baja + Migración V18).
+- 0 secuencias mojibake (UTF-8 sin BOM).
+
+### Estado de git
+
+- `M app.js`, `M index.html` (+ los `M` previos de sesiones anteriores sin commitear:
+  `db.js`, `src/services/viewManager.js`, `src/utils/permisosUtil.js`, `src/views/index.js`,
+  `tests/menu.spec.js`, `styles.css`, `.context/activeContext.md`).
+
+### Próximos pasos
+
+- Verificación manual: crear una autorización SIN enlace,Editarla,p egar un enlace de
+  Drive y confirmar que aparece "Ver Archivos"; y que se pueda vaciar el enlace.
+- Considerar agregar un test E2E del flujo de edición (cubrir `editarAutorizacion` +
+  `guardarEdicionAutorizacion`) en `tests/menu.spec.js`.
+
 ## Trabajo reciente (última sesión)
 
 **Nuevo submódulo "Autorizaciones" dentro del grupo Pilotos (debajo de Penalidades) + fix del guardado manual (enlace sin esquema) + "ruedita" para gestionar categorías. Todo validado con test E2E en verde.**
@@ -324,10 +531,12 @@ Commiteado y pusheado en `df84126` "pilotos: dashboard de la vista padre
 - Planilla `#form-penalidad` (`editor-only`): nombre, apellido, DNI, nro. de auto,
   categoría (input + `datalist` desde `getTodos('categorias')`), sanción
   (`input list="tipos-sancion"` + ruedita), fechas inicio/fin, motivo (`textarea`
-  full-width) y PDFs (`input multiple accept=.pdf`).
-- Adjuntos: `agregarAdjuntoPenalidad()` valida tipo y 10MB, lee con `readAsDataURL`,
-  previsualiza en `#penalidad-adjuntos-list` (nombres vía `textContent`) y se
-  persisten con `guardar('adjuntos', { penalidadId, nombre, archivo, tipoArchivo, … })`.
+  full-width) y documentación (**hoy enlace externo** `#penalidad-enlace`; esta
+  sección se escribió cuando era `input multiple accept=.pdf`).
+> **SUPERADO por la sesión 10/06/2026 (5):** el adjuntar PDFs (`agregarAdjuntoPenalidad()`,
+> `#penalidad-adjuntos-list`, `PENALIDAD_MAX_PDF_BYTES`) fue reemplazado por un
+> **enlace externo** (`enlaceArchivo` en el propio registro) + botón Editar por fila.
+> Los PDFs ya persistidos en `adjuntos` siguen siendo legibles (columna Archivos).
 - `guardarPenalidadForm()` guarda y resetea; `listarPenalidades()` pinta la tabla
   con buscador y botones "Abrir PDF 1..N" (usan `abrirArchivoAdjunto` + el cache
   `penalidadPdfsCache`); `eliminarPenalidad()` usa `mostrarConfirmacion()` y borra

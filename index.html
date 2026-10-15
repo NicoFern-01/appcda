@@ -1203,7 +1203,7 @@
                 <header>
                     <div>
                         <h1 class="page-title">Penalidades</h1>
-                        <p class="page-subtitle">Planilla de sanciones a pilotos con documentación adjunta (PDF)</p>
+                        <p class="page-subtitle">Planilla de sanciones a pilotos con documentación adjunta por enlace externo</p>
                     </div>
                 </header>
 
@@ -1255,13 +1255,9 @@
                             <textarea id="penalidad-motivo" rows="4" placeholder="Detalle completo del motivo de la sanción..." required></textarea>
                         </div>
                         <div class="form-group full-width">
-                            <label for="penalidad-adjuntos">Documentación adjunta (PDF)</label>
-                            <div style="display:flex;gap:0.5rem;align-items:center;">
-                                <input type="file" id="penalidad-adjuntos" multiple accept=".pdf,application/pdf" style="flex:1;">
-                                <button type="button" class="btn btn-secondary" style="padding:0.5rem 1rem;" onclick="agregarAdjuntoPenalidad()"><i class="fa-solid fa-paperclip"></i> Adjuntar</button>
-                            </div>
-                            <small style="color:var(--text-secondary);">Uno o varios archivos PDF (máx. 10MB por archivo).</small>
-                            <div id="penalidad-adjuntos-list" style="display:flex;flex-direction:column;gap:0.25rem;margin-top:0.5rem;"></div>
+                            <label for="penalidad-enlace">Documentación adjunta (enlace externo)</label>
+                            <input type="text" id="penalidad-enlace" inputmode="url" placeholder="https://drive.google.com/...">
+                            <small style="color:var(--text-secondary);">Opcional. Pegá el enlace compartido de Drive/OneDrive. Se muestra como botón &ldquo;Ver Archivos&rdquo; en el listado.</small>
                         </div>
                     </div>
                     <div style="display:flex;gap:0.5rem;justify-content:flex-end;">
@@ -1288,7 +1284,7 @@
                                     <th>Inicio</th>
                                     <th>Fin</th>
                                     <th>Motivo</th>
-                                    <th style="text-align:center;">PDFs</th>
+                                    <th style="text-align:center;">Archivos</th>
                                     <th class="editor-only" style="text-align: right;">Acciones</th>
                                 </tr>
                             </thead>
@@ -2823,6 +2819,72 @@
         </div>
     </div>
 
+    <!-- MODAL: EDITAR PENALIDAD (agregar o cambiar el enlace de archivos) -->
+    <!-- Mismo criterio que #modal-editar-autorizacion: va ANTES de #subModalTiposSancion
+         para que la ruedita de tipos de sanción quede apilada encima. -->
+    <div id="modal-editar-penalidad" class="modal-overlay">
+        <div class="modal" style="max-width: 640px;">
+            <div class="modal-header">
+                <h2 class="modal-title"><i class="fa-solid fa-file-pen"></i> Editar Penalidad</h2>
+                <button class="modal-close" onclick="closeModal('modal-editar-penalidad')">&times;</button>
+            </div>
+            <div class="modal-content">
+                <div id="editar-penalidad-info" style="margin-bottom:1rem;color:var(--text-secondary);font-size:0.9rem;"></div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="editar-penalidad-nombre">Nombre *</label>
+                        <input type="text" id="editar-penalidad-nombre" placeholder="Ej: Juan" autocomplete="off" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-apellido">Apellido *</label>
+                        <input type="text" id="editar-penalidad-apellido" placeholder="Ej: Pérez" autocomplete="off" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-dni">DNI *</label>
+                        <input type="text" id="editar-penalidad-dni" placeholder="Ej: 30123456" inputmode="numeric" autocomplete="off" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-auto">Nro. de Auto *</label>
+                        <input type="number" id="editar-penalidad-auto" min="0" placeholder="Ej: 12" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-categoria">Categoría *</label>
+                        <input type="text" id="editar-penalidad-categoria" placeholder="Ej: TC2000" autocomplete="off" required list="categorias-penalidad">
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-sancion">Sanción *</label>
+                        <div class="input-con-gear">
+                            <input type="text" id="editar-penalidad-sancion" list="tipos-sancion" placeholder="Escriba o seleccione una sanción..." autocomplete="off" required>
+                            <button type="button" class="action-btn gear-btn admin-only" onclick="abrirModalTiposSancion()" title="Gestionar tipos de sanción (Admin)"><i class="fa-solid fa-gear"></i></button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-fecha-inicio">Fecha de Inicio *</label>
+                        <input type="date" id="editar-penalidad-fecha-inicio" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-fecha-fin">Fecha de Fin</label>
+                        <input type="date" id="editar-penalidad-fecha-fin">
+                        <small style="color:var(--text-secondary);">Vacía = sanción aún vigente.</small>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="editar-penalidad-motivo">Motivo de la sanción *</label>
+                        <textarea id="editar-penalidad-motivo" rows="3" placeholder="Detalle completo del motivo de la sanción..." required></textarea>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="editar-penalidad-enlace">Enlace a Documentos / Drive (PDFs, planillas, etc.)</label>
+                        <input type="text" id="editar-penalidad-enlace" inputmode="url" placeholder="https://drive.google.com/...">
+                        <small style="color:var(--text-secondary);">Si la penalidad no tenía archivos, pegá acá el enlace compartido de Drive/OneDrive y se mostrará como botón &ldquo;Ver Archivos&rdquo;. Dejalo vacío para quitar el enlace actual.</small>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-editar-penalidad')">Cancelar</button>
+                <button type="button" class="btn" id="editar-penalidad-btn-guardar" onclick="guardarEdicionPenalidad()"><i class="fa-solid fa-check"></i> Guardar Cambios</button>
+            </div>
+        </div>
+    </div>
+
     <!-- SUB-MODAL: GESTIÓN DE TIPOS DE SANCIÓN (SOLO ADMIN) -->
     <div id="subModalTiposSancion" class="modal-overlay">
         <div class="modal" style="max-width: 520px;">
@@ -2852,6 +2914,50 @@
             </div>
         </div>
     </div>
+    <!-- MODAL: EDITAR AUTORIZACIÓN (agregar o cambiar el enlace de archivos) -->
+    <!-- Permite completar el enlace de un registro que se cargó sin él, o corregir
+         nombre/apellido/categoría/enlace. Va ANTES de #subModalCategoriasAuth para
+         que la ruedita de categorías quede apilada encima (mismo criterio que los
+         sub-modales sobre #modal-alerta). -->
+    <div id="modal-editar-autorizacion" class="modal-overlay">
+        <div class="modal" style="max-width: 560px;">
+            <div class="modal-header">
+                <h2 class="modal-title"><i class="fa-solid fa-file-pen"></i> Editar Autorización</h2>
+                <button class="modal-close" onclick="closeModal('modal-editar-autorizacion')">&times;</button>
+            </div>
+            <div class="modal-content">
+                <div id="editar-autorizacion-info" style="margin-bottom:1rem;color:var(--text-secondary);font-size:0.9rem;"></div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="editar-autorizacion-nombre">Nombre *</label>
+                        <input type="text" id="editar-autorizacion-nombre" placeholder="Ej: Juan" autocomplete="off" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-autorizacion-apellido">Apellido *</label>
+                        <input type="text" id="editar-autorizacion-apellido" placeholder="Ej: Pérez" autocomplete="off" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="editar-autorizacion-categoria">Categoría *</label>
+                        <div class="input-con-gear">
+                            <input type="text" id="editar-autorizacion-categoria" placeholder="Ej: TC2000" autocomplete="off" required list="categorias-autorizacion">
+                            <button type="button" class="action-btn gear-btn" onclick="abrirModalCategoriasAuth()" title="Gestionar categorías"><i class="fa-solid fa-gear"></i></button>
+                        </div>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="editar-autorizacion-enlace">Enlace a Documentos / Drive (PDFs, planillas, etc.)</label>
+                        <input type="text" id="editar-autorizacion-enlace" inputmode="url" placeholder="https://drive.google.com/...">
+                        <small style="color:var(--text-secondary);">Si el registro no tenía archivos, pegá acá el enlace compartido de Drive/OneDrive y se mostrará como botón &ldquo;Ver Archivos&rdquo;. Dejalo vacío para quitar el enlace actual.</small>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-editar-autorizacion')">Cancelar</button>
+                <button type="button" class="btn" id="editar-autorizacion-btn-guardar" onclick="guardarEdicionAutorizacion()"><i class="fa-solid fa-check"></i> Guardar Cambios</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SUB-MODAL: GESTIÓN DE CATEGORÍAS (desde el módulo Autorizaciones) -->
 
     <!-- SUB-MODAL: GESTIÓN DE CATEGORÍAS (desde el módulo Autorizaciones) -->
     <div id="subModalCategoriasAuth" class="modal-overlay">

@@ -223,20 +223,28 @@ export const userDirectoryService = {
    *
    * La cuenta de Firebase Auth NO se puede borrar desde el cliente (requiere el
    * Admin SDK). Por eso el nombre queda tomado en la nube y el usuario no puede
-   * volver a crearse. Se desactiva la identidad documentandolo en el perfil,
-   * de modo que el bloqueo quede explícito en lugar de ser un fallo místico.
+   * volver a crearse.
+   *
+   * NOTA DE DISEÑO (fix de bug real): la bandera SYNC_USUARIOS_NUBE NO gatea el
+   * BORRADO. La lista de usuarios LEE la nube sin importar esa bandera
+   * (listarPerfiles / listarPerfilesConEstado la ignoran), de modo que con la
+   * bandera apagada el usuario SE VEÍA pero "borrarlo" era un no-op que devolvía
+   * {ok:true}: la UI informaba "eliminado correctamente" y el perfil seguía en la
+   * lista. El borrado es seguro sin la bandera porque las reglas de Firestore ya
+   * lo protegen (`allow delete: if esAdmin() && userId != miId()`) y no es un
+   * vector de autoescalada (la bandera protege ALTA/EDICIÓN, no la baja).
    */
   async eliminarPerfil(username) {
-    if (!SYNC_USUARIOS_NUBE) {
-      return { ok: true, nube: false };
-    }
     const id = idDocumento(username);
     if (!id) return { ok: false, mensaje: 'El nombre de usuario es obligatorio.' };
-    if (!firestoreDisponible()) {
-      return { ok: false, mensaje: 'Firestore no está disponible. No se pudo eliminar el perfil.' };
+    const rt = runtime();
+    const conSesion = !!(rt.auth && rt.auth.currentUser);
+    // Sin Firestore o sin sesión no hay nada que borrar en la nube: se reporta
+    // `ok` para que el llamador continúe con el borrado LOCAL sin error falso.
+    if (!firestoreDisponible() || !conSesion) {
+      return { ok: true, nube: false };
     }
     try {
-      const rt = runtime();
       await rt.deleteDoc(rt.doc(rt.dbFirebase, 'usuarios', id));
 
       // VERIFICACIÓN ESTRICTA: la relectura debe ser EXITOSA y sin el documento.

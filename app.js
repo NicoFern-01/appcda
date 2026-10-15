@@ -4040,105 +4040,24 @@ async function importarPadronLotes(registros, btn) {
     }
     return true;
 }
-// Planilla de sanciones a pilotos con documentación adjunta (PDF).
+// Planilla de sanciones a pilotos con documentación adjunta vía ENLACE EXTERNO.
 // Persistencia: los registros viven en el store 'penalidades' (DB_VERSION 13) y
-// los PDFs en el store existente 'adjuntos', referenciados con `penalidadId`
-// (mismo patrón que `detalleGastoId` de la Carga Detallada). Así el backup/
-// importación de adjuntos y la sincronización con Firestore siguen iguales.
+// llevan el campo opcional `enlaceArchivo` (mismo patrón que Autorizaciones),
+// que se pinta como botón "Ver Archivos" en el listado.
+// Compatibilidad: los PDFs subidos ANTES de este cambio siguen en el store
+// existente 'adjuntos' (clave foránea `penalidadId`, igual que `detalleGastoId`):
+// se siguen mostrando como botones "Abrir PDF 1..N" y se eliminan junto con la
+// penalidad. El backup/sincronización de 'adjuntos' no cambia.
 
-// PDFs elegidos en la planilla y aún NO guardados (temporales en memoria).
-let penalidadAdjuntosTemporales = [];
-// Cache { idPenalidad -> adjuntos } para abrir PDFs desde el listado sin
-// pegar data URLs gigantes en atributos HTML.
+// Cache { idPenalidad -> PDFs heredados } para abrirlos desde el listado sin
+// pegar data URLs gigantes en atributos HTML. La documentación nueva se carga
+// como `enlaceArchivo` (URL externa), igual que en Autorizaciones.
 let penalidadPdfsCache = {};
-// Límite por archivo: la app guarda los PDFs como data URL (≈1,33x del original).
-const PENALIDAD_MAX_PDF_BYTES = 10 * 1024 * 1024;
 
-/** Agrega uno o más PDFs seleccionados a la lista temporal de adjuntos. */
-function agregarAdjuntoPenalidad() {
-    const fileInput = document.getElementById('penalidad-adjuntos');
-    const files = fileInput ? fileInput.files : null;
-    if (!files || files.length === 0) {
-        mostrarToast('Seleccioná al menos un archivo PDF.', 'warning');
-        return;
-    }
-
-    for (const file of files) {
-        // El `accept` del input NO es una validación real: se refuerza acá.
-        if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-            mostrarToast(`"${file.name}" no es un PDF y fue omitido.`, 'error');
-            continue;
-        }
-        if (file.size > PENALIDAD_MAX_PDF_BYTES) {
-            mostrarToast(`"${file.name}" supera los 10MB y fue omitido.`, 'error');
-            continue;
-        }
-        const reader = new FileReader();
-        reader.onload = function (e) {
-            penalidadAdjuntosTemporales.push({
-                nombre: file.name,
-                archivo: e.target.result,
-                tipoArchivo: file.type || 'application/pdf'
-            });
-            renderizarAdjuntosPenalidad();
-        };
-        reader.readAsDataURL(file);
-    }
-    fileInput.value = '';
-}
-
-/** Pinta la lista de PDFs elegidos en la planilla (nombre como texto, nunca HTML). */
-function renderizarAdjuntosPenalidad() {
-    const container = document.getElementById('penalidad-adjuntos-list');
-    if (!container) return;
-    const adjuntos = penalidadAdjuntosTemporales;
-
-    if (adjuntos.length === 0) {
-        container.innerHTML = '<span style="color:var(--text-secondary);font-size:0.85rem;">Sin archivos adjuntos.</span>';
-        return;
-    }
-
-    container.innerHTML = '';
-    adjuntos.forEach((adj, idx) => {
-        const div = document.createElement('div');
-        div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:0.5rem;padding:0.35rem 0.5rem;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:4px;';
-
-        const izq = document.createElement('span');
-        izq.style.cssText = 'display:flex;align-items:center;gap:0.4rem;min-width:0;';
-        izq.innerHTML = '<i class="fa-regular fa-file-pdf" style="color:#e74c3c;"></i>';
-
-        const nombre = document.createElement('span');
-        nombre.textContent = adj.nombre; // texto plano: sin posibilidad de XSS
-        nombre.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;';
-        nombre.title = 'Haga clic para abrir';
-        nombre.onclick = () => abrirArchivoAdjunto(adj.nombre, adj.archivo);
-        izq.appendChild(nombre);
-
-        const btnQuitar = document.createElement('button');
-        btnQuitar.type = 'button';
-        btnQuitar.className = 'btn btn-secondary';
-        btnQuitar.style.cssText = 'padding:0.15rem 0.5rem;font-size:0.8rem;';
-        btnQuitar.title = 'Quitar adjunto';
-        btnQuitar.innerHTML = '<i class="fa-solid fa-xmark"></i>';
-        btnQuitar.onclick = () => eliminarAdjuntoPenalidad(idx);
-
-        div.append(izq, btnQuitar);
-        container.appendChild(div);
-    });
-}
-
-/** Quita un PDF de la lista temporal (antes de guardar). */
-function eliminarAdjuntoPenalidad(idx) {
-    penalidadAdjuntosTemporales.splice(Number(idx), 1);
-    renderizarAdjuntosPenalidad();
-}
-
-/** Restablece la planilla y vacía los adjuntos temporales. */
+/** Restablece la planilla de penalidad (el form.reset() vacía también el enlace). */
 function limpiarFormularioPenalidad() {
     const form = document.getElementById('form-penalidad');
     if (form) form.reset();
-    penalidadAdjuntosTemporales = [];
-    renderizarAdjuntosPenalidad();
 }
 
 /** Carga las categorías existentes en el datalist de la planilla (autocompletado). */
@@ -4367,6 +4286,7 @@ async function guardarPenalidadForm(e) {
     const motivo = document.getElementById('penalidad-motivo').value.trim();
     const fechaInicio = document.getElementById('penalidad-fecha-inicio').value;
     const fechaFin = document.getElementById('penalidad-fecha-fin').value;
+    const enlaceArchivo = document.getElementById('penalidad-enlace').value.trim();
 
     if (!nombre || !apellido || !dni || !nroAuto || !categoria || !sancion || !motivo || !fechaInicio) {
         mostrarToast('Completá todos los campos obligatorios (*).', 'error');
@@ -4391,6 +4311,7 @@ async function guardarPenalidadForm(e) {
             categoria, sancion, motivo,
             fechaInicio,
             fechaFin,
+            enlaceArchivo,
             usuarioCreacion: currentUser ? currentUser.id : null,
             fechaCreacion: new Date().toISOString()
         });
@@ -4399,19 +4320,8 @@ async function guardarPenalidadForm(e) {
             return;
         }
 
-        // Los PDFs van al store 'adjuntos' con la referencia penalidadId
-        // (mismo patrón que detalleGastoId en la Carga Detallada).
-        for (const adj of penalidadAdjuntosTemporales) {
-            await guardar('adjuntos', {
-                penalidadId: Number(id),
-                nombre: adj.nombre,
-                archivo: adj.archivo,
-                tipoArchivo: adj.tipoArchivo,
-                usuarioCarga: currentUser ? currentUser.id : null,
-                fechaCarga: new Date().toISOString()
-            });
-        }
-
+        // La documentación queda como `enlaceArchivo` en el propio registro; los
+        // PDFs heredados (store 'adjuntos') no se tocan en el alta.
         mostrarToast(`Penalidad de ${nombre} ${apellido} registrada correctamente.`);
         limpiarFormularioPenalidad();
         await listarPenalidades();
@@ -4454,11 +4364,19 @@ async function listarPenalidades() {
         penalidadPdfsCache[Number(p.id)] = pdfs;
 
         const piloto = `${escapeHtml(p.nombre || '')} ${escapeHtml(p.apellido || '')}`.trim();
-        const pdfsHtml = pdfs.length === 0
-            ? '<span style="color:var(--text-secondary);">—</span>'
-            : pdfs.map((a, i) =>
-                `<button type="button" class="btn btn-secondary" style="padding:0.2rem 0.45rem;font-size:0.75rem;" title="Abrir PDF ${i + 1}" onclick="abrirPdfPenalidad(${Number(p.id)}, ${i})"><i class="fa-solid fa-file-pdf"></i> ${i + 1}</button>`
-            ).join(' ');
+
+        // "Ver Archivos": enlace externo (mismo patrón que Autorizaciones).
+        const enlaceHtml = p.enlaceArchivo
+            ? `<a href="${escapeHtml(p.enlaceArchivo)}" target="_blank" rel="noopener noreferrer" class="action-btn" title="Ver archivos" style="color:var(--accent);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;"><i class="fa-solid fa-folder-open"></i> Ver Archivos</a>`
+            : '';
+
+        // PDFs heredados (cargados antes del cambio a enlace): siguen abriéndose.
+        const pdfsHtml = pdfs.map((a, i) =>
+            `<button type="button" class="btn btn-secondary" style="padding:0.2rem 0.45rem;font-size:0.75rem;" title="Abrir PDF ${i + 1}" onclick="abrirPdfPenalidad(${Number(p.id)}, ${i})"><i class="fa-solid fa-file-pdf"></i> ${i + 1}</button>`
+        ).join(' ');
+
+        const archivosHtml = [enlaceHtml, pdfsHtml].filter(Boolean).join(' ')
+            || '<span style="color:var(--text-secondary);">—</span>';
 
         return `<tr>
             <td style="font-weight:600;">${piloto}</td>
@@ -4469,8 +4387,9 @@ async function listarPenalidades() {
             <td style="white-space:nowrap;">${escapeHtml(formatearFechaVisual(p.fechaInicio) || '—')}</td>
             <td style="white-space:nowrap;">${escapeHtml(formatearFechaVisual(p.fechaFin) || '—')}</td>
             <td style="max-width:280px;white-space:pre-wrap;">${escapeHtml(String(p.motivo || ''))}</td>
-            <td style="text-align:center;white-space:nowrap;">${pdfsHtml}</td>
+            <td style="text-align:center;white-space:nowrap;">${archivosHtml}</td>
             <td class="editor-only" style="text-align:right;white-space:nowrap;">
+                <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.6rem;" title="Editar penalidad (agregar o cambiar enlace)" onclick="editarPenalidad(${Number(p.id)})"><i class="fa-solid fa-pen-to-square"></i></button>
                 <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.6rem;" title="Eliminar penalidad" onclick="eliminarPenalidad(${Number(p.id)})"><i class="fa-solid fa-trash"></i></button>
             </td>
         </tr>`;
@@ -4508,6 +4427,106 @@ async function eliminarPenalidad(id) {
     await eliminar('penalidades', id);
     mostrarToast('Penalidad eliminada correctamente.');
     await listarPenalidades();
+}
+
+/**
+ * Abre el modal para editar una penalidad (agregar o cambiar el enlace de
+ * documentación, o corregir cualquier campo). Precarga el registro seleccionado.
+ */
+async function editarPenalidad(id) {
+    if (!puedeEditar()) return;
+    const p = await obtenerPorId('penalidades', Number(id));
+    if (!p) { mostrarToast('La penalidad seleccionada no existe.', 'error'); return; }
+
+    // Rellena los datalists de categoría y sanción por si el usuario quiere cambiarlos.
+    await poblarCategoriasPenalidad();
+    await poblarTiposSancion();
+
+    document.getElementById('editar-penalidad-info').innerHTML =
+        `Editando la penalidad de <strong>${escapeHtml(((p.nombre || '') + ' ' + (p.apellido || '')).trim())}</strong>.`;
+    document.getElementById('editar-penalidad-nombre').value = p.nombre || '';
+    document.getElementById('editar-penalidad-apellido').value = p.apellido || '';
+    document.getElementById('editar-penalidad-dni').value = p.dni === undefined || p.dni === null ? '' : p.dni;
+    document.getElementById('editar-penalidad-auto').value = p.nroAuto === undefined || p.nroAuto === null ? '' : p.nroAuto;
+    document.getElementById('editar-penalidad-categoria').value = p.categoria || '';
+    document.getElementById('editar-penalidad-sancion').value = p.sancion || '';
+    document.getElementById('editar-penalidad-fecha-inicio').value = p.fechaInicio || '';
+    document.getElementById('editar-penalidad-fecha-fin').value = p.fechaFin || '';
+    document.getElementById('editar-penalidad-motivo').value = p.motivo || '';
+    // El enlace es el campo clave: si no tenía archivos, acá se lo agrega.
+    document.getElementById('editar-penalidad-enlace').value = p.enlaceArchivo || '';
+
+    // Guarda el id en el dataset del modal (patrón de modalEditarMovimiento).
+    document.getElementById('modal-editar-penalidad').dataset.penalidadId = String(p.id);
+    openModal('modal-editar-penalidad');
+}
+
+/**
+ * Guarda los cambios de la penalidad en el modal de edición y refresca el
+ * listado. Preserva los campos de creación (usuarioCreacion/fechaCreacion) y el
+ * id original; solo sobrescribe los datos editados (incluido el enlace).
+ */
+async function guardarEdicionPenalidad() {
+    if (!puedeEditar()) return;
+    const modal = document.getElementById('modal-editar-penalidad');
+    const id = Number(modal.dataset.penalidadId);
+    if (!id) { mostrarToast('No se pudo identificar la penalidad a editar.', 'error'); return; }
+
+    const nombre = document.getElementById('editar-penalidad-nombre').value.trim();
+    const apellido = document.getElementById('editar-penalidad-apellido').value.trim();
+    const dni = document.getElementById('editar-penalidad-dni').value.trim();
+    const nroAuto = document.getElementById('editar-penalidad-auto').value;
+    const categoria = document.getElementById('editar-penalidad-categoria').value.trim();
+    const sancion = document.getElementById('editar-penalidad-sancion').value.trim();
+    const motivo = document.getElementById('editar-penalidad-motivo').value.trim();
+    const fechaInicio = document.getElementById('editar-penalidad-fecha-inicio').value;
+    const fechaFin = document.getElementById('editar-penalidad-fecha-fin').value;
+    const enlaceArchivo = document.getElementById('editar-penalidad-enlace').value.trim();
+
+    if (!nombre || !apellido || !dni || !nroAuto || !categoria || !sancion || !motivo || !fechaInicio) {
+        mostrarToast('Completá todos los campos obligatorios (*).', 'error');
+        return;
+    }
+
+    // Mismo criterio que el alta: la fecha de fin no puede ser anterior al inicio.
+    if (fechaFin && fechaInicio && fechaFin < fechaInicio) {
+        mostrarToast('La fecha de fin no puede ser anterior a la fecha de inicio.', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('editar-penalidad-btn-guardar');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Guardando...';
+
+    try {
+        // Se parte del registro existente para no perder campos de creación ni versionado.
+        const existente = await obtenerPorId('penalidades', id) || {};
+        const idGuardado = await guardar('penalidades', {
+            ...existente,
+            id,
+            nombre, apellido, dni,
+            nroAuto: Number(nroAuto),
+            categoria, sancion, motivo,
+            fechaInicio,
+            fechaFin,
+            enlaceArchivo,
+            fechaModificacion: new Date().toISOString(),
+            usuarioModificacion: currentUser ? currentUser.id : null
+        });
+        if (!idGuardado) {
+            mostrarToast('No se pudieron guardar los cambios (validación de esquema).', 'error');
+            return;
+        }
+        mostrarToast(`Penalidad de ${nombre} ${apellido} actualizada correctamente.`);
+        closeModal('modal-editar-penalidad');
+        await listarPenalidades();
+    } catch (err) {
+        console.error(err);
+        mostrarToast('Error al guardar los cambios: ' + (err && err.message ? err.message : err), 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-check"></i> Guardar Cambios';
+    }
 }
 
 // ==================== PILOTOS > AUTORIZACIONES ====================
@@ -4616,6 +4635,7 @@ async function listarAutorizaciones() {
             <td>${escapeHtml(String(a.categoria || ''))}</td>
             <td style="text-align:center;white-space:nowrap;">${enlace}</td>
             <td class="editor-only" style="text-align:right;white-space:nowrap;">
+                <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.6rem;margin-right:0.35rem;" title="Editar autorización (agregar o cambiar enlace)" onclick="editarAutorizacion(${Number(a.id)})"><i class="fa-solid fa-pen-to-square"></i></button>
                 <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.6rem;" title="Eliminar autorización" onclick="eliminarAutorizacion(${Number(a.id)})"><i class="fa-solid fa-trash"></i></button>
             </td>
         </tr>`;
@@ -4642,6 +4662,85 @@ async function eliminarAutorizacion(id) {
     mostrarToast('Autorización eliminada correctamente.');
     await listarAutorizaciones();
 }
+
+// NOTA: la importación masiva documentada más abajo (parser nativo + lotes).
+/**
+ * Abre el modal para editar una autorización (agregar o cambiar el enlace, o
+ * corregir nombre/apellido/categoría). Precarga el registro seleccionado.
+ */
+async function editarAutorizacion(id) {
+    if (!puedeEditar()) return;
+    const a = await obtenerPorId('autorizaciones', Number(id));
+    if (!a) { mostrarToast('La autorización seleccionada no existe.', 'error'); return; }
+
+    // Rellena el datalist de categorías por si el usuario quiere elegir otra.
+    await poblarCategoriasAutorizacion();
+
+    document.getElementById('editar-autorizacion-info').innerHTML =
+        `Editando la autorización de <strong>${escapeHtml((a.nombre || '') + ' ' + (a.apellido || '')).trim()}</strong>.`;
+    document.getElementById('editar-autorizacion-nombre').value = a.nombre || '';
+    document.getElementById('editar-autorizacion-apellido').value = a.apellido || '';
+    document.getElementById('editar-autorizacion-categoria').value = a.categoria || '';
+    // El enlace es el campo clave: si no tenía archivos, acá se lo agrega.
+    document.getElementById('editar-autorizacion-enlace').value = a.enlaceArchivo || '';
+
+    // Guarda el id en el dataset del modal (patrón de modalEditarMovimiento).
+    document.getElementById('modal-editar-autorizacion').dataset.autorizacionId = String(a.id);
+    openModal('modal-editar-autorizacion');
+}
+
+/**
+ * Guarda los cambios de la autorización en el modal de edición y refresca el
+ * listado. Preserva los campos de creación (usuarioCreacion/fechaCreacion) y el
+ * id original; solo sobrescribe los datos editados (incluido el enlace).
+ */
+async function guardarEdicionAutorizacion() {
+    if (!puedeEditar()) return;
+    const modal = document.getElementById('modal-editar-autorizacion');
+    const id = Number(modal.dataset.autorizacionId);
+    if (!id) { mostrarToast('No se pudo identificar la autorización a editar.', 'error'); return; }
+
+    const nombre = document.getElementById('editar-autorizacion-nombre').value.trim();
+    const apellido = document.getElementById('editar-autorizacion-apellido').value.trim();
+    const categoria = document.getElementById('editar-autorizacion-categoria').value.trim();
+    const enlaceArchivo = document.getElementById('editar-autorizacion-enlace').value.trim();
+
+    if (!nombre || !apellido || !categoria) {
+        mostrarToast('Completá nombre, apellido y categoría.', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('editar-autorizacion-btn-guardar');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Guardando...';
+
+    try {
+        // Se parte del registro existente para no perder campos de creación ni versionado.
+        const existente = await obtenerPorId('autorizaciones', id) || {};
+        const idGuardado = await guardar('autorizaciones', {
+            ...existente,
+            id,
+            nombre, apellido, categoria,
+            enlaceArchivo,
+            fechaModificacion: new Date().toISOString(),
+            usuarioModificacion: currentUser ? currentUser.id : null
+        });
+        if (!idGuardado) {
+            mostrarToast('No se pudieron guardar los cambios (validación de esquema).', 'error');
+            return;
+        }
+        mostrarToast(`Autorización de ${nombre} ${apellido} actualizada correctamente.`);
+        closeModal('modal-editar-autorizacion');
+        await listarAutorizaciones();
+    } catch (err) {
+        console.error(err);
+        mostrarToast('Error al guardar los cambios: ' + (err && err.message ? err.message : err), 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-check"></i> Guardar Cambios';
+    }
+}
+
 
 // ---------------- Importación masiva de autorizaciones (HTML/XLS/CSV) ----------------
 // Parser 100% nativo (FileReader + DOMParser, sin librerías), mismo enfoque que el
@@ -6315,6 +6414,19 @@ async function eliminarUsuario(id) {
     // 2) Después el registro local (si existía en este dispositivo).
     try {
         if (/^\d+$/.test(clave)) await eliminar('usuarios', Number(clave));
+        // Un usuario de la nube tiene id = username (string), asi que el borrado
+        // por id numérico de arriba se saltaba cualquier copia local duplicada
+        // (mismo username, id numérico) y quedaba como fantasma en IndexedDB.
+        const usernameObjetivo = String(objetivo.username || '').toLowerCase();
+        if (usernameObjetivo) {
+            const locales = await getTodos('usuarios', { soloLocal: true });
+            for (const u of locales) {
+                if (String(u.username || '').toLowerCase() === usernameObjetivo &&
+                    /^\d+$/.test(String(u.id))) {
+                    await eliminar('usuarios', Number(u.id));
+                }
+            }
+        }
     } catch (e) {
         console.warn('[usuarios] No se pudo borrar el registro local:', e);
     }
