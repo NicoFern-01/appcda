@@ -23,27 +23,27 @@ import { normalizarUsernameAEmail } from './authCredentials.js';
 
 /** Runtime de Firebase expuesto por db.js (Firestore + Auth). */
 
-// ==================== BANDERA DE FUNCIONALIDAD ====================
-// La escritura de usuarios en la nube queda DESACTIVADA por defecto.
+// ==================== SINCRONIZACION CON LA NUBE (SIMETRICA) ====================
+// El directorio usa el mismo criterio en las 4 operaciones: LISTAR, ALTA,
+// EDICION y BAJA van a la nube SIEMPRE que hay SDK + sesion; IndexedDB queda
+// SOLO como fallback local (app sin Firebase / offline), nunca como camino
+// paralelo. Cuando la nube no responde, el servicio devuelve {ok:true, nube:false}
+// y el llamador persiste en local CON AVISO (nunca falsos exitos).
 //
-// Motivo: sin reglas de seguridad de Firestore, cualquiera puede abrir la
-// consola y escribirse un documento con `rol: 'admin'`. La API key es publica
-// por diseno (va en el bundle), asi que las reglas son la unica defensa.
+// HISTORICO (bug real): existia la bandera VITE_CDA_SYNC_USUARIOS_NUBE, que
+// gateaba ALTA y EDICION pero NO la lectura ni el borrado. Con ella apagada
+// (no habia `.env`), la lista mostraba los perfiles de la nube, pero borrarlos
+// era un no-op con ok:true (falso exito) y crear usuarios quedaba SOLO en el
+// dispositivo: como la lista manda la nube, los nuevos nunca aparecian.
+// La bandera fue eliminada.
 //
-// Para habilitarla, poner en .env:  VITE_CDA_SYNC_USUARIOS_NUBE=true
-// (solo despues de haber publicado las reglas restrictivas en Firebase).
-//
-// Con la bandera apagada NO se rompe nada: el alta/edicion sigue funcionando
-// exactamente como antes, guardando solo en IndexedDB.
-function leerBanderaSyncNube() {
-  const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {};
-  const valor = env && env.VITE_CDA_SYNC_USUARIOS_NUBE;
-  return String(valor).trim().toLowerCase() === 'true';
-}
-
-const SYNC_USUARIOS_NUBE = leerBanderaSyncNube();
-console.info('[usuarios] Sincronizacion de usuarios con la nube: ' +
-  (SYNC_USUARIOS_NUBE ? 'HABILITADA' : 'DESACTIVADA (solo local)'));
+// SEGURIDAD: la defensa de escritura son las reglas de Firestore
+// (`firestore.rules`), NO una variable del cliente. La API key es publica por
+// diseno (va en el bundle) y con `npm run build` cualquiera lee el valor de
+// cualquier bandera en dist/ y puede reescribir el bundle: nunca aporto
+// seguridad. Con reglas publicadas (esAdmin(), sin passwordHash, sin
+// autoescalada), sincronizar es seguro por defecto; sin reglas, la escritura
+// falla con permission-denied y la UI lo informa.
 function runtime() {
   return (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || {};
 }
@@ -116,17 +116,19 @@ export const userDirectoryService = {
    * @returns {{ok:boolean, mensaje?:string, email?:string}}
    */
   async crearUsuario({ username, nombre, rol, activo, permisos, password }) {
-    // Bandera apagada: se omite la nube y se sigue solo con IndexedDB.
-    if (!SYNC_USUARIOS_NUBE) {
-      console.info('[usuarios] Alta en la nube omitida (bandera desactivada).');
-      return { ok: true, nube: false };
-    }
     const id = idDocumento(username);
     if (!id) return { ok: false, mensaje: 'El nombre de usuario es obligatorio.' };
     if (!password) return { ok: false, mensaje: 'La contraseña es obligatoria para nuevos usuarios.' };
 
-    if (!authDisponible()) {
-      return { ok: false, mensaje: 'Firebase Auth no está disponible. No se pudo crear el usuario.' };
+    // Sin Auth, sin Firestore o sin sesión NO se toca la nube: se evita crear
+    // la identidad sin perfil (medio-alta que deja cuentas huerfanas en Auth).
+    // El llamador guarda SOLO en IndexedDB con aviso explicito. Mismo contrato
+    // que actualizarPerfil y eliminarPerfil: {ok:true, nube:false}.
+    const rtPre = runtime();
+    const conSesion = !!(rtPre.auth && rtPre.auth.currentUser);
+    if (!authDisponible() || !firestoreDisponible() || !conSesion) {
+      console.info('[usuarios] Alta en la nube omitida (sin Auth/Firestore o sin sesión).');
+      return { ok: true, nube: false };
     }
 
     const rt = runtime();
@@ -145,7 +147,28 @@ export const userDirectoryService = {
         await rt.createUserWithEmailAndPassword(rt.auth, email, password);
       }
     } catch (error) {
-      return { ok: false, mensaje: traducirErrorAuth(error), codigo: error && error.code };
+      const codigo = error && error.code;
+      const esNombreTomado = codigo === 'auth/email-already-in-use' ||
+        codigo === 'auth/username-already-exists';
+      // Nombre tomado + perfil EXISTENTE en la nube = duplicado real.
+      if (esNombreTomado && await userDirectoryService.existeEnNube(id)) {
+        return { ok: false, mensaje: 'Ya existe un usuario con ese nombre en el sistema.', codigo };
+      }
+      // Nombre tomado SIN perfil = cuenta HUERFANA en Firebase Auth (quedó de
+      // un borrado anterior: el borrado/purga de perfiles NO elimina cuentas de
+      // Auth; eso exige el Admin SDK, fuera del alcance del cliente web). La
+      // contraseña de esa cuenta es desconocida, así que no se puede reutilizar.
+      if (esNombreTomado) {
+        console.warn('[usuarios] Cuenta huerfana en Firebase Auth sin perfil para', email);
+        return {
+          ok: false,
+          mensaje: 'El nombre ya está tomado en Firebase Authentication (la cuenta existe pero sin perfil). ' +
+            'Eliminá la cuenta "' + email + '" en la consola de Firebase (Authentication > Users) ' +
+            'y volvé a crear el usuario, o elegí otro nombre.',
+          codigo,
+        };
+      }
+      return { ok: false, mensaje: traducirErrorAuth(error), codigo };
     }
 
     // 2) Perfil en Firestore con ID = username (clave unica e inmutable).
@@ -183,22 +206,24 @@ export const userDirectoryService = {
    * cuenta de Auth sigue existiendo). Por eso se borra explicitamente.
    */
   async actualizarPerfil({ username, nombre, rol, activo, permisos, usernameAnterior }) {
-    // Bandera apagada: se omite la nube y se sigue solo con IndexedDB.
-    if (!SYNC_USUARIOS_NUBE) {
-      console.info('[usuarios] Edicion de perfil en la nube omitida (bandera desactivada).');
-      return { ok: true, nube: false };
-    }
     const id = idDocumento(username);
     if (!id) return { ok: false, mensaje: 'El nombre de usuario es obligatorio.' };
-    if (!firestoreDisponible()) {
-      return { ok: false, mensaje: 'Firestore no está disponible. No se pudo actualizar el perfil.' };
+    const rt = runtime();
+    const conSesion = !!(rt.auth && rt.auth.currentUser);
+    // Sin Firestore o sin sesión no hay nube que actualizar: se reporta
+    // `nube:false` y el llamador persiste el cambio SOLO en IndexedDB (mismo
+    // contrato que crearUsuario y eliminarPerfil). Antes, con la bandera
+    // apagada devolvía ok:true y la edición NO se guardaba en NINGÚN lado
+    // (app.js informaba exito tempranamente y salia sin escribir local).
+    if (!firestoreDisponible() || !conSesion) {
+      console.info('[usuarios] Edición de perfil en la nube omitida (sin Firestore o sin sesión).');
+      return { ok: true, nube: false };
     }
 
     const idAnterior = idDocumento(usernameAnterior);
     const cambioDeUsuario = idAnterior && idAnterior !== id;
 
     try {
-      const rt = runtime();
       const doc = construirDocPerfil({ username, nombre, rol, activo, permisos });
       await rt.setDoc(rt.doc(rt.dbFirebase, 'usuarios', id), doc, { merge: true });
 
@@ -225,14 +250,12 @@ export const userDirectoryService = {
    * Admin SDK). Por eso el nombre queda tomado en la nube y el usuario no puede
    * volver a crearse.
    *
-   * NOTA DE DISEÑO (fix de bug real): la bandera SYNC_USUARIOS_NUBE NO gatea el
-   * BORRADO. La lista de usuarios LEE la nube sin importar esa bandera
-   * (listarPerfiles / listarPerfilesConEstado la ignoran), de modo que con la
-   * bandera apagada el usuario SE VEÍA pero "borrarlo" era un no-op que devolvía
-   * {ok:true}: la UI informaba "eliminado correctamente" y el perfil seguía en la
-   * lista. El borrado es seguro sin la bandera porque las reglas de Firestore ya
-   * lo protegen (`allow delete: if esAdmin() && userId != miId()`) y no es un
-   * vector de autoescalada (la bandera protege ALTA/EDICIÓN, no la baja).
+   * NOTA DE DISEÑO: la BAJA sigue el mismo esquema simétrico nube-primero que
+   * LISTAR/ALTA/EDICIÓN (la bandera VITE_CDA_SYNC_USUARIOS_NUBE fue eliminada).
+   * Historicamente el borrado sí estaba gateado por esa bandera y, con ella
+   * apagada, era un no-op que devolvía {ok:true}: la UI informaba "eliminado
+   * correctamente" y el perfil seguía en la lista. La defensa de escritura son
+   * las reglas de Firestore (`allow delete: if esAdmin() && userId != miId()`).
    */
   async eliminarPerfil(username) {
     const id = idDocumento(username);

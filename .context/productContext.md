@@ -67,7 +67,7 @@ o editar cada cosa.
    supervisor (dashboard) y permisos "personalizados" por módulo con las
    funciones `ver/crear/editar/eliminar`.
 6. **Persistencia**: todo se escribe primero en IndexedDB local (con caché en
-   memoria) y, si está habilitado `VITE_CDA_SYNC_USUARIOS_NUBE` y hay sesión,
+   memoria) y, si hay SDK de Firebase + sesión, se sincroniza
    se sincroniza con Firestore. Hay exportación/importación completa de datos y
    una migrador local → Firebase.
 

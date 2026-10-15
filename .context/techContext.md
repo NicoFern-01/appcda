@@ -41,8 +41,10 @@ Con prefijo `VITE_` (se inyectan en el bundle):
   `VITE_FIREBASE_APP_ID`, `VITE_FIREBASE_MEASUREMENT_ID`
 - `VITE_CDA_AUTH_DOMAIN` — dominio sintético p/ expandir username → email
   (`admin` → `admin@controlcda.com`)
-- `VITE_CDA_SYNC_USUARIOS_NUBE` — habilita escritura de usuarios en nube
-  (SOLO después de publicar reglas restrictivas)
+- ~~`VITE_CDA_SYNC_USUARIOS_NUBE`~~ — **ELIMINADA** (sesión 8): la escritura de
+  usuarios en la nube es nube-primero simétrico por defecto (alta/edición/baja);
+  la defensa de escritura son las reglas de `firestore.rules`, no una bandera
+  del cliente (era legible en `dist/` y nunca aportó seguridad)
 
 **Sin** prefijo `VITE_` (NO llegan al navegador; las lee Playwright):
 

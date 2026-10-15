@@ -2,6 +2,35 @@
 
 > **Mantener actualizado al finalizar cada sesión de código** (ver `.clinerules`).
 
+## Sesión 10/06/2026 (8): USUARIOS — sincronización simétrica nube-primero, bandera eliminada
+
+> La bandera `VITE_CDA_SYNC_USUARIOS_NUBE` gateaba ALTA/EDICIÓN pero NO lectura ni borrado:
+> con ella apagada (sin `.env`) la lista mostraba perfiles de la nube, el borrado era un
+> no-op con `ok:true` (falso éxito) y las altas quedaban solo en IndexedDB sin aparecer nunca.
+> Además la bandera, legible en `dist/`, nunca aportó seguridad: la defensa real son las reglas.
+
+### Cambios
+
+| Archivo | Cambio |
+|---|---|
+| `src/services/userDirectoryService.js` | Eliminadas `leerBanderaSyncNube()`/`SYNC_USUARIOS_NUBE`. ALTA/EDICIÓN/BAJA van a la nube siempre que hay SDK + sesión; si no, `{ok:true, nube:false}` y el llamador persiste local CON AVISO. ALTA distingue email tomado + perfil existente (duplicado) de cuenta huérfana en Auth (mensaje con pasos de consola). EDICIÓN con renombre borra el documento viejo. Docstrings actualizados. |
+| `app.js` (`guardarUsuarioFormInterno`) | Chequeo de duplicados NUBE-PRIMERO (`listarPerfilesConEstado`, distingue `sinNube/sinSesion`; fallback a `listarPerfiles`). En ALTA purga fantasmas locales si la nube respondió; si no, bloquea. En EDICIÓN sin nube persiste en IndexedDB (libera id string numérico-incompatible); con nube no duplica local. Toast de alta solo-local actualizado. |
+| `.env.example` | Variable `VITE_CDA_SYNC_USUARIOS_NUBE` eliminada; comentario explica el esquema simétrico + `firestore.rules`. |
+| `.context/techContext.md` | Bandera marcada ELIMINADA (sesión 8) con el motivo de seguridad. |
+| `.context/productContext.md`, `.context/activeContext.md` | Menciones obsoletas de la bandera corregidas (líneas 70, 556, 606). |
+
+### Validaciones
+
+- `npx vite build` → **exit 0** (556 ms; warnings pre-existentes sin `type="module"`).
+- Sin tests automatizados del directorio (requieren Firebase real; no tocar producción desde tests).
+
+### Verificación manual pendiente
+
+- Con sesión admin + reglas publicadas: alta aparece en la lista (otro dispositivo), edición/renombre sin duplicados, borrado desaparece de la lista.
+- Sin sesión / sin Firebase: alta/edición solo-local con toast `warning`, sin falsos éxitos.
+
+---
+
 ## Sesión 10/06/2026 (7): BORRADO DE USUARIOS — fix: "eliminado correctamente" pero el usuario seguía en la lista
 
 > Tarea del usuario: al eliminar el usuario "prueba" aparecía el mensaje de éxito
@@ -553,7 +582,7 @@ Commiteado y pusheado en `df84126` "pilotos: dashboard de la vista padre
   monolito `app.js` (**11.340 líneas** tras esta sesión).
 - La sincronización con Firestore es **genérica por nombre de store**: `penalidades`,
   `tiposSancion` y sus adjuntos sincronizan solos (cubiertos por el comodín de
-  `firestore.rules`) si `VITE_CDA_SYNC_USUARIOS_NUBE` está habilitado.
+  `firestore.rules`); el directorio de usuarios usa la nube siempre que hay SDK + sesión.
 - Red de seguridad E2E: **6 tests de menú** (sin credenciales) + 2 de `app.spec.js`
   (requieren credenciales / login desactivado). Suite completa verificada en esta
   sesión: **6 passed / 2 skipped** (2,0 min, exit 0).
@@ -603,7 +632,7 @@ Commiteado y pusheado en `df84126` "pilotos: dashboard de la vista padre
   error de código). Además crear `.env` desde `.env.example`.
 - **NUNCA** correr el test de login desactivado contra Firebase de producción:
   un login fallido dispara `intentarMigrarCuentaLocal()` y MUTA la cuenta real.
-- Publicar `firestore.rules` antes de habilitar `VITE_CDA_SYNC_USUARIOS_NUBE`.
+- La defensa de escritura del directorio de usuarios son las `firestore.rules` publicadas
 - Al tocar stores de IndexedDB: **siempre** bump de `DB_VERSION` + creación con
   `.contains()` (si no, `NotFoundError` en `db.transaction` — ya pasó en V10).
 - El orden del menú sale de `orden` en `CATALOGO_MODULOS`: al insertar módulos

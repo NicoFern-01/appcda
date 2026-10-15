@@ -6152,14 +6152,49 @@ async function guardarUsuarioFormInterno() {
     // El id puede venir como string (usuarios de la nube, donde el id es el
     // username). `Number(...)` lo convertía en NaN y rompía toda la edición.
     const idNum = id ? String(id) : null;
-    const todos = await getTodos('usuarios');
-    const choque = todos.find(u =>
+    // Verificación NUBE-PRIMERO (mismo criterio que listarUsuarios): la nube es
+    // la fuente de verdad. Se distingue "nube leída y el nombre está libre"
+    // (sinNube/sinSesion = false) de "la nube no respondió": perfilesNube queda
+    // null y la verificación cae a SOLO local (conservadora).
+    const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
+    let perfilesNube = null;
+    if (directorio && typeof directorio.listarPerfilesConEstado === 'function') {
+        const resNube = await directorio.listarPerfilesConEstado();
+        if (resNube && resNube.ok && !resNube.sinNube && !resNube.sinSesion) {
+            perfilesNube = Array.isArray(resNube.perfiles) ? resNube.perfiles : [];
+        }
+    } else if (directorio && typeof directorio.listarPerfiles === 'function') {
+        perfilesNube = await directorio.listarPerfiles();
+    }
+    if (Array.isArray(perfilesNube)) {
+        const choqueNube = perfilesNube.find(u =>
+            String(u.username || '').toLowerCase() === username.toLowerCase() &&
+            String(u.id) !== idNum);
+        if (choqueNube) {
+            mostrarToast(`El nombre "${username}" ya lo usa ${choqueNube.nombre || choqueNube.username}. ` +
+                'Elegí otro nombre o eliminá ese usuario primero.', 'error');
+            return;
+        }
+    }
+    // Copias locales con el mismo username pero distinto id. En ALTA son
+    // "fantasmas": sobraron de borrados hechos con la sync apagada y bloqueaban
+    // reutilizar el nombre. Con la nube verificada se purgan; sin nube
+    // verificada se corta el alta (no se puede distinguir de un duplicado).
+    const localesMismoNombre = (await getTodos('usuarios', { soloLocal: true })).filter(u =>
         String(u.username || '').toLowerCase() === username.toLowerCase() &&
         String(u.id) !== idNum);
-    if (choque) {
-        mostrarToast(`El nombre "${username}" ya lo usa ${choque.nombre || choque.username}. ` +
-            'Elegí otro nombre o eliminá ese usuario primero.', 'error');
-        return;
+    if (!id && localesMismoNombre.length) {
+        if (Array.isArray(perfilesNube)) {
+            for (const fantasma of localesMismoNombre) {
+                await eliminar('usuarios', fantasma.id);
+            }
+            console.info('[usuarios] Se purgaron ' + localesMismoNombre.length +
+                ' copia(s) local(es) fantasma de "' + username + '".');
+        } else {
+            mostrarToast(`El nombre "${username}" ya lo usa ${localesMismoNombre[0].nombre || localesMismoNombre[0].username}. ` +
+                'Elegí otro nombre o eliminá ese usuario primero.', 'error');
+            return;
+        }
     }
     if (!username) {
         mostrarToast('El nombre de usuario es obligatorio.', 'error');
@@ -6197,7 +6232,7 @@ async function guardarUsuarioFormInterno() {
     // ===== INTEGRACION FIREBASE (identidad en Auth + perfil en Firestore) =====
     // El servicio de directorio es la UNICA via que escribe en la nube.
     // Nunca escribe `passwordHash`: ese campo queda solo en IndexedDB.
-    const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
+    // (`directorio` se declaró arriba, junto a la verificación de choque.)
     if (!directorio) {
         console.warn('[usuarios] Directorio en la nube no disponible; se guarda solo en local.');
     } else if (!id) {
@@ -6207,10 +6242,11 @@ async function guardarUsuarioFormInterno() {
             mostrarToast(res.mensaje, 'error');
             return;
         }
-        // Sincronizacion a la nube desactivada: el alta quedo solo en este
-        // dispositivo. Se avisa para que el admin no asuma que es multi-dispositivo.
+        // La nube no respondió (sin SDK o sin sesión): el alta quedo solo en
+        // este dispositivo. Se avisa para que el admin no asuma que es
+        // multi-dispositivo.
         if (res.nube === false) {
-            mostrarToast('Usuario guardado solo en este dispositivo (sincronizacion a la nube desactivada).', 'warning');
+            mostrarToast('Usuario guardado solo en este dispositivo (sin conexión o sin sesión de Firebase).', 'warning');
         }
     } else {
         // ---- EDICION: solo el perfil. La contrasena NO se toca en Auth ----
@@ -6227,15 +6263,27 @@ async function guardarUsuarioFormInterno() {
             return;
         }
 
-        // Un usuario que vive en la nube NO se duplica en IndexedDB: su perfil
-        // ya quedó escrito en Firestore. Escribirlo local creaba un registro
-        // fantasma con el mismo username y el listado lo duplicaba.
-        // `mostrarToast` renderiza con `textContent`: no necesita `escapeHtml`
-        // (de hecho, escaparlo aqui produciria doble escapado visible).
-        mostrarToast(`Usuario actualizado correctamente. Usuario: ${usuario.username}${password ? ' | Contraseña actualizada' : ' | Contraseña sin cambios'}`, 'success');
-        closeModal('modal-usuario');
-        await listarUsuarios();
-        return;
+        if (res.nube === false) {
+            // La nube no respondió: la edición se persiste SOLO en IndexedDB
+            // (se continúa con el `guardar` de mas abajo). Antes se informaba
+            // "actualizado correctamente" sin guardar en NINGÚN lado.
+            // El store `usuarios` usa clave numérica: un id de nube (string)
+            // daría NaN y el validador rechazaría el registro. Se libera el id
+            // y `guardar()` genera uno nuevo (copia local colapsada por
+            // username en el listado y purgada en el próximo borrado del alias).
+            if (!/^\d+$/.test(String(usuario.id))) delete usuario.id;
+            console.info('[usuarios] Edición sin nube: se persiste el cambio en IndexedDB.');
+        } else {
+            // Un usuario que vive en la nube NO se duplica en IndexedDB: su perfil
+            // ya quedó escrito en Firestore. Escribirlo local creaba un registro
+            // fantasma con el mismo username y el listado lo duplicaba.
+            // `mostrarToast` renderiza con `textContent`: no necesita `escapeHtml`
+            // (de hecho, escaparlo aqui produciria doble escapado visible).
+            mostrarToast(`Usuario actualizado correctamente. Usuario: ${usuario.username}${password ? ' | Contraseña actualizada' : ' | Contraseña sin cambios'}`, 'success');
+            closeModal('modal-usuario');
+            await listarUsuarios();
+            return;
+        }
     }
 
     // `guardar()` devuelve null cuando el validador rechaza el registro.
