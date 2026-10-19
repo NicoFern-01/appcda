@@ -58,7 +58,7 @@ function fail(resultado, storeName, motivo) {
 }
 
 /** Nombres de stores que NUNCA deben sincronizarse a la nube (A-4). */
-export const STORES_NO_SYNC = Object.freeze(['usuarios', 'configuracionGlobal']);
+export const STORES_NO_SYNC = Object.freeze(['usuarios']);
 
 /** true si el store es sincronizable (no está en la lista negra). */
 export function esStoreSincronizable(storeName) {

@@ -3624,28 +3624,29 @@ async function escribirAuditoriaCache(dni, resultado) {
 /**
  * POST a https://serper.dev/search — 100% CLIENT-SIDE (JS Vanilla en el navegador,
  * sin backend ni scripts de Python; apto GitHub Pages).
- * La X-API-KEY se recupera del almacenamiento local del navegador: primero
- * `localStorage['serper_api_key']` (espejo que escribe la pantalla de
- * Configuración) y, como fallback, `configuracionGlobal.serperApiKey`.
+ * La X-API-KEY se recupera primero de Firebase (`configuracionGlobal/1`,
+ * accesible desde cualquier navegador con sesión) y, como respaldo offline,
+ * del espejo `localStorage['serper_api_key']` que escribe la pantalla de
+ * Configuración.
  * Query formateado para el año corriente, tal como exige el alcance:
  *   "<nombre>" AND ("Turismo Carretera" OR "TC Pista" OR "TC Pick Up" OR "ACTC") AND "<año>"
  */
 async function consultarSerperActc(nombrePiloto) {
-    // 1) Recuperación de la key desde el almacenamiento local del navegador.
+    // 1) Recuperación de la key: nube primero (Firebase, documento
+    //    `configuracionGlobal/1`), accesible desde cualquier navegador con
+    //    sesión; espejo `localStorage['serper_api_key']` como respaldo offline.
     let apiKeyRecuperada = '';
     try {
-        apiKeyRecuperada = String(localStorage.getItem('serper_api_key') || '').trim();
-    } catch (e) { /* localStorage no disponible */ }
-    if (!apiKeyRecuperada) {
-        // Fallback: base local/nube de Configuración (versiones anteriores sin espejo).
         const cfg = await cargarConfiguracionGlobal();
         apiKeyRecuperada = String(cfg && cfg.serperApiKey ? cfg.serperApiKey : '').trim();
-        if (apiKeyRecuperada) {
-            try { localStorage.setItem('serper_api_key', apiKeyRecuperada); } catch (e) { /* no bloquea */ }
-        }
+    } catch (e) { /* Firestore no disponible: se continúa con el espejo local */ }
+    if (!apiKeyRecuperada) {
+        try {
+            apiKeyRecuperada = String(localStorage.getItem('serper_api_key') || '').trim();
+        } catch (e) { /* localStorage no disponible */ }
     }
     if (!apiKeyRecuperada) {
-        const err = new Error('Falta la API key de Serper.dev: guárdala en Configuración (localStorage serper_api_key).');
+        const err = new Error('Falta la API key de Serper.dev: guárdala en Configuración (se sincroniza desde Firebase).');
         err.codigo = 'SIN_API_KEY';
         throw err;
     }
@@ -5081,6 +5082,21 @@ async function listarConfiguraciones() {
 // persisten ajustes globales de la aplicación (ej: enlace CSV de Google Sheets).
 
 async function cargarConfiguracionGlobal() {
+    // 1) Nube primero: lee el documento único `configuracionGlobal/1` de Firestore
+    //    (corte anti-cuota de 1.5 s). Así la API key de Serper y los ajustes
+    //    globales se leen desde cualquier navegador con sesión Firebase.
+    const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+    if (rt && rt.dbFirebase && typeof rt.getDoc === 'function' && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser) {
+        try {
+            const snap = await conCorteDeSeguridad(rt.getDoc(rt.doc(rt.dbFirebase, 'configuracionGlobal', '1')), 1500, null);
+            if (snap && typeof snap.exists === 'function' && snap.exists()) {
+                return snap.data() || {};
+            }
+        } catch (e) {
+            console.warn('No se pudo leer la configuración global desde Firestore:', e);
+        }
+    }
+    // 2) Fallback: espejo local en IndexedDB.
     try {
         const todos = await getTodos('configuracionGlobal');
         return (todos || []).find(c => Number(c.id) === 1) || {};
@@ -5115,8 +5131,18 @@ async function guardarConfiguracion() {
     const serperApiKey = inputKey ? inputKey.value.trim() : (cfgPrevia.serperApiKey || '');
     try {
         await guardar('configuracionGlobal', { id: 1, urlGoogleSheets, serperApiKey });
-        // Espejo 100% client-side: la auditoría ACTC recupera la key desde
-        // `localStorage['serper_api_key']` (GitHub Pages, sin backend).
+        // Escritura a la nube (Firebase): documento único `configuracionGlobal/1`
+        // para que la key de Serper y los ajustes se lean desde cualquier
+        // navegador con sesión. Corte anti-cuota de 1.5 s.
+        const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+        if (rt && rt.dbFirebase && typeof rt.setDoc === 'function' && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser) {
+            await conCorteDeSeguridad(
+                rt.setDoc(rt.doc(rt.dbFirebase, 'configuracionGlobal', '1'), { id: 1, urlGoogleSheets, serperApiKey }),
+                1500
+            );
+        }
+        // Espejo local: la auditoría ACTC recupera la key desde
+        // `localStorage['serper_api_key']` cuando no hay nube disponible.
         try {
             if (serperApiKey) localStorage.setItem('serper_api_key', serperApiKey);
             else localStorage.removeItem('serper_api_key');

@@ -1441,8 +1441,11 @@ function abrirTransaccionDefensiva(db, storeName, modo) {
 
 // Stores PROHIBIDOS de sincronizar con la nube (A-4): operan SOLO en IndexedDB local.
 // - 'usuarios': contiene passwordHash; jamás debe viajar a Firestore.
-// - 'configuracionGlobal': ajustes de la app puramente locales.
-const STORES_NO_SYNC = Object.freeze(['usuarios', 'configuracionGlobal']);
+// - 'configuracionGlobal': SÍ se sincroniza a Firestore (documento id=1) para que
+//   la API key de Serper y los ajustes globales se lean desde cualquier navegador
+//   con sesión Firebase. La defensa de escritura son las reglas de firestore.rules
+//   (solo admin escribe).
+const STORES_NO_SYNC = Object.freeze(['usuarios']);
 
 function esStoreSincronizable(storeName) {
     return !STORES_NO_SYNC.includes(storeName);

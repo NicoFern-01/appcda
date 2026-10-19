@@ -167,14 +167,23 @@ service cloud.firestore {
       allow write: if puedeEscribirOperativo();
     }
 
+    // ---------- configuracionGlobal (API key de Serper, Google Sheets, etc.) ----------
+    // LECTURA: cualquier usuario autenticado (así la key de Serper se lee desde
+    // cualquier navegador con sesión, no solo del localStorage de un dispositivo).
+    // ESCRITURA: solo administradores.
+    match /configuracionGlobal/{docId} {
+      allow read: if signedIn();
+      allow write: if esAdmin();
+    }
+
     // ---------- resto de colecciones ----------
     // NOTA CRITICA DE PRECEDENCIA: en las reglas de Firestore NO existe la
     // "herencia" entre `match`. Cada `match` se evalua por separado y un comodin
     // como este SIEMPRE concede tambien sobre las colecciones nombradas arriba
     // (los comodines tienen la misma prioridad y el acceso se autoriza si
     // CUALQUIER regla coincide). Por eso este comodin NO incluye `usuarios`,
-    // `gastos`, `rendiciones` ni `inventario`: si los incluyera, dejaria sin
-    // efecto el endurecimiento aplicado mas arriba.
+    // `configuracionGlobal`, `gastos`, `rendiciones` ni `inventario`: si los
+    // incluyera, dejaria sin efecto el endurecimiento aplicado mas arriba.
     //
     // LECTURA: cualquier usuario autenticado.
     // ESCRITURA: solo roles operativos (admin/editor/supervisor activos).
@@ -182,11 +191,13 @@ service cloud.firestore {
     // (incluidos viewers) escribir en cualquier coleccion.
     match /{collection}/{docId} {
       allow read: if collection != 'usuarios'
+                  && collection != 'configuracionGlobal'
                   && collection != 'gastos'
                   && collection != 'rendiciones'
                   && collection != 'inventario'
                   && signedIn();
       allow write: if collection != 'usuarios'
+                   && collection != 'configuracionGlobal'
                    && collection != 'gastos'
                    && collection != 'rendiciones'
                    && collection != 'inventario'

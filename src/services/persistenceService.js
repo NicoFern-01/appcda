@@ -7,7 +7,7 @@
 // forma nativa e interna:
 //   - schemaValidator.js (validarRegistro / esMasReciente / esStoreSincronizable)
 //   - versionado incremental (version / updatedAt / createdAt)
-//   - lista negra de stores sensibles (usuarios, configuracionGlobal)
+//   - lista negra de stores sensibles (usuarios)
 //
 // Estado compartido con db.js:
 //   - cache (_cache/_cloudChecked) vivela en window.__CDA_DB_STATE__ (bridge).

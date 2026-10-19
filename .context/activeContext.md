@@ -717,3 +717,53 @@ decía "Modo Oscuro" sin coincidir, y la transición parpadeaba/texto feo.
 - Chart.js hornea colores al crear la instancia: cambiar `data-theme` NO repinta
   gráficos ya creados. Por eso `refrescarGraficosTema()` re-renderiza la vista activa.
 
+
+## Sesion 15/10/2026 (5): SERPER — API key en Firebase (acceso multi-navegador)
+
+> La API key de Serper estaba solo en localStorage/IndexedDB del navegador activo. En otro navegador la auditoria ACTC pedia la key de nuevo. Se mueve a Firestore (documento configuracionGlobal/1) para que cualquier navegador con sesion Firebase lea la misma clave.
+
+### Cambios
+
+| Archivo | Cambio |
+|---|---|
+| firestore.rules | Nuevo bloque match /configuracionGlobal/{docId}: read si signedIn(), write si esAdmin(). El comodin genérico /{collection}/{docId} ahora excluye tambien configuracionGlobal (precedencia). |
+| db.js | STORES_NO_SYNC pasa de [usuarios, configuracionGlobal] a [usuarios]. configuracionGlobal SÍ se sincroniza a Firestore. |
+| src/services/schemaValidator.js | STORES_NO_SYNC pasa de [usuarios, configuracionGlobal] a [usuarios]. |
+| src/services/persistenceService.js | Comentario de lista negra actualizado: solo usuarios. |
+| app.js | cargarConfiguracionGlobal(): nube-primero (getDoc configuracionGlobal/1 con corte 1.5s, fallback IndexedDB). consultarSerperActc(): orden invertido — nube primero, espejo localStorage como respaldo offline. guardarConfiguracion(): escribe tambien a Firestore (setDoc configuracionGlobal/1) con corte 1.5s. |
+| index.html | Texto de la tarjeta actualizado: clave se guarda en Firebase + replica local offline, legible desde cualquier navegador con sesion. |
+
+### Validaciones
+
+
+### Pendiente / proximos pasos
+
+1. Desplegar firestore.rules: firebase deploy --only firestore:rules (o npm run deploy:rules).
+2. Probar en dos navegadores distintos con sesion Firebase: guardar la key en uno, abrir la app en el otro y verificar que la auditoria ACTC usa la misma clave sin pedirla de nuevo.
+3. El archivo src/worker.js y wrangler.toml (sesion previa) quedan disponibles como alternativa futura de proxy; no se eliminan.
+
+## Sesion 15/10/2026 (5): SERPER — API key en Firebase (acceso multi-navegador)
+
+> La API key de Serper estaba solo en localStorage/IndexedDB del navegador activo. En otro navegador la auditoria ACTC pedia la key de nuevo. Se mueve a Firestore (documento configuracionGlobal/1) para que cualquier navegador con sesion Firebase lea la misma clave.
+
+### Cambios
+
+| Archivo | Cambio |
+|---|---|
+| firestore.rules | Nuevo bloque match /configuracionGlobal/{docId}: read si signedIn(), write si esAdmin(). El comodin generico /{collection}/{docId} ahora excluye tambien configuracionGlobal (precedencia). |
+| db.js | STORES_NO_SYNC pasa de [usuarios, configuracionGlobal] a [usuarios]. configuracionGlobal SI se sincroniza a Firestore. |
+| src/services/schemaValidator.js | STORES_NO_SYNC pasa de [usuarios, configuracionGlobal] a [usuarios]. |
+| src/services/persistenceService.js | Comentario de lista negra actualizado: solo usuarios. |
+| app.js | cargarConfiguracionGlobal(): nube-primero (getDoc configuracionGlobal/1 con corte 1.5s, fallback IndexedDB). consultarSerperActc(): orden invertido - nube primero, espejo localStorage como respaldo offline. guardarConfiguracion(): escribe tambien a Firestore (setDoc configuracionGlobal/1) con corte 1.5s. |
+| index.html | Texto de la tarjeta actualizado: clave se guarda en Firebase + replica local offline, legible desde cualquier navegador con sesion. |
+
+### Validaciones
+
+node --check app.js / db.js / src/services/schemaValidator.js -> exit 0.
+npx vite build -> exit 0 (560 ms, solo warnings preexistentes de type=module en db.js/app.js).
+
+### Pendiente / proximos pasos
+
+1. Desplegar firestore.rules: firebase deploy --only firestore:rules (o npm run deploy:rules).
+2. Probar en dos navegadores distintos con sesion Firebase: guardar la key en uno, abrir la app en el otro y verificar que la auditoria ACTC usa la misma clave sin pedirla de nuevo.
+3. El archivo src/worker.js y wrangler.toml (sesion previa) quedan disponibles como alternativa futura de proxy; no se eliminan.

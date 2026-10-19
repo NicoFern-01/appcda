@@ -1527,7 +1527,7 @@
                         <i class="fa-solid fa-user-shield" style="color: var(--accent);"></i> Auditoría ACTC (Serper.dev)
                     </h3>
                     <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.95rem;">
-                        Clave de la API de Serper.dev que usa la tarjeta "Consulta Pilotos ACTC" del dashboard de Pilotos para cruzar al piloto con la fuente externa. Se guarda en este navegador (localStorage <code>serper_api_key</code> + base local, nunca se sincroniza a la nube): la consulta sale 100% desde el JavaScript del navegador, apta para despliegues estáticos en GitHub Pages (sin backend ni scripts de Python).
+                        Clave de la API de Serper.dev que usa la tarjeta "Consulta Pilotos ACTC" del dashboard de Pilotos para cruzar al piloto con la fuente externa. Se guarda en Firebase (documento `configuracionGlobal/1`) y se replica en este navegador (localStorage <code>serper_api_key</code> + base local) como respaldo offline: cualquier navegador con sesión Firebase lee la misma clave, sin depender del dispositivo donde se guardó. La consulta sale 100% desde el JavaScript del navegador, apta para despliegues estáticos en GitHub Pages (sin backend ni scripts de Python).
                     </p>
                     <div class="form-grid" style="grid-template-columns: 1fr;">
                         <div class="form-group full-width">
