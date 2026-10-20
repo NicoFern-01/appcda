@@ -2906,6 +2906,11 @@ let pilotosCache = [];
 let paginaActual = 1;
 const registrosPorPagina = 20;
 
+/** Paginación cliente para Autorizaciones (mismo patrón que Pilotos). */
+let autorizacionesCache = [];
+let paginaActualAutorizaciones = 1;
+const registrosPorPaginaAutorizaciones = 20;
+
 async function listarPilotos() {
     const tbody = document.getElementById('pilotos-table-body');
     if (!tbody) return;
@@ -3879,53 +3884,143 @@ const PILOTOS_BATCH_MAX = 400;
 // Padrón inicial publicado por la CDA (HTML): vive en public/ y Vite lo copia a
 // dist/ en el build. Se lee por fetch() en segundo plano (Task 2) en lugar de
 // exigir que el admin suba el archivo a mano.
-const PADRON_INICIAL_URL = 'padron_inicial.html';
-
 /** Dispara el selector de archivo oculto del padrón. */
 function dispararImportarPadron() {
     if (!puedeEditar()) return;
     document.getElementById('piloto-import-file')?.click();
 }
 
-/** Importa el padrón inicial embebido (fetch a public/padron_inicial.html). */
-async function importarPadronInicial(btn) {
-    const resp = await fetch(`${PADRON_INICIAL_URL}?v=${Date.now()}`);
-    if (!resp.ok) throw new Error(`No se pudo descargar el padrón (HTTP ${resp.status}).`);
-    const texto = await resp.text();
-    const documento = new DOMParser().parseFromString(texto, 'text/html');
-    const registros = extraerRegistrosPadron(documento);
-    if (registros.length === 0) {
-        mostrarToast('El padrón inicial no contiene pilotos válidos para importar.', 'warning');
-        return;
-    }
-    const enNube = await importarPadronLotes(registros, btn);
-    mostrarToast(`Padrón importado: ${registros.length} pilotos registrados correctamente${duplicadosDni > 0 ? ` (${duplicadosDni} filas con DNI repetido consolidadas)` : ''}${enNube ? ' (local + nube)' : ' (solo local, sin sesión en la nube)'}.`);
-    await listarPilotos();
-}
+
 
 // Control de duplicados del padrón (memoria temporal): cantidad de filas cuyo
 // DNI ya apareció en una fila anterior DENTRO DEL MISMO archivo parseado.
 // Se resetea en cada importación y se informa en el toast y por consola.
 let duplicadosDni = 0;
+// Diagnóstico de importación: cuántas filas se rechazan y por qué
+let diagnosticoImportacion = {
+    totalFilas: 0,
+    validas: 0,
+    rechazadasMenos17Celdas: 0,
+    rechazadasCabecera: 0,
+    rechazadasSinDniONombre: 0,
+    duplicadosDni: 0
+};
 
 /** Convierte un documento HTML de la CDA a registros de piloto (dedup por DNI). */
 function extraerRegistrosPadron(documento) {
     const porDni = new Map();
     duplicadosDni = 0;
+    diagnosticoImportacion = {
+        totalFilas: 0,
+        validas: 0,
+        rechazadasMenos17Celdas: 0,
+        rechazadasCabecera: 0,
+        rechazadasSinDniONombre: 0,
+        duplicadosDni: 0
+    };
     documento.querySelectorAll('table tr').forEach(fila => {
+        diagnosticoImportacion.totalFilas++;
         const celdas = Array.from(fila.querySelectorAll('td, th'))
             .map(c => (c.textContent || '').trim());
+        if (celdas.length < 17) {
+            diagnosticoImportacion.rechazadasMenos17Celdas++;
+            return;
+        }
+        const linea = celdas.join(' ').toLowerCase();
+        if (linea.includes('tipo') || linea.includes('auditor')) {
+            diagnosticoImportacion.rechazadasCabecera++;
+            return;
+        }
         const piloto = parsearFilaPadron(celdas);
-        if (!piloto) return;
+        if (!piloto) {
+            diagnosticoImportacion.rechazadasSinDniONombre++;
+            return;
+        }
+        diagnosticoImportacion.validas++;
         if (porDni.has(piloto.dni)) {
-            duplicadosDni++; // DNI repetido en el archivo: se consolida en 1 solo doc
+            duplicadosDni++;
+            diagnosticoImportacion.duplicadosDni++;
             return;
         }
         porDni.set(piloto.dni, piloto);
     });
+    console.group('[padrón] Diagnóstico de importación');
+    console.info(`Total filas encontradas: ${diagnosticoImportacion.totalFilas}`);
+    console.info(`Filas válidas: ${diagnosticoImportacion.validas}`);
+    console.info(`Rechazadas por menos de 17 celdas: ${diagnosticoImportacion.rechazadasMenos17Celdas}`);
+    console.info(`Rechazadas por ser cabecera (tipo/auditor): ${diagnosticoImportacion.rechazadasCabecera}`);
+    console.info(`Rechazadas por DNI o Nombre vacío: ${diagnosticoImportacion.rechazadasSinDniONombre}`);
+    console.info(`DNI duplicados consolidados: ${diagnosticoImportacion.duplicadosDni}`);
+    console.groupEnd();
     if (duplicadosDni > 0) {
         console.info(`[padrón] ${duplicadosDni} fila(s) con DNI repetido dentro del archivo; quedaron consolidados en ${porDni.size} piloto(s) único(s).`);
     }
+    return Array.from(porDni.values());
+}
+
+/** Lee un libro XLSX y devuelve registros de piloto (dedup por DNI).
+ * Asume la primera hoja con columnas: Tipo(0), Apellido(1), Nombre(2),
+ * Documento/DNI(3), ..., Categoría(16). Requiere SheetJS (XLSX global). */
+function extraerRegistrosPadronXLSX(workbook) {
+    const porDni = new Map();
+    duplicadosDni = 0;
+    diagnosticoImportacion = {
+        totalFilas: 0,
+        validas: 0,
+        rechazadasMenos17Celdas: 0,
+        rechazadasCabecera: 0,
+        rechazadasSinDniONombre: 0,
+        duplicadosDni: 0
+    };
+
+    const nombreHoja = workbook.SheetNames[0];
+    if (!nombreHoja) return [];
+    const hoja = workbook.Sheets[nombreHoja];
+    const rango = XLSX.utils.decode_range(hoja['!ref']);
+
+    for (let fila = rango.s.r; fila <= rango.e.r; fila++) {
+        diagnosticoImportacion.totalFilas++;
+        const celdas = [];
+        for (let col = rango.s.c; col <= rango.e.c; col++) {
+            const direccion = XLSX.utils.encode_cell({ r: fila, c: col });
+            const celda = hoja[direccion];
+            celdas.push(celda ? String(celda.v || '').trim() : '');
+        }
+        if (celdas.length < 17) {
+            diagnosticoImportacion.rechazadasMenos17Celdas++;
+            continue;
+        }
+        const linea = celdas.join(' ').toLowerCase();
+        if (linea.includes('tipo') || linea.includes('auditor')) {
+            diagnosticoImportacion.rechazadasCabecera++;
+            continue;
+        }
+        const piloto = parsearFilaPadron(celdas);
+        if (!piloto) {
+            diagnosticoImportacion.rechazadasSinDniONombre++;
+            continue;
+        }
+        diagnosticoImportacion.validas++;
+        if (porDni.has(piloto.dni)) {
+            duplicadosDni++;
+            diagnosticoImportacion.duplicadosDni++;
+            continue;
+        }
+        porDni.set(piloto.dni, piloto);
+    }
+
+    console.group('[padrón xlsx] Diagnóstico de importación');
+    console.info(`Total filas encontradas: ${diagnosticoImportacion.totalFilas}`);
+    console.info(`Filas válidas: ${diagnosticoImportacion.validas}`);
+    console.info(`Rechazadas por menos de 17 celdas: ${diagnosticoImportacion.rechazadasMenos17Celdas}`);
+    console.info(`Rechazadas por ser cabecera (tipo/auditor): ${diagnosticoImportacion.rechazadasCabecera}`);
+    console.info(`Rechazadas por DNI o Nombre vacío: ${diagnosticoImportacion.rechazadasSinDniONombre}`);
+    console.info(`DNI duplicados consolidados: ${diagnosticoImportacion.duplicadosDni}`);
+    console.groupEnd();
+    if (duplicadosDni > 0) {
+        console.info(`[padrón xlsx] ${duplicadosDni} fila(s) con DNI repetido dentro del archivo; quedaron consolidados en ${porDni.size} piloto(s) único(s).`);
+    }
+
     return Array.from(porDni.values());
 }
 
@@ -3957,15 +4052,30 @@ async function importarPadronPilotos(event) {
     if (!archivo) return;
 
     await conFeedbackDeImportacion(input, async () => {
-        const texto = await new Promise((resolve, reject) => {
-            const lector = new FileReader();
-            lector.onload = () => resolve(String(lector.result || ''));
-            lector.onerror = () => reject(lector.error || new Error('No se pudo leer el archivo.'));
-            lector.readAsText(archivo, 'UTF-8');
-        });
+        const nombre = (archivo.name || '').toLowerCase();
+        const esExcel = nombre.endsWith('.xlsx');
 
-        const documento = new DOMParser().parseFromString(texto, 'text/html');
-        const registros = extraerRegistrosPadron(documento);
+        let registros;
+        if (esExcel) {
+            const buffer = await new Promise((resolve, reject) => {
+                const lector = new FileReader();
+                lector.onload = () => resolve(lector.result);
+                lector.onerror = () => reject(lector.error || new Error('No se pudo leer el archivo.'));
+                lector.readAsArrayBuffer(archivo);
+            });
+            const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+            registros = extraerRegistrosPadronXLSX(workbook);
+        } else {
+            const texto = await new Promise((resolve, reject) => {
+                const lector = new FileReader();
+                lector.onload = () => resolve(String(lector.result || ''));
+                lector.onerror = () => reject(lector.error || new Error('No se pudo leer el archivo.'));
+                lector.readAsText(archivo, 'UTF-8');
+            });
+            const documento = new DOMParser().parseFromString(texto, 'text/html');
+            registros = extraerRegistrosPadron(documento);
+        }
+
         if (registros.length === 0) {
             mostrarToast('El archivo no contiene pilotos válidos para importar.', 'warning');
             return;
@@ -3977,19 +4087,9 @@ async function importarPadronPilotos(event) {
     });
 }
 
-/** Carga el padrón inicial embebido (fetch a public/padron_inicial.html) con feedback de UI. */
-async function dispararImportarPadronInicial() {
-    if (!puedeEditar()) return;
-    await conFeedbackDeImportacion(null, async () => {
-        const btn = document.getElementById('piloto-btn-importar-inicial');
-        await importarPadronInicial(btn);
-        await listarPilotos();
-    });
-}
-
 /** Envuelve la lógica de importación con el estado del botón + manejo de errores. */
 async function conFeedbackDeImportacion(input, accion) {
-    const botones = ['piloto-btn-importar', 'piloto-btn-importar-inicial']
+    const botones = ['piloto-btn-importar']
         .map(id => document.getElementById(id))
         .filter(Boolean);
     const estadosPrevios = botones.map(b => ({ b, html: b.innerHTML }));
@@ -4551,7 +4651,15 @@ async function poblarCategoriasAutorizacion() {
     if (!datalist) return;
     try {
         const categorias = await getTodos('categorias');
-        datalist.innerHTML = categorias
+        // Deduplicación case-insensitive para que no se repitan en el dropdown
+        const vistas = new Set();
+        const unicas = categorias.filter(c => {
+            const norm = String(c.nombre || '').trim().toLowerCase();
+            if (!norm || vistas.has(norm)) return false;
+            vistas.add(norm);
+            return true;
+        });
+        datalist.innerHTML = unicas
             .map(c => `<option value="${escapeHtml(c.nombre || '')}"></option>`)
             .join('');
     } catch (e) {
@@ -4601,37 +4709,59 @@ async function guardarAutorizacionForm(e) {
     }
 }
 
-/** Renderiza el listado de autorizaciones (+ buscador y botón "Ver Archivos"). */
+/** Renderiza el listado de autorizaciones con paginación en cliente (+ buscador con debounce). */
 async function listarAutorizaciones() {
     const tbody = document.getElementById('autorizaciones-table-body');
     if (!tbody) return;
 
     await poblarCategoriasAutorizacion();
 
-    const autorizaciones = await getTodos('autorizaciones');
-
-    const busqueda = (document.getElementById('buscar-autorizacion')?.value || '').trim().toLowerCase();
-    let filtradas = [...autorizaciones].sort((a, b) => Number(b.id) - Number(a.id));
-    if (busqueda) {
-        filtradas = filtradas.filter(a =>
-            [a.nombre, a.apellido, a.categoria]
-                .some(v => String(v === null || v === undefined ? '' : v).toLowerCase().includes(busqueda))
-        );
+    let todas = [];
+    try {
+        todas = await getTodos('autorizaciones');
+    } catch (e) {
+        console.warn('[autorizaciones] no se pudo leer el store local:', e?.message || e);
     }
 
-    if (filtradas.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">${busqueda ? 'Sin resultados para la búsqueda.' : 'No hay autorizaciones registradas.'}</td></tr>`;
+    // Filtro sobre el array original (al tocar la búsqueda se resetea la página).
+    const busqueda = (document.getElementById('buscar-autorizacion')?.value || '').trim().toLowerCase();
+    autorizacionesCache = todas
+        .filter(a => {
+            if (!busqueda) return true;
+            const linea = `${a.nombre || ''} ${a.apellido || ''} ${a.categoria || ''}`.toLowerCase();
+            return linea.includes(busqueda);
+        })
+        .sort((a, b) => Number(b.id) - Number(a.id));
+
+    // Corrige la página si quedó fuera de rango tras filtrar/eliminar.
+    const totalPaginas = Math.max(1, Math.ceil(autorizacionesCache.length / registrosPorPaginaAutorizaciones));
+    if (paginaActualAutorizaciones > totalPaginas) paginaActualAutorizaciones = totalPaginas;
+
+    renderAutorizacionesPagina();
+    renderAutorizacionesPaginador(autorizacionesCache.length, busqueda ? null : totalPaginas);
+}
+
+/** Dibuja SOLO las filas del corte de la página actual. */
+function renderAutorizacionesPagina() {
+    const tbody = document.getElementById('autorizaciones-table-body');
+    if (!tbody) return;
+    const corte = autorizacionesCache.slice((paginaActualAutorizaciones - 1) * registrosPorPaginaAutorizaciones, paginaActualAutorizaciones * registrosPorPaginaAutorizaciones);
+
+    if (corte.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">No hay autorizaciones registradas.</td></tr>`;
         return;
     }
 
-    tbody.innerHTML = filtradas.map(a => {
+    tbody.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    corte.forEach(a => {
         const piloto = `${escapeHtml(a.nombre || '')} ${escapeHtml(a.apellido || '')}`.trim();
-        // "Ver Archivos": mismo enlace externo que Competencias (target _blank).
         const enlace = a.enlaceArchivo
             ? `<a href="${escapeHtml(a.enlaceArchivo)}" target="_blank" rel="noopener noreferrer" class="action-btn" title="Ver archivos" style="color:var(--accent);display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-folder-open"></i> Ver Archivos</a>`
             : '<span style="color:var(--text-secondary);">—</span>';
 
-        return `<tr>
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<tr>
             <td style="font-weight:600;">${piloto}</td>
             <td>${escapeHtml(String(a.categoria || ''))}</td>
             <td style="text-align:center;white-space:nowrap;">${enlace}</td>
@@ -4640,7 +4770,42 @@ async function listarAutorizaciones() {
                 <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.6rem;" title="Eliminar autorización" onclick="eliminarAutorizacion(${Number(a.id)})"><i class="fa-solid fa-trash"></i></button>
             </td>
         </tr>`;
-    }).join('');
+        fragment.appendChild(tr);
+    });
+    tbody.appendChild(fragment);
+}
+
+/** Dibuja/navega los controles Anterior / "Página X de Y" / Siguiente. */
+function renderAutorizacionesPaginador(total, totalPaginas) {
+    const cont = document.getElementById('autorizaciones-pagination');
+    if (!cont) return;
+    const yaPaginado = Number.isInteger(totalPaginas) && totalPaginas > 0;
+    const paginas = yaPaginado ? totalPaginas : Math.max(1, Math.ceil(total / registrosPorPaginaAutorizaciones));
+    cont.innerHTML = `
+        <button type="button" class="btn btn-secondary pagination-prev" onclick="cambiarPaginaAutorizaciones(-1)" ${paginaActualAutorizaciones <= 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i> Anterior</button>
+        <span class="pagination-info">Página ${paginaActualAutorizaciones} de ${paginas}</span>
+        <button type="button" class="btn btn-secondary pagination-next" onclick="cambiarPaginaAutorizaciones(1)" ${paginaActualAutorizaciones >= paginas ? 'disabled' : ''}>Siguiente <i class="fa-solid fa-chevron-right"></i></button>
+    `;
+}
+
+/** Navegación de páginas con límites nativos (disabled si queda fuera de rango). */
+function cambiarPaginaAutorizaciones(direccion) {
+    const totalPaginas = Math.max(1, Math.ceil(autorizacionesCache.length / registrosPorPaginaAutorizaciones));
+    const nueva = paginaActualAutorizaciones + direccion;
+    if (nueva < 1 || nueva > totalPaginas) return;
+    paginaActualAutorizaciones = nueva;
+    renderAutorizacionesPagina();
+    renderAutorizacionesPaginador(autorizacionesCache.length, totalPaginas);
+}
+
+/** Buscador con DEBOUNCE de 300 ms: espera a que el usuario deje de tipear. */
+let autorizacionBusquedaTimer = null;
+function autorizacionBuscarDebounced() {
+    if (autorizacionBusquedaTimer) clearTimeout(autorizacionBusquedaTimer);
+    autorizacionBusquedaTimer = setTimeout(() => {
+        paginaActualAutorizaciones = 1;
+        listarAutorizaciones();
+    }, 300);
 }
 
 /** Elimina una autorización, con el modal de confirmación de la app. */

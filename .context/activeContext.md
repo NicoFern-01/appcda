@@ -767,3 +767,27 @@ npx vite build -> exit 0 (560 ms, solo warnings preexistentes de type=module en 
 1. Desplegar firestore.rules: firebase deploy --only firestore:rules (o npm run deploy:rules).
 2. Probar en dos navegadores distintos con sesion Firebase: guardar la key en uno, abrir la app en el otro y verificar que la auditoria ACTC usa la misma clave sin pedirla de nuevo.
 3. El archivo src/worker.js y wrangler.toml (sesion previa) quedan disponibles como alternativa futura de proxy; no se eliminan.
+
+--- 
+
+## Sesión 10/06/2026 (9): SUBMENÚ INSCRIPCIONES EN PILOTOS
+
+### Cambios
+
+| Archivo | Cambio |
+|---------|--------|
+| `src/utils/permisosUtil.js` | Agregado módulo `inscripciones` (orden: 18, icono: `fa-ticket`, funciones: `['ver']`); desplazados alojamiento→19, categorías-circuitos→20, configuracion→21 |
+| `src/services/viewManager.js` | `GRUPOS_MENU`: `pilotos` hijos ahora `['listado-pilotos', 'penalidades', 'autorizaciones', 'inscripciones']`; `VIEWS`: agregado `'inscripciones'`; `abrirSubmenuDeVista()`: mapeo `'inscripciones': ['submenu-pilotos', 'menu-pilotos']`; `cargarDatosVista()`: `case 'inscripciones': break` (vacío, pendiente de desarrollo) |
+| `src/views/index.js` | Agregado `'inscripciones'` a `VIEW_IDS` |
+| `index.html` | Sección `#view-inscripciones` vacía (título "Inscripciones", subtítulo "Módulo en construcción") |
+| `tests/menu.spec.js` | Test actualizado: espera 4 hijos en submenú Pilotos (`['Listado de Pilotos', 'Penalidades', 'Autorizaciones', 'Inscripciones']`) |
+
+### Validaciones
+
+- `node --check` en los 3 archivos ES → exit 0
+- `npx vite build` → exit 0 (1.13 s)
+- `npx playwright test tests/menu.spec.js --workers=1` → **9 passed / 1 failed** (fallo preexistente en Auditoría ACTC, no relacionado)
+
+### Estado de git
+
+Sin commitear aún.

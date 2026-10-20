@@ -27,9 +27,10 @@ export const CATALOGO_MODULOS = Object.freeze([
   { id: 'listado-pilotos',        nombre: 'Listado de Pilotos',            icono: 'fa-list-ul',         orden: 15, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'penalidades',            nombre: 'Penalidades',                   icono: 'fa-gavel',           orden: 16, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'autorizaciones',         nombre: 'Autorizaciones',                icono: 'fa-file-signature',  orden: 17, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-  { id: 'alojamiento',            nombre: 'Alojamiento',                   icono: 'fa-hotel',           orden: 18, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-  { id: 'categorias-circuitos',   nombre: 'Categorías y Circuitos',        icono: 'fa-flag-checkered',  orden: 19, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-  { id: 'configuracion',          nombre: 'Configuración',                 icono: 'fa-gear',            orden: 20, funciones: ['ver'], soloAdmin: true }
+  { id: 'inscripciones',          nombre: 'Inscripciones',                 icono: 'fa-ticket',          orden: 18, funciones: ['ver'] },
+  { id: 'alojamiento',            nombre: 'Alojamiento',                   icono: 'fa-hotel',           orden: 19, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+  { id: 'categorias-circuitos',   nombre: 'Categorías y Circuitos',        icono: 'fa-flag-checkered',  orden: 20, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+  { id: 'configuracion',          nombre: 'Configuración',                 icono: 'fa-gear',            orden: 21, funciones: ['ver'], soloAdmin: true }
 ]);
 
 export const MODULOS_MAP = Object.freeze(

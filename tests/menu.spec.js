@@ -229,9 +229,9 @@ test.describe('Menú lateral — submenús desplegables', () => {
     page.on('pageerror', (err) => erroresPagina.push(err.message));
     await prepararMenu(page);
 
-    // 1) El submenú de Pilotos ahora tiene TRES hijos.
+    // 1) El submenú de Pilotos ahora tiene CUATRO hijos (incluye Inscripciones en blanco).
     const items = await page.locator('#submenu-pilotos .submenu-item').allTextContents();
-    expect(items).toEqual(['Listado de Pilotos', 'Penalidades', 'Autorizaciones']);
+    expect(items).toEqual(['Listado de Pilotos', 'Penalidades', 'Autorizaciones', 'Inscripciones']);
 
     // 2) Navegación a la vista y campos esperados de la planilla.
     await page.locator('#menu-pilotos').click();

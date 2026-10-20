@@ -26,6 +26,7 @@ const VIEW_IDS = [
   'listado-pilotos',
   'penalidades',
   'autorizaciones',
+  'inscripciones',
   'alojamiento',
   'categorias-circuitos',
   'configuracion'
