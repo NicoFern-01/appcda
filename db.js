@@ -153,9 +153,10 @@ function obtenerConfigFirebase() {
 }
 
 // Variables de módulos de Firebase
-let initializeApp, initializeFirestore, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, onSnapshot, writeBatch, query, where, enableIndexedDbPersistence;
+let initializeApp, initializeFirestore, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, onSnapshot, writeBatch, query, where;
 let getStorage, refStorage, uploadBytes, getDownloadURL, deleteObject;
 let storageFirebase = null;
+let persistentLocalCache, persistentMultipleTabManager;
 
 // Variables de módulo de Firebase Auth
 let getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword;
@@ -320,7 +321,8 @@ async function inicializarFirebase() {
         writeBatch = fsMod.writeBatch;
         query = fsMod.query;
         where = fsMod.where;
-        enableIndexedDbPersistence = fsMod.enableIndexedDbPersistence;
+        persistentLocalCache = fsMod.persistentLocalCache;
+        persistentMultipleTabManager = fsMod.persistentMultipleTabManager;
         getDocsFromServer = fsMod.getDocsFromServer;
         getStorage = storageMod.getStorage;
         refStorage = storageMod.ref;
@@ -340,9 +342,17 @@ async function inicializarFirebase() {
         storageFirebase = getStorage(app);
         authFirebase = getAuth(app);
         if (initializeFirestore) {
-            dbFirebase = initializeFirestore(app, {
+            const firestoreOptions = {
                 experimentalAutoDetectLongPolling: true // Crucial para saltarse bloqueos de red en hosting públicos como GitHub Pages.
-            });
+            };
+            if (typeof persistentLocalCache === 'function' && typeof persistentMultipleTabManager === 'function') {
+                firestoreOptions.localCache = persistentLocalCache({
+                    tabManager: persistentMultipleTabManager()
+                });
+            } else {
+                console.warn('Persistencia multi-pestaña de Firestore no disponible; se usará caché en memoria.');
+            }
+            dbFirebase = initializeFirestore(app, firestoreOptions);
             console.log('Firestore inicializado con experimentalAutoDetectLongPolling.');
         } else {
             dbFirebase = getFirestore(app);
@@ -350,24 +360,6 @@ async function inicializarFirebase() {
 
         if (!dbFirebase) {
             throw new Error('No se pudo inicializar Firestore.');
-        }
-
-        // HABILITAR PERSISTENCIA LOCAL EN EL NAVEGADOR (WEB PERSISTENCE / IndexedDB)
-        // Garantiza que los datos consultados en Firestore se guarden en el caché del navegador
-        // y se rendericen de inmediato sin quedarse congelados en la carga.
-        if (typeof enableIndexedDbPersistence === 'function') {
-            try {
-                await enableIndexedDbPersistence(dbFirebase);
-                console.log('Persistencia local IndexedDB habilitada correctamente.');
-            } catch (persistErr) {
-                if (persistErr.code === 'failed-precondition') {
-                    console.warn('Persistencia IndexedDB no habilitada: múltiples pestañas abiertas en el mismo navegador.');
-                } else if (persistErr.code === 'unimplemented') {
-                    console.warn('Persistencia IndexedDB no soportada por este navegador.');
-                } else {
-                    console.warn('Error al habilitar persistencia IndexedDB:', persistErr);
-                }
-            }
         }
 
         useFirebase = true;

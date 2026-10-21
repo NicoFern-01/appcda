@@ -11668,10 +11668,28 @@ function claveCatalogoInventario(nombre) {
     return String(nombre || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').toLowerCase();
 }
 
+let consolidacionCatalogosInventarioEnCurso = null;
+let catalogosInventarioConsolidados = false;
+
 // Consolida registros duplicados creados por importaciones o sincronizaciones antiguas.
 // Conserva el primer registro (el catálogo original) y repara sus referencias antes de
 // eliminar los duplicados, para que los artículos no queden apuntando a IDs inexistentes.
 async function consolidarCatalogosInventario() {
+    if (catalogosInventarioConsolidados) return false;
+    if (consolidacionCatalogosInventarioEnCurso) return consolidacionCatalogosInventarioEnCurso;
+
+    const tarea = ejecutarConsolidacionCatalogosInventario();
+    consolidacionCatalogosInventarioEnCurso = tarea;
+    try {
+        return await tarea;
+    } finally {
+        if (consolidacionCatalogosInventarioEnCurso === tarea) {
+            consolidacionCatalogosInventarioEnCurso = null;
+        }
+    }
+}
+
+async function ejecutarConsolidacionCatalogosInventario() {
     const [categorias, talles, subcategorias, articulos, articuloTalles] = await Promise.all([
         getTodos('categoriasInventario'),
         getTodos('talles'),
@@ -11722,10 +11740,11 @@ async function consolidarCatalogosInventario() {
         ['categoriasInventario', 'talles', 'subcategoriasInventario', 'articulos', 'articuloTalles']
             .forEach(invalidarCache);
     }
+    catalogosInventarioConsolidados = true;
+    return cambio;
 }
 
 async function listarCategoriasInventario() {
-    await consolidarCatalogosInventario();
     const [categorias, subcategorias, talles] = await Promise.all([
         getTodos('categoriasInventario'),
         getTodos('subcategoriasInventario'),
@@ -11733,8 +11752,7 @@ async function listarCategoriasInventario() {
     ]);
 
     const catBody = document.getElementById('categorias-inventario-body');
-    catBody.innerHTML = '';
-    categorias.forEach(c => {
+    catBody.innerHTML = categorias.map(c => {
         const acciones = puedeEditar() ? `
             <td style="text-align:right;">
                 <button class="action-btn" onclick="editarCategoriaInventario(${c.id})"><i class="fa-solid fa-pen-to-square"></i></button>
@@ -11744,35 +11762,34 @@ async function listarCategoriasInventario() {
         const tallesBadge = c.controlaTalles ? '<span class="badge badge-info">Sí</span>' : '<span class="badge badge-secondary">No</span>';
         const tipoBienBadge = c.tipoBien === 'bien_uso' ? '<span class="badge badge-active">Bien de Uso</span>' : '<span class="badge badge-secondary">Consumible</span>';
         const estadoBadge = c.activo !== false ? '<span class="badge badge-active">Activo</span>' : '<span class="badge badge-inactive">Inactivo</span>';
-        catBody.innerHTML += `<tr>
+        return `<tr>
             <td style="font-weight:600;">${escapeHtml(c.nombre)}</td>
             <td>${tallesBadge}</td>
             <td>${tipoBienBadge}</td>
             <td>${estadoBadge}</td>
             ${acciones}
         </tr>`;
-    });
+    }).join('');
 
     const talleBody = document.getElementById('talles-body');
-    talleBody.innerHTML = '';
-    talles.forEach(t => {
+    talleBody.innerHTML = talles.map(t => {
         const acciones = puedeEditar() ? `
             <td style="text-align:right;">
                 <button class="action-btn" onclick="editarTalle(${t.id})"><i class="fa-solid fa-pen-to-square"></i></button>
                 <button class="action-btn delete" onclick="eliminarTalle(${t.id})"><i class="fa-solid fa-trash"></i></button>
             </td>
         ` : '';
-        talleBody.innerHTML += `<tr>
+        return `<tr>
             <td style="font-weight:600;">${escapeHtml(t.nombre)}</td>
             <td>${escapeHtml(t.descripcion || '-')}</td>
             ${acciones}
         </tr>`;
-    });
+    }).join('');
 
     const subBody = document.getElementById('subcategorias-inventario-body');
-    subBody.innerHTML = '';
-    subcategorias.forEach(s => {
-        const cat = categorias.find(c => c.id === Number(s.categoriaId));
+    const categoriasPorId = new Map(categorias.map(c => [Number(c.id), c]));
+    subBody.innerHTML = subcategorias.map(s => {
+        const cat = categoriasPorId.get(Number(s.categoriaId));
         const catName = cat ? cat.nombre : '-';
         const acciones = puedeEditar() ? `
             <td style="text-align:right;">
@@ -11780,12 +11797,22 @@ async function listarCategoriasInventario() {
                 <button class="action-btn delete" onclick="eliminarSubcategoria(${s.id})"><i class="fa-solid fa-trash"></i></button>
             </td>
         ` : '';
-        subBody.innerHTML += `<tr>
+        return `<tr>
             <td style="font-weight:600;">${escapeHtml(s.nombre)}</td>
             <td>${escapeHtml(catName)}</td>
             ${acciones}
         </tr>`;
-    });
+    }).join('');
+
+    if (!catalogosInventarioConsolidados && !consolidacionCatalogosInventarioEnCurso) {
+        consolidarCatalogosInventario()
+            .then(cambio => {
+                if (cambio && document.getElementById('view-categorias-inventario')?.classList.contains('active')) {
+                    return listarCategoriasInventario();
+                }
+            })
+            .catch(err => console.error('Error al consolidar los catálogos de inventario:', err));
+    }
 }
 
 function openModalCategoriaInventario() {
