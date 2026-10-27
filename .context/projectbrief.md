@@ -13,11 +13,11 @@ Proyecto Firebase por defecto: `controlcda-e5f97`.
 
 ## Objetivos
 
-1. **Operar todo el negocio en una sola SPA**: 19 vistas (dashboard, calendario,
+1. **Operar todo el negocio en una sola SPA**: 21 vistas (dashboard, calendario,
    competencias, gastos, carga detallada/rendiciones, personal por competencia,
    inventario con 5 subvistas, staff, estadísticas de personal, pilotos con
    listado de pilotos y penalidades, alojamiento,
-   categorías/circuitos, configuración).
+   categorías/circuitos, configuración; `inscripciones` sigue en construcción).
 2. **Funcionar offline-first**: IndexedDB local (db.js + persistenceService) con
    sincronización opcional a Firestore, más migración local → nube.
 3. **Seguridad por capas**: hash de contraseñas con Web Crypto (sal + SHA-256),
@@ -57,4 +57,4 @@ index.html (16 <section id="view-*"> + login)   ── markup estático, no se t
 - FASE 7: navegación/menú migrados a `src/services/viewManager.js` (los proxies
   de app.js ya delegan en `window.__CDA_MODULES__.vistas`).
 - Pendiente (declarado en comentarios): conversión ESM completa de `app.js` y
-  eliminación de las copias legacy (`permisosUtil.js` raíz, proxies).
+  eliminación de las copias legacy (`permisosUtil.js` raíz ya eliminada; proxies pendientes).

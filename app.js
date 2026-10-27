@@ -471,11 +471,6 @@ function switchView(viewId) {
     if (v && typeof v.switchView === 'function') return v.switchView(viewId);
 }
 
-function _ejecutarSwitchView(viewId) {
-    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
-    if (v && typeof v.ejecutarSwitchView === 'function') return v.ejecutarSwitchView(viewId);
-}
-
 function _finalizarSalidaEditorRendicion() {
     const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
     if (v && typeof v.finalizarSalidaEditorRendicion === 'function') return v.finalizarSalidaEditorRendicion();
@@ -1526,7 +1521,10 @@ async function verCompetencia(id) {
         staffContainer.innerHTML = '<span style="color:var(--text-secondary);">No hay personal asignado a esta competencia.</span>';
     } else {
         staffNombres.forEach(n => {
-            staffContainer.innerHTML += `<span class="tag">${n}</span>`;
+            const span = document.createElement('span');
+            span.className = 'tag';
+            span.textContent = n;
+            staffContainer.appendChild(span);
         });
     }
 
@@ -8764,6 +8762,13 @@ async function closeModalDetalleGasto(guardado = false) {
     _fotoModalDetalleGasto = null;
 }
 
+function marcarDetallesModificados() {
+    detallesModificados = true;
+    document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
+    renderizarDetalleGastos();
+}
+
+
 async function eliminarFilaGasto(index) {
     const confirmado = await mostrarConfirmacion(
         'Eliminar gasto',
@@ -8784,9 +8789,7 @@ async function eliminarFilaGasto(index) {
         }
     }
     adjuntosTemporales = { modal: [], ...newAdj };
-    detallesModificados = true;
-    document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
-    renderizarDetalleGastos();
+    marcarDetallesModificados();
 }
 
 function duplicarFilaGasto(index) {
@@ -8796,9 +8799,7 @@ function duplicarFilaGasto(index) {
     delete copia.id;
     detallesActuales.splice(index + 1, 0, copia);
     adjuntosTemporales['modal'] = [];
-    detallesModificados = true;
-    document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
-    renderizarDetalleGastos();
+    marcarDetallesModificados();
 }
 
 function moverFilaArriba(index) {
@@ -8807,9 +8808,7 @@ function moverFilaArriba(index) {
     adjuntosTemporales['modal'] = [];
     adjuntosTemporales['modal'] = [];
     adjuntosTemporales['modal'] = [];
-    detallesModificados = true;
-    document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
-    renderizarDetalleGastos();
+    marcarDetallesModificados();
 }
 
 function moverFilaAbajo(index) {
@@ -8818,9 +8817,7 @@ function moverFilaAbajo(index) {
     adjuntosTemporales['modal'] = [];
     adjuntosTemporales['modal'] = [];
     adjuntosTemporales['modal'] = [];
-    detallesModificados = true;
-    document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
-    renderizarDetalleGastos();
+    marcarDetallesModificados();
 }
 
 function agregarAdjuntoADetalle() {
@@ -9557,16 +9554,19 @@ function calcularStockTotal(articulos, articuloTalles) {
     }, 0);
 }
 
+function calcularStockArticulo(art, articuloTalles) {
+    if (art.controlaTalles) {
+        const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
+        return tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
+    }
+    return Number(art.stockUnico || 0);
+}
+
+
 function contarArticulosSinStock(articulos, articuloTalles) {
     return articulos.filter(art => {
         if (art.activo === false) return false;
-        let stock = 0;
-        if (art.controlaTalles) {
-            const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
-            stock = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
-        } else {
-            stock = Number(art.stockUnico || 0);
-        }
+        const stock = calcularStockArticulo(art, articuloTalles);
         return stock === 0;
     }).length;
 }
@@ -9574,13 +9574,7 @@ function contarArticulosSinStock(articulos, articuloTalles) {
 function contarArticulosBajoStock(articulos, articuloTalles) {
     return articulos.filter(art => {
         if (art.activo === false) return false;
-        let stock = 0;
-        if (art.controlaTalles) {
-            const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
-            stock = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
-        } else {
-            stock = Number(art.stockUnico || 0);
-        }
+        const stock = calcularStockArticulo(art, articuloTalles);
         return stock > 0 && stock <= (art.stockMinimo || 0);
     }).length;
 }
@@ -10783,13 +10777,7 @@ async function exportarArticulosExcel() {
     for (const art of articulos) {
         const cat = categorias.find(c => c.id === Number(art.categoriaId));
         const catName = cat ? cat.nombre : '-';
-        let stock = 0;
-        if (art.controlaTalles) {
-            const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
-            stock = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
-        } else {
-            stock = Number(art.stockUnico || 0);
-        }
+        const stock = calcularStockArticulo(art, articuloTalles);
         const estado = art.activo !== false ? 'Activo' : 'Inactivo';
         const linea = [
             sanitizarCSVExport(art.codigo), sanitizarCSVExport(art.nombre), sanitizarCSVExport(art.descripcion || ''),
@@ -10894,7 +10882,7 @@ async function listarMovimientosInventario() {
         item.innerHTML = `
             <div class="mov-icon"><i class="fa-solid ${c.icono}"></i></div>
             <div class="mov-info">
-                <div class="mov-title">${escapeHtml(artName)}${talleText}</div>
+                <div class="mov-title">${escapeHtml(artName)}${escapeHtml(talleText)}</div>
                 <div class="mov-meta">${c.label} • ${escapeHtml(mov.motivo || '')} • ${fecha}</div>
                 <div class="mov-meta">👤 ${escapeHtml(personaLabel)}</div>
                 ${mostrarObservacion && mov.observaciones ? `<div class="mov-meta">📝 ${escapeHtml(mov.observaciones)}</div>` : ''}
@@ -12455,7 +12443,6 @@ const PERSONAL_COMPETENCIA_DEFAULT = [
 
 // Porcentajes de cálculo
 const TASA_PARTICIPACION_ACA = 0.1375;   // 13.75%
-const TASA_SAC_MENSUALIZADO = 1/12;      // 1/12
 const TASA_CONT_PATRONALES = 0.273;      // 27.3%
 
 // Store para persistir personal por competencia
@@ -12892,7 +12879,6 @@ async function actualizarGastoTotalCompetencia(compId) {
 // Estado del módulo
 let alojamientosCache = [];
 let alojamientosCargados = false;
-let alojamientosFiltrosInicializados = false;
 
 // ====================================================================
 // OPTIMIZACIÓN CLAVE: COMPRESIÓN DE IMAGEN EN EL CLIENTE (Canvas API)

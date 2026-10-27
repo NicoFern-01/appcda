@@ -15,7 +15,7 @@
 // ============================================================
 
 /** Dominio sintético para cuentas locales que no son correos reales. */
-export const DOMINIO_AUTH_POR_DEFECTO = 'controlcda.com';
+const DOMINIO_AUTH_POR_DEFECTO = 'controlcda.com';
 
 /**
  * ===================== CUENTAS ADMINISTRADORAS ANCLA =====================
@@ -54,7 +54,7 @@ const INVALIDOS_PARTE_LOCAL = /[^\w.+\-]/g;
  * Dominio efectivo de la aplicacion.
  * Se puede sobreescribir con VITE_CDA_AUTH_DOMAIN (ver .env).
  */
-export const DOMINIO_AUTH_ACTIVO = (() => {
+const DOMINIO_AUTH_ACTIVO = (() => {
   const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {};
   const configured = env && typeof env.VITE_CDA_AUTH_DOMAIN === 'string' ? env.VITE_CDA_AUTH_DOMAIN.trim() : '';
   return configured || DOMINIO_AUTH_POR_DEFECTO;

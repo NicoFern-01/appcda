@@ -91,13 +91,8 @@ export async function navigate(viewId, container) {
   return view;
 }
 
-/** Devuelve todas las vistas registradas (para debugging/migración). */
-export function getRegisteredViews() {
-  return Array.from(registry.keys());
-}
-
 // Pre-registrar adapters por defecto de TODAS las vistas (no rompe nada:
 // solo resuelven el DOM existente si alguien invoca navigate()).
 VIEW_IDS.forEach((id) => registerView(id));
 
-export default { VIEW_IDS, registerView, navigate, getRegisteredViews };
+export default { VIEW_IDS, registerView, navigate };

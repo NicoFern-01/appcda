@@ -65,3 +65,44 @@ requieren credenciales hay que exportarlas en el shell.
   Chromium, `webServer` levanta `npm run dev` (o lo reutiliza).
 - `.gitignore` excluye `.env`, `dist/`, `test-results/`, `playwright-report/`.
 - Alias `@` → raíz del proyecto (disponible pero opcional).
+
+## Herramientas de agente (Cline)
+
+### Dónde lee skills Cline
+
+Verificado en `C:\Users\Test\.vscode\extensions\saoudrizwan.claude-dev-4.1.25\dist\extension.js`
+(función `Zbn` = `getSkillsDirectoriesForScan`):
+
+| Scope | Rutas escaneadas |
+|---|---|
+| Proyecto | `.clinerules/skills/`, `.cline/skills/`, `.claude/skills/`, `.agents/skills/` |
+| Global | `~/.cline/skills/`, `~/.agents/skills/` |
+
+Requisitos del `SKILL.md`: frontmatter YAML con `name` (idéntico al nombre del directorio) y
+`description` (máx. 1024 chars). Cline **ignora** campos extra (`metadata`, `license`, …).
+Carga progresiva: metadata siempre (~100 tok/skill), cuerpo al activar (<5k tok), recursos bajo demanda.
+
+**Instaladas hoy (global):** `~/.agents/skills/ecc-guide`, `~/.agents/skills/find-skills`.
+
+### ECC (Everything Claude Code)
+
+- Repo canónico: `https://github.com/affaan-m/ECC` (NO `affanshahid/everything-claude-code`).
+- Paquete skills.sh: `affaan-m/ecc` — 327 skills, ~1.3M installs.
+- Proyecciones en el repo: `skills/` (canónica, 311), `.agents/skills/` (Codex, 48),
+  `.cursor/skills/` (12), `.kiro/skills/` (43).
+
+```bash
+# Buscar en el catálogo de ECC
+npx skills find <keyword> --owner affaan-m
+# Listar disponibles sin instalar
+npx skills add affaan-m/ecc -l
+# Instalar una skill puntual para Cline (global)
+npx skills add affaan-m/ecc@<skill> -g -a cline -y
+# Verificar qué está instalado y para qué agentes
+npx skills ls -g --json
+```
+
+Notas Windows: el `npx skills` pide Node >=22.20.0 (local v22.16.0 ⇒ warning `EBADENGINE`,
+no bloquea); el output de los `.ps1` de npm viene con doble codificación (mojibake), así que
+para leer el contenido real usar `skills.sh` o el `SKILL.md` crudo en GitHub; el CLI crea
+symlinks en el dir del agente (usar `--copy` si symlinks fallan en Windows).

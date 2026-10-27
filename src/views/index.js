@@ -1,9 +1,9 @@
 // src/views/index.js
 // ============================================================
 // AGREGADOR DE VISTAS (FASE 2).
-// Registro central de las 19 vistas + login. Cada adaptador adopta hoy la
-// sección DOM existente del index.html (sin duplicar ids ni alterar el CSS).
-// Esto deja listo el desacople: en la próxima fase cada entrada podrá
+// Registro central de las 21 vistas + login. Cada adaptador adopta hoy la
+// secciÃ³n DOM existente del index.html (sin duplicar ids ni alterar el CSS).
+// Esto deja listo el desacople: en la prÃ³xima fase cada entrada podrÃ¡
 // apuntar a un HTML/JS propio sin cambiar un solo id/clase.
 // ============================================================
 
@@ -39,7 +39,7 @@ function adoptarVista(id) {
     containerId,
     mount(container) {
       const el = document.getElementById(containerId);
-      if (!el) return null; // la vista aún no tiene sección (no rompe nada)
+      if (!el) return null; // la vista aÃºn no tiene secciÃ³n (no rompe nada)
       if (container && el !== container && !container.contains(el)) container.appendChild(el);
       if (id !== 'login') el.classList.add('active');
       return el;

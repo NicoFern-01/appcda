@@ -724,18 +724,18 @@ test.describe('Menú lateral — submenús desplegables', () => {
     await expect(page.locator('#pilotos-sancionados-body')).toContainText(
       'Participación en categoría no fiscalizada por la ACTC');
 
-    // 7) Re-auditar bajo bypass de caché temporal: llama a Serper directamente
+    // 7) Re-auditar con caché vigente: reutiliza el resultado anterior, NO llama a Serper
     //    y muestra el panel de evidencias nuevamente. Cancelar → sin duplicar sanción.
     await page.fill('#input-auditar-piloto', 'Juan Perez');
     await page.click('#btn-auditar-piloto');
     await expect(page.locator('#btn-confirmar-sancion-actc')).toBeVisible({ timeout: 5000 });
-    expect(await page.evaluate(() => window.__CDA_FETCHES__.length)).toBe(2); // bypass de caché activo
+    expect(await page.evaluate(() => window.__CDA_FETCHES__.length)).toBe(1); // caché vigente, sin nueva consulta
     await page.click('#auditoria-estado .auditoria-btn-cancelar');
     await expect(page.locator('#auditoria-estado')).toHaveText('');
     expect(await page.evaluate(() => window.__CDA_SANCIONES__.length)).toBe(1); // sin duplicado
 
     // 8) Postulante EXTERNO (auditoría universal): aviso informativo SIN return
-    //    y el fetch a Serper se ejecuta de todas formas (aquí: 2 → 3).
+    //    y el fetch a Serper se ejecuta de todas formas (aquí: 1 → 2).
     await page.fill('#input-auditar-piloto', 'Nadie Existe');
     await page.click('#btn-auditar-piloto');
     await expect(page.locator('#auditoria-estado')).toContainText(
@@ -743,14 +743,14 @@ test.describe('Menú lateral — submenús desplegables', () => {
     // El stub demora 700 ms esta consulta; al retornar, el veredicto reemplaza al aviso.
     await expect(page.locator('#auditoria-estado')).toContainText(
       'Piloto Verificado: Sin anomalías en ACTC', { timeout: 5000 });
-    expect(await page.evaluate(() => window.__CDA_FETCHES__.length)).toBe(3);
+    expect(await page.evaluate(() => window.__CDA_FETCHES__.length)).toBe(2);
 
     // 9) Piloto sin novedades: indicador verde y banner apagado.
     await page.fill('#input-auditar-piloto', 'Ana Gomez');
     await page.click('#btn-auditar-piloto');
     await expect(page.locator('#auditoria-estado')).toContainText('Piloto Verificado: Sin anomalías en ACTC', { timeout: 5000 });
     await expect(page.locator('#auditoria-banner')).toBeHidden();
-    expect(await page.evaluate(() => window.__CDA_FETCHES__.length)).toBe(4);
+    expect(await page.evaluate(() => window.__CDA_FETCHES__.length)).toBe(3);
     expect(await page.evaluate(() => window.__CDA_SANCIONES__.length)).toBe(1);
 
     // 10) Externo POSITIVO: "Confirmar Infracción y Sancionar" genera el documento
@@ -759,7 +759,7 @@ test.describe('Menú lateral — submenús desplegables', () => {
     await page.fill('#input-auditar-piloto', 'Pablo Externo');
     await page.click('#btn-auditar-piloto');
     await expect(page.locator('#btn-confirmar-sancion-actc')).toBeVisible({ timeout: 5000 });
-    expect(await page.evaluate(() => window.__CDA_FETCHES__.length)).toBe(5);
+    expect(await page.evaluate(() => window.__CDA_FETCHES__.length)).toBe(4);
     await page.click('#btn-confirmar-sancion-actc');
     await expect(page.locator('#auditoria-estado')).toHaveText('');
     await expect(page.locator('#input-auditar-piloto')).toHaveValue('');

@@ -1,14 +1,14 @@
 // src/utils/permisosUtil.js
 // ============================================================
-// VERSIÓN MÓDULO ES de `permisosUtil.js` (raíz).
-// FASE 2 (aditivo): la app en runtime sigue usando la copia clásica de la
-// raíz (que expone window.PermisosUtil/verificarPermiso para app.js).
-// Este módulo ES es la fuente limpia y reutilizable para los futuros
-// módulos de /src. NO se elimina la copia raíz hasta completar la
-// conversión ESM de app.js (evita romper referencias).
+// VERSIÃ“N MÃ“DULO ES de `permisosUtil.js` (raÃ­z).
+// FASE 2 (aditivo): la app en runtime sigue usando la copia clÃ¡sica de la
+// raÃ­z (que expone window.PermisosUtil/verificarPermiso para app.js).
+// Este mÃ³dulo ES es la fuente limpia y reutilizable para los futuros
+// mÃ³dulos de /src. NO se elimina la copia raÃ­z hasta completar la
+// conversiÃ³n ESM de app.js (evita romper referencias).
 // ============================================================
 
-// ------------------ Catálogo de módulos ------------------
+// ------------------ CatÃ¡logo de mÃ³dulos ------------------
 export const CATALOGO_MODULOS = Object.freeze([
   { id: 'dashboard',              nombre: 'Dashboard',                     icono: 'fa-gauge',           orden: 1,  funciones: ['ver'] },
   { id: 'calendario',             nombre: 'Calendario',                    icono: 'fa-calendar-days',   orden: 2,  funciones: ['ver'] },
@@ -17,31 +17,31 @@ export const CATALOGO_MODULOS = Object.freeze([
   { id: 'carga-detallada',        nombre: 'Carga Detallada (Rendiciones)', icono: 'fa-file-invoice',    orden: 5,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'personal-competencia',   nombre: 'Personal por Competencia',      icono: 'fa-people-group',    orden: 6,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'inventario',             nombre: 'Inventario',                    icono: 'fa-boxes-stacked',   orden: 7,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-  { id: 'articulos',              nombre: 'Artículos',                     icono: 'fa-box',             orden: 8,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+  { id: 'articulos',              nombre: 'ArtÃ­culos',                     icono: 'fa-box',             orden: 8,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'movimientos-inventario', nombre: 'Movimientos',                   icono: 'fa-right-left',      orden: 9,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-  { id: 'categorias-inventario',  nombre: 'Categorías de Inventario',      icono: 'fa-tags',            orden: 10, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+  { id: 'categorias-inventario',  nombre: 'CategorÃ­as de Inventario',      icono: 'fa-tags',            orden: 10, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'entregas-inventario',    nombre: 'Entregas',                      icono: 'fa-truck-ramp-box',  orden: 11, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'staff',                  nombre: 'Personal',                      icono: 'fa-user-tie',        orden: 12, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-  { id: 'estadisticas-personal',  nombre: 'Estadísticas de Personal',      icono: 'fa-chart-column',    orden: 13, funciones: ['ver'] },
+  { id: 'estadisticas-personal',  nombre: 'EstadÃ­sticas de Personal',      icono: 'fa-chart-column',    orden: 13, funciones: ['ver'] },
   { id: 'pilotos',                nombre: 'Pilotos',                       icono: 'fa-id-card',         orden: 14, funciones: ['ver'] },
   { id: 'listado-pilotos',        nombre: 'Listado de Pilotos',            icono: 'fa-list-ul',         orden: 15, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'penalidades',            nombre: 'Penalidades',                   icono: 'fa-gavel',           orden: 16, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'autorizaciones',         nombre: 'Autorizaciones',                icono: 'fa-file-signature',  orden: 17, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'inscripciones',          nombre: 'Inscripciones',                 icono: 'fa-ticket',          orden: 18, funciones: ['ver'] },
   { id: 'alojamiento',            nombre: 'Alojamiento',                   icono: 'fa-hotel',           orden: 19, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-  { id: 'categorias-circuitos',   nombre: 'Categorías y Circuitos',        icono: 'fa-flag-checkered',  orden: 20, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
-  { id: 'configuracion',          nombre: 'Configuración',                 icono: 'fa-gear',            orden: 21, funciones: ['ver'], soloAdmin: true }
+  { id: 'categorias-circuitos',   nombre: 'CategorÃ­as y Circuitos',        icono: 'fa-flag-checkered',  orden: 20, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
+  { id: 'configuracion',          nombre: 'ConfiguraciÃ³n',                 icono: 'fa-gear',            orden: 21, funciones: ['ver'], soloAdmin: true }
 ]);
 
 export const MODULOS_MAP = Object.freeze(
   Object.fromEntries(CATALOGO_MODULOS.map((m) => [m.id, m]))
 );
 
-export const ACCIONES_VALIDAS = Object.freeze(['ver', 'crear', 'editar', 'eliminar']);
-export const ROL_ADMIN = 'admin';
-export const MODULOS_SOLO_LECTURA = Object.freeze(['dashboard', 'estadisticas-personal']);
+const ACCIONES_VALIDAS = Object.freeze(['ver', 'crear', 'editar', 'eliminar']);
+const ROL_ADMIN = 'admin';
+const MODULOS_SOLO_LECTURA = Object.freeze(['dashboard', 'estadisticas-personal']);
 
-export function construirPermisosAdmin() {
+function construirPermisosAdmin() {
   const permisos = {};
   for (const modulo of CATALOGO_MODULOS) {
     permisos[modulo.id] = Object.fromEntries(modulo.funciones.map((f) => [f, true]));
@@ -49,7 +49,7 @@ export function construirPermisosAdmin() {
   return permisos;
 }
 
-export function construirPresetRol(rol) {
+function construirPresetRol(rol) {
   const preset = {};
   for (const modulo of CATALOGO_MODULOS) {
     if (modulo.soloAdmin) continue;
@@ -63,7 +63,7 @@ export function construirPresetRol(rol) {
 
 export const DICCIONARIO_ROLES = Object.freeze({
   admin: { label: 'Administrador (Acceso total)', accesoTotal: true, preset: construirPermisosAdmin() },
-  editor: { label: 'Editor (Carga y edición de datos)', accesoTotal: false, preset: construirPresetRol('editor') },
+  editor: { label: 'Editor (Carga y ediciÃ³n de datos)', accesoTotal: false, preset: construirPresetRol('editor') },
   viewer: { label: 'Visualizador (Solo Lectura)', accesoTotal: false, preset: construirPresetRol('viewer') },
   supervisor: { label: 'Supervisor (Dashboard Solo)', accesoTotal: false, preset: { dashboard: { ver: true } } }
 });
@@ -101,7 +101,7 @@ export function verificarPermiso(usuario, modulo, accion = 'ver') {
   return flags[accion] === true;
 }
 
-/** Objeto público solicitado en FASE 2: `export const permisos = ...` */
+/** Objeto pÃºblico solicitado en FASE 2: `export const permisos = ...` */
 export const permisos = Object.freeze({
   CATALOGO_MODULOS,
   MODULOS_MAP,

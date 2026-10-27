@@ -2,6 +2,112 @@
 
 > **Mantener actualizado al finalizar cada sesión de código** (ver `.clinerules`).
 
+## Sesión 10/06/2026 (10): ECC (Everything Claude Code) — catálogo de skills evaluado para Cline (sin instalar)
+
+> Tarea del usuario: usar la skill `find-skills` para explorar el repo ECC y **identificar**
+> (no instalar) las skills de React/JS/frontend/debugging/testing/code review/seguridad,
+> evaluando compatibilidad con Cline. Resultado: informe, **cero instalaciones**.
+
+### Contexto de la evaluación
+
+- Repo ECC real: **`github.com/affaan-m/ECC`** (antes `affanshahid/everything-claude-code`;
+  este último devuelve *repository not found*). El paquete en skills.sh es **`affaan-m/ecc`**:
+  **327 skills**, ~1.3M installs totales.
+- El repo tiene **3 proyecciones** de skills: `skills/` (canónica, 311 SKILL.md),
+  `.agents/skills/` (Codex, 48) y `.cursor/skills/` (12). skills.sh sirve la canónica.
+- Cline 4.1.25 escanea (confirmado en `dist/extension.js`, fn `Zbn`):
+  `.clinerules/skills/`, `.cline/skills/`, `.claude/skills/`, `.agents/skills/` (proyecto)
+  + `~/.cline/skills/`, `~/.agents/skills/` (global). Ya instalados: `ecc-guide`, `find-skills`.
+- `skills-lock.json`: el CLI `npx skills` escribe en `~/.agents/skills` y crea enlaces en el
+  dir del agente; Cline lee ese path ⇒ **instalar con `-a cline` funciona**.
+
+### Criterio de compatibilidad aplicado
+
+Una skill es **compatible con Cline** si su `SKILL.md`:
+1. tiene frontmatter `name` (idéntico al directorio) + `description` (<1024 chars);
+2. no usa variables exclusivas de Claude Code (`$CLAUDE_SESSION_ID`, `$CLAUDE_SKILL_DIR`,
+   `$CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PROJECT_DIR`, `$ARGUMENTS`);
+3. no depende de hooks de Claude Code (`Stop`/`PreToolUse`/`PostToolUse` en `settings.json`);
+4. no exige herramientas inexistentes en Cline (`AskUserQuestion`, `TodoWrite`, `Task`,
+   `spawn_agent` — Cline tiene subagents **solo en CLI/Desktop**, no en la extensión VS Code);
+5. no exige MCP no configurado.
+
+Medición: **0 skills** de `skills/` usan variables Claude-only, salvo 3 que las mencionan
+como *anti-patrón* a evitar (`skill-host-compat`, `ecc-conventions`, `plan-canvas`).
+
+### Hallazgos clave (selección priorizada)
+
+**Alta prioridad (instalables, portables, valor directo para appcda):**
+`vite-patterns` · `e2e-testing` · `error-handling` · `click-path-audit` ·
+`ai-regression-testing` · `security-review` · `verification-loop` · `coding-standards` ·
+`test-collaboration` · `module-regression` · `change-impact` · `contract-first` ·
+`production-audit` · `design-system` · `make-interfaces-feel-better` · `accessibility` ·
+`frontend-a11y` · `frontend-design-direction` · `codebase-onboarding` · `git-workflow` ·
+`agentic-engineering` · `conventional-commit-review`.
+
+**Media (útiles solo si el proyecto migra a React):** `react-patterns` · `react-performance`
+· `react-testing` · `frontend-patterns`. **appcda es Vanilla JS** (`techContext.md`), así que
+su valor hoy es como referencia de patrones, no de código aplicable.
+
+**Descartar (exclusivas de Claude Code / bajo valor para appcda):**
+`delivery-gate` (Stop hook `~/.claude/settings.json` + `~/.claude/scripts/`),
+`gateguard` (PreToolUse hook), `security-scan` (audita solo `.claude/`, requiere `ecc-agentshield`),
+`documentation-lookup` y `search-first` (exigen MCP Context7; no hay MCP en este proyecto),
+`agent-security-hardening` (seDeclara explícitamente **no** para web app), `brownfield-retrospective`
+(reescribe el proceso, no el código), `unified-memory` (depende del Memory Vault de ECC),
+`react-native-patterns`, `motion-*`, `taste`/`video-*` (video), `flask/django/spring/*` (otros stacks).
+
+**Notas:**
+- `everything-claude-code` y `everything-claude-code-conventions` aparecen listados en skills.sh
+  pero **ya no existen** en el repo (artefacto del índice, generado el 2026-03-20). No instalar.
+- `react-performance` es un port de Vercel `react-best-practices` (MIT) — si se quiere la
+  versión canónica: `npx skills add vercel-labs/agent-skills@vercel-react-best-practices` (829K).
+- `skills/` y `.agents/` traen `metadata: origin: ECC`. Cline **ignora** campos extra de
+  frontmatter (solo lee `name`/`description`), por lo que no bloquean la carga.
+
+### Cambios
+
+| Archivo | Cambio |
+|---|---|
+| `.context/activeContext.md` | Esta sesión (exploración, sin instalaciones). |
+| `.context/techContext.md` | Sección nueva "Herramientas de agente (Cline)" con rutas de skills, ECC y comandos de `npx skills`. |
+
+### Estado de git
+
+`M .context/activeContext.md`, `M .context/techContext.md`. **Sin cambios de código de app**,
+sin instalaciones de skills (el repo quedó intacto).
+
+### Validaciones
+
+- `npx skills find` / `ls -g --json` / `add --help` → CLI operativo (Node local v22.16.0 vs
+  engine requerido >=22.20.0 ⇒ warning `EBADENGINE`, **no bloquea**).
+- Clones de inspección en `%TEMP%` (`ecc2`…`ecc5`) eliminados. Queda un directorio vacío
+  `ECC2CC7F-…` cacheado por `npx` con acceso denegado al borrar (ajeno al repo, inocuo).
+- `git status` → solo los 2 `.context` modificados.
+
+### Próximos pasos lógicos
+
+1. **Decidir e instalar** el set de alta prioridad (el usuario pidió explícitamente **no**
+   instalar todavía). Comando sugerido por skill:
+   `npx skills add affaan-m/ecc@<skill> -g -a cline -y`.
+2. Probar el disparo real de `click-path-audit` y `verification-loop` sobre `app.js` y medir
+   si el bucle de 6 fases cubre `npm run build` + `npx playwright test --workers=1`
+   (los comandos reales del proyecto; el skill asume `npm run lint`/`tsc`, que **no existen**).
+3. Si en el futuro se migra `app.js` a React, sumar `react-patterns` / `react-performance` /
+   `react-testing`; hoy son referencia, no código aplicable.
+
+### Advertencias operativas nuevas
+
+- **`npx skills` en Windows**: el output viene con doble codificación (mojibake `Ã³`/`â€”`)
+  en los `.ps1` de npm. No afecta la instalación, pero **no parsees la salida con regex**:
+  leé las páginas de skills.sh o el `SKILL.md` crudo en GitHub para el texto real.
+- **El `skills` CLI deja symlinks** en el dir del agente; en Windows sin developer mode
+  conviene usar `--copy` para evitar symlinks rotos.
+- **`skills` + Cline**: el path que lee Cline es `~/.agents/skills`; instalar con `-a cline`
+  crea el enlace ahí. Verificá con `npx skills ls -g --json` (campo `agents`).
+- No subas `.env`; los tests de login contra Firebase de producción siguen prohibidos.
+
+---
 ## Sesión 10/06/2026 (8): USUARIOS — sincronización simétrica nube-primero, bandera eliminada
 
 > La bandera `VITE_CDA_SYNC_USUARIOS_NUBE` gateaba ALTA/EDICIÓN pero NO lectura ni borrado:
@@ -575,7 +681,7 @@ Commiteado y pusheado en `df84126` "pilotos: dashboard de la vista padre
 
 ## Estado general del proyecto
 
-- Funcional y desplegable (GitHub Pages + Firestore); **19 vistas** y 4 grupos
+- Funcional y desplegable (GitHub Pages + Firestore); **21 vistas** y 4 grupos
   desplegables (Gastos, Personal, Pilotos, Inventario).
 - Migración a módulos ES **en curso y a medias**: viewManager/auth/persistence
   delegan desde los proxies de `app.js`; la mayor parte de la lógica sigue en el
@@ -791,3 +897,137 @@ npx vite build -> exit 0 (560 ms, solo warnings preexistentes de type=module en 
 ### Estado de git
 
 Sin commitear aún.
+## Sesión 26/10/2026 (XSS S1b/S1e — cierre y verificación)
+
+### Archivos tocados
+- `tests/xss-security.spec.js` (nuevo): pruebas de regresión XSS que invocan las funciones reales `verCompetencia()` (S1b) y `listarMovimientosInventario()` (S1e) con datos aislados (mock único de `getTodos` según store y `obtenerPorId`), verificando DOM real.
+- `app.js`: sin cambios nuevos en esta sesión (las correcciones S1b/S1e ya estaban aplicadas).
+- `.context/activeContext.md`: esta entrada.
+
+### Estado S1b / S1e
+- S1b (`verCompetencia`): confirmado en código real; personal se crea con `createElement` y nombre por `textContent`. Prueba real pasó.
+- S1e (`listarMovimientosInventario`): confirmado en código real; `talleText` escapado al construir HTML. Prueba real pasó.
+
+### Validaciones
+- `node --check tests/menu.spec.js` → exit 0.
+- `node --check tests/xss-security.spec.js` → exit 0.
+- `npx playwright test tests/xss-security.spec.js --workers=1` → 2 passed.
+- `npx playwright test tests/menu.spec.js --workers=1` → 9 passed / 1 failed (Auditoría ACTC fetches, preexistente, no modificado).
+- `npx vite build` → exit 0.
+
+### Comportamientos XSS comprobados
+- S1b: nombre de personal `<img src=x onerror=alert(1)>` se renderiza como texto en `#ver-comp-staff`; 0 nodos `img`/`script`; 1 `span.tag`; sin diálogos ni pageerrors.
+- S1e: talle `<script>alert(1)</script>` se renderiza como texto en `#movimientos-list`; 0 nodos `img`/`script`; nombre legítimo del artículo sigue visible; sin diálogos ni pageerrors.
+
+### Errores pendientes
+- Test de Auditoría ACTC falla por conteo de fetches (causa no confirmada). No se tocó el test.
+
+### git diff --stat
+- `app.js` (correcciones S1b/S1e previas), `tests/xss-security.spec.js` (nuevo), `.context/activeContext.md`.
+- No se modificaron Serper, Firestore Rules, sincronización ni persistencia. No se borró `tests/menu.spec.js.recovery-backup`.
+## Fase 2 de auditoría (limpieza acotada)
+
+- Eliminados módulos huérfanos `src/views/dashboard.js` y `src/views/login.js` (sin referencias directas/indirectas; su funcionalidad ya está cubierta por `src/views/index.js`).
+- Duplicación de impresión: se dejó documentada; los dos bloques usan clases de limpieza distintas (`imprimiendo-estadisticas` vs `imprimiendo-personal` + `stylePagina`), por lo que no se extrajo helper para no alterar comportamiento.
+- Documentación corregida: conteo de vistas 19 → 21; `permisosUtil.js` raíz marcado como ya eliminado; `src/views/` ahora solo `index.js`; `inscripciones` documentado como en construcción.
+- Validaciones: `node --check` OK, `npx vite build` OK, `npx playwright test tests/xss-security.spec.js --workers=1` 2/2 OK, `git diff --check` OK.
+## Etapa 1: depuración controlada (archivos/código sin uso) - 26/10/2026
+
+### Cambios aplicados (seguros)
+- src/core/store.js: eliminada función exportada sin consumidores useStore().
+- src/core/router.js: eliminada función exportada sin consumidores getRegisteredViews() y su entrada en el default export.
+- src/services/authCredentials.js: DOMINIO_AUTH_POR_DEFECTO y DOMINIO_AUTH_ACTIVO dejaron de ser export (const internas).
+- src/services/viewManager.js: crearMenuItemEl y crearGrupoMenu dejaron de ser export (siguen internas/expuestas vía viewManager).
+- src/utils/permisosUtil.js: ACCIONES_VALIDAS, ROL_ADMIN, MODULOS_SOLO_LECTURA, construirPermisosAdmin y construirPresetRol dejaron de ser export.
+- src/views/index.js: eliminada constante exportada sin consumidores VIEW_IDS_LIST.
+
+### Candidatos descartados/pendientes
+- No se eliminaron módulos src/* (todos tienen referencias directas o indirectas).
+- No se tocaron app.js, db.js, persistencia, auth, permisos de negocio, migraciones, Serper, impresión, formularios ni vistas.
+- Se conservaron elementos con consumidores o exposición dinámica (esAdminAncla, STORES_NO_SYNC, VIEWS, GRUPOS_MENU, etc.).
+- Temporales, backups, logs y resultados previos se dejaron intactos.
+
+### Validaciones
+- node --check para los 6 archivos modificados: exit 0.
+- npx vite build: exit 0.
+- npx playwright test tests/xss-security.spec.js --workers=1: 2 passed.
+- git diff --check: OK.
+
+### Estado de git
+- Cambios sin commit en los 6 archivos src modificados, más cambios preexistentes.
+- No se realizaron commits.
+## Fase A/B — Revisión etapa 1 y depuración de duplicaciones (26/10/2026)
+
+### Fase A: revisión de etapa 1
+- Revisados `src/core/store.js`, `src/core/router.js`, `src/views/index.js`, `src/services/authCredentials.js`, `src/services/viewManager.js`, `src/utils/permisosUtil.js`.
+- No se encontraron consumidores directos/indirectos/dinámicos de `useStore()`, `getRegisteredViews()` ni `VIEW_IDS_LIST`.
+- Las constantes/funciones que dejaron de exportarse siguen disponibles internamente y mediante los objetos públicos correspondientes.
+- No se detectaron regresiones atribuibles a la etapa 1.
+- La documentación de vistas (21 + login) es coherente con `CATALOGO_MODULOS` actual.
+
+### Fase B: duplicaciones corregidas
+- `app.js`: se extrajo `calcularStockArticulo(art, articuloTalles)` y se usó en `contarArticulosSinStock`, `contarArticulosBajoStock` y la exportación CSV de artículos.
+- `app.js`: se extrajo `marcarDetallesModificados()` y se usó en 4 puntos de edición de detalles de gastos.
+- Zonas excluidas respetadas (auth, permisos, Firebase/persistencia, migraciones, Serper, impresión, formularios, vistas, inscripciones).
+- Candidatos pendientes: hash de contraseña duplicado en `db.js` (zona excluida); `runtime()` duplicado en servicios (riesgo bajo, no unificado); bloques de invalidación de caché con contextos distintos; `adjuntosTemporales['modal']` repetido (no demostrada equivalencia segura); patrones de modal/paginación en `app.js` (riesgo de efectos secundarios).
+
+### Validaciones
+- `node --check app.js` → exit 0.
+- `npx vite build` → exit 0.
+- `npx playwright test tests/xss-security.spec.js --workers=1` → 2 passed.
+- `git diff --check` → exit 0 (sin warnings tras normalizar CRLF de app.js).
+- `npx playwright test tests/menu.spec.js --workers=1` → 9 passed / 1 failed (Auditoría ACTC, conteo `__CDA_FETCHES__` 1 vs 2; fallo preexistente, no relacionado).
+
+### Estado de git
+- Sin commits.
+- Cambios sin commit en app.js y .context/activeContext.md, más cambios preexistentes.
+## Etapa 3 — Auditoría y eliminación controlada de código muerto en app.js (26/10/2026)
+
+### Eliminado
+- `app.js`: función proxy sin consumidores `_ejecutarSwitchView(viewId)` (4 líneas).
+- `app.js`: constante sin uso `TASA_SAC_MENSUALIZADO` (1 línea).
+- `app.js`: variable sin uso `alojamientosFiltrosInicializados` (1 línea).
+
+### Evidencia
+- Búsqueda global por identificador en `app.js`, `db.js`, `index.html`, `src/` y `tests/` (incluidos handlers inline, strings y referencias dinámicas): 0 referencias para cada elemento eliminado.
+- `mapearEmailAUsuario` y demás funciones de autenticación se conservaron por pertenecer a zona excluida.
+
+### Conservado
+- Constantes `TASA_PARTICIPACION_ACA` y `TASA_CONT_PATRONALES` (tienen consumidores).
+- Resto de proxies `_...` (tienen referencias).
+- Variables `alojamientosCache` y `alojamientosCargados` (tienen consumidores).
+- Código de auth, permisos, Firebase/persistencia, migraciones, Serper, importación/exportación, impresión, formularios, vistas, inscripciones y helpers de etapas anteriores.
+
+### Validaciones
+- `node --check app.js` → exit 0.
+- `npx vite build` → exit 0.
+- `npx playwright test tests/xss-security.spec.js tests/stage2-regression.spec.js --workers=1` → 4 passed.
+- `npx playwright test tests/menu.spec.js --workers=1` → 9 passed / 1 failed (Auditoría ACTC preexistente).
+- `git diff --check` → exit 0.
+
+### Estado de git
+- Sin commits.
+- Cambios sin commit en `app.js` y `.context/activeContext.md`, más cambios preexistentes.
+## Etapa 4 — Auditoría conservadora de db.js (26/10/2026)
+
+### Verificación previa
+- `_ejecutarSwitchView` no tiene referencias dinámicas, atributos HTML, callbacks, strings construidos ni registros de módulos. Se mantiene eliminado.
+
+### Eliminado
+- `db.js`: función sin consumidores `normalizarClaveStore(storeName, valor)` (5 líneas).
+
+### Conservado (zona excluida o falta de evidencia)
+- `_syncPendiente` (variable de sincronización, zona excluida).
+- `deleteApp` (variable de Firebase Auth, zona excluida).
+- Duplicación de hash de contraseña en `db.js` (autenticación/hashes, zona excluida).
+- Funciones de migración, persistencia, Firebase y sincronización no se tocaron.
+
+### Validaciones
+- `node --check db.js` → exit 0.
+- `npx vite build` → exit 0.
+- `npx playwright test tests/xss-security.spec.js tests/stage2-regression.spec.js --workers=1` → 4 passed.
+- `git diff --check` → exit 0.
+
+### Estado de git
+- Sin commits.
+- Cambios sin commit en `db.js` y `.context/activeContext.md`, más cambios preexistentes.

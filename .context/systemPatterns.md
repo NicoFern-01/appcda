@@ -4,7 +4,7 @@
 
 ```
 appcda/
-├── index.html          # 19 vistas estáticas + login (markup dueño del DOM)
+├── index.html          # 21 vistas estáticas + login (20 implementadas; inscripciones en construcción) (markup dueño del DOM)
 ├── app.js              # monolito legacy ~11.340 líneas: UI, vistas, menú, gráficos
 ├── db.js               # legacy ~1.460 líneas: IndexedDB, hash, puentes Firebase
 ├── styles.css          # ~2.956 líneas, variables CSS, responsive
@@ -22,7 +22,7 @@ appcda/
 │   │   ├── schemaValidator.js      # validación de registros
 │   │   └── authCredentials.js      # ADMINS_ANCLA
 │   ├── utils/permisosUtil.js       # CATÁLOGO_MODULOS, roles, verificarPermiso
-│   └── views/                      # adaptadores (login, dashboard, index)
+│   └── views/                      # adaptador (index.js)
 ├── tests/app.spec.js   # E2E Playwright (login navega + regresión XSS)
 ├── tests/menu.spec.js  # E2E sin credenciales: submenús, layout del menú, Penalidades
 ├── firestore.rules     # única defensa real de escritura

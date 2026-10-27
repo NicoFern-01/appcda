@@ -73,7 +73,7 @@ export function renderizarMenuLateral(usuario) {
     }
 }
 
-export function crearMenuItemEl(modulo, esSubmenu) {
+function crearMenuItemEl(modulo, esSubmenu) {
     const item = document.createElement('div');
     item.className = esSubmenu ? 'menu-item submenu-item' : 'menu-item';
     item.dataset.view = modulo.id;
@@ -88,7 +88,7 @@ export function crearMenuItemEl(modulo, esSubmenu) {
     return item;
 }
 
-export function crearGrupoMenu(grupo, moduloPadre, hijosVisibles, padreVisible) {
+function crearGrupoMenu(grupo, moduloPadre, hijosVisibles, padreVisible) {
     const li = document.createElement('li');
 
     const padre = document.createElement('div');

@@ -1460,12 +1460,6 @@ function clavePrimariaStore(storeName) {
     return storeName === 'pilotos' ? 'dni' : 'id';
 }
 
-// Normaliza la clave para comparaciones y doc IDs de Firestore.
-function normalizarClaveStore(storeName, valor) {
-    if (storeName === 'pilotos') return String(valor ?? '').trim();
-    return Number(valor);
-}
-
 // Validador interceptor simple (A-5): evita persistir objetos corruptos en IndexedDB/Firestore.
 // - Problemas GRAVES (no es objeto / falta clave primaria / funciones / NaN / circular) abortan la escritura.
 function validarRegistro(storeName, item) {

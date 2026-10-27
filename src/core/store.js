@@ -25,11 +25,6 @@ export const store = {
   },
 };
 
-/** Devuelve el objeto `store` (mismo singleton a lo largo de la app). */
-export function useStore() {
-  return store;
-}
-
 /**
  * Sincroniza `store.currentUser` desde la sesión global que gestiona app.js.
  * Función segura: no crea ni cierra sesión; solo refleja el estado actual.
