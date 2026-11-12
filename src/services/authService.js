@@ -496,6 +496,27 @@ async function intentarMigrarCuentaLocal(email, username, password, rt, errorEl)
 // ---------------- Login principal: Firebase Auth + perfil ----------------
 export async function handleLogin(event) {
   event.preventDefault();
+  
+  // PRIMER PASO: Limpiar config Firebase cacheada con authDomain invalido.
+  // Esto previene errors silenciosos como auth/invalid-api-key que suceden cuando
+  // localStorage tiene un cache viejo con authDomain = hostname de GitHub Pages.
+  // Sin esto, el login falla sin mostrar ningun error visible al usuario.
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const crude = window.localStorage.getItem('firebase_config');
+      if (crude) {
+        let config = null;
+        try { config = JSON.parse(crude); } catch (e) {}
+        if (config && config.authDomain && config.authDomain.includes('github.io')) {
+          console.warn('[authService] Removiendo firebase_config cacheado con authDomain GitHub Pages');
+          try { window.localStorage.removeItem('firebase_config'); } catch (e) {}
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[authService] Error al limpiar config Firebase cacheada:', e);
+  }
+  
   const usernameInput = document.getElementById('login-username').value.trim();
   const passwordInput = document.getElementById('login-password').value;
   const errorEl = document.getElementById('login-error');

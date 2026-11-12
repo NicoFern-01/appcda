@@ -13499,3 +13499,365 @@ async function eliminarAlojamiento(id) {
         actualizarFiltrosAlojamientos();
     }
 }
+
+// ==================== INSCIPCIONES DE KARTING ====================
+// Módulo Inscripciones - Fase 1 completada
+// ====================
+
+// Estado temporal para listado/paginación
+let inscripcionesCache = [];
+let inscripcionesPaginaActual = 1;
+const inscripcionesPorPagina = 20;
+
+async function obtenerCompetencias() {
+    try { return await getTodos('competencias'); }
+    catch (e) { console.warn('[inscripciones] no se pudo leer las competencias:', e?.message || e); return []; }
+}
+
+async function obtenerCategorias() {
+    try { return await getTodos('categorias'); }
+    catch (e) { console.warn('[inscripciones] no se pudo leer las categorías:', e?.message || e); return []; }
+}
+
+function categoriasParaCompetencia(competenciaId, todasLasCategorias) {
+    const competencia = todasLasCategorias.find(c => c.id === competenciaId);
+    if (!competencia || !competencia.categoriasPermitidas) return [];
+    const ids = Array.isArray(competencia.categoriasPermitidas)
+        ? competencia.categoriasPermitidas.map(String)
+        : [String(competencia.categoriasPermitidas)];
+    return todasLasCategorias.filter(c => ids.includes(String(c.id)));
+}
+
+async function obtenerListaPilotos() {
+    try {
+        const pilotos = await getTodos('pilotos');
+        return pilotos.map(p => ({ dni: String(p.dni || ''), nombre: `${p.nombre || ''} ${p.apellido || ''}`.trim() }));
+    } catch (e) {
+        console.warn('[inscripciones] no se pudo leer el padrón:', e?.message || e);
+        return [];
+    }
+}
+
+async function listarInscripciones() {
+    const tbody = document.getElementById('inscripciones-tbody');
+    if (!tbody) return;
+    const competenciaSel = document.getElementById('filtro-competencia');
+    const categoriaSel = document.getElementById('filtro-categoria');
+    const busquedaInput = document.getElementById('buscar-inscripcion');
+    const competenciaIdFiltro = competenciaSel ? competenciaSel.value : '';
+    const categoriaIdFiltro = categoriaSel ? categoriaSel.value : '';
+    const busqueda = busquedaInput ? busquedaInput.value.trim().toLowerCase() : '';
+
+    let todos = [];
+    try {
+        todos = await getTodos('inscripciones');
+        todos = todos.filter(i => i.estadoInscripcion !== 'cancelada');
+    } catch (e) {
+        console.warn('[inscripciones] no se pudo leer el store local:', e?.message || e);
+        todos = [];
+    }
+
+    const { competencias, categorias } = await sincronizarSelectoresFormulario();
+    const competenciaMap = new Map(competencias.map(c => [String(c.id), c]));
+    const categoriaMap = new Map(categorias.map(c => [String(c.id), c]));
+
+    const filtrados = todos.filter(i => {
+        if (competenciaIdFiltro && i.competenciaId !== competenciaIdFiltro) return false;
+        if (categoriaIdFiltro && i.categoriaId !== categoriaIdFiltro) return false;
+        if (!busqueda) return true;
+        const linea = `${i.pilotoDni || ''} ${i.pilotoNombre || ''} ${i.pilotoApellido || ''} ${i.numeroKart || ''} ${i.concurrente || ''}`.toLowerCase();
+        return linea.includes(busqueda);
+    });
+
+
+function renderInscripcionPagina() {
+    const tbody = document.getElementById('inscripciones-tbody');
+    if (!tbody) return;
+    const corte = inscripcionesCache.slice((inscripcionesPaginaActual - 1) * inscripcionesPorPagina, inscripcionesPaginaActual * inscripcionesPorPagina);
+
+    if (corte.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:2rem;">No hay inscripciones coincidentes.</td></tr>';
+        document.getElementById('inscripciones-contador').textContent = '';
+        return;
+    }
+
+    tbody.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    corte.forEach(p => {
+        const piloto = p.pilotoNombre || p.pilotoApellido
+            ? `${p.pilotoNombre || ''} ${p.pilotoApellido || ''}`.trim()
+            : 'Piloto sin nombre';
+        const competencia = 'Cargando...';
+        const categoria = 'Cargando...';
+        const numeroKart = p.numeroKart || '-';
+        const estado = p.estadoInscripcion || 'pendiente';
+        const estadoClase = estado === 'cancelada' ? 'badge badge-danger' : 'badge badge-warning';
+        const dniEsc = escapeHtml(String(p.pilotoDni || ''));
+        const acciones = `<td class="editor-only" style="text-align:right;white-space:nowrap;"><button type="button" class="btn btn-secondary btn-sm" onclick="editarInscripcion('${escapeHtml(p.id)}')" title="Editar inscripción"><i class="fa-solid fa-pen-to-square"></i></button> <button type="button" class="btn btn-secondary btn-sm" onclick="eliminarInscripcion('${escapeHtml(p.id)}')" title="Cancelar inscripción"><i class="fa-solid fa-trash"></i></button></td>`;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${escapeHtml(piloto)}</td><td>${dniEsc}</td><td>${escapeHtml(categoria)}</td><td>${escapeHtml(numeroKart)}</td><td>${escapeHtml(competencia)}</td><td class="text-center"><span class="${estadoClase}">${escapeHtml(estado)}</span></td>${acciones}`;
+        fragment.appendChild(tr);
+    });
+    tbody.appendChild(fragment);
+    document.getElementById('inscripciones-contador').textContent = `Mostrando ${Math.min(inscripcionesPaginaActual * inscripcionesPorPagina, inscripcionesCache.length)} de ${inscripcionesCache.length} inscripciones`;
+}
+
+function renderInscripcionPaginador(total, totalPaginas) {
+    const cont = document.getElementById('inscripciones-pagination');
+    if (!cont) return;
+    const yaPaginado = Number.isInteger(totalPaginas) && totalPaginas > 0;
+    const paginas = yaPaginado ? totalPaginas : Math.max(1, Math.ceil(total / inscripcionesPorPagina));
+    cont.innerHTML = `
+        <span id="inscripciones-contador" style="color:var(--text-secondary);">Mostrando ${Math.min(inscripcionesPaginaActual * inscripcionesPorPagina, inscripcionesCache.length)} de ${inscripcionesCache.length} inscripciones</span>
+        <div style="display:flex;gap:0.5rem;">
+            <button type="button" class="btn btn-secondary" id="inscripciones-anterior" onclick="cambiarPaginaInscripciones(-1)" ${inscripcionesPaginaActual <= 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i> Anterior</button>
+            <button type="button" class="btn btn-secondary" id="inscripciones-siguiente" onclick="cambiarPaginaInscripciones(1)" ${inscripcionesPaginaActual >= paginas ? 'disabled' : ''}>Siguiente <i class="fa-solid fa-chevron-right"></i></button>
+        </div>
+    `;
+}
+
+function cambiarPaginaInscripciones(direccion) {
+    const totalPaginas = Math.max(1, Math.ceil(inscripcionesCache.length / inscripcionesPorPagina));
+    const nueva = inscripcionesPaginaActual + direccion;
+    if (nueva < 1 || nueva > totalPaginas) return;
+    inscripcionesPaginaActual = nueva;
+    renderInscripcionPagina();
+    renderInscripcionPaginador(inscripcionesCache.length, totalPaginas);
+}
+    const totalPaginas = Math.max(1, Math.ceil(filtrados.length / inscripcionesPorPagina));
+    if (inscripcionesPaginaActual > totalPaginas) inscripcionesPaginaActual = totalPaginas;
+    inscripcionesCache = filtrados;
+
+    renderInscripcionPagina();
+
+function openModalInscripcion() {
+    if (!verificarPermiso(currentUser, 'inscripciones', 'crear')) return;
+    document.getElementById('inscripcion-btn-guardar').textContent = '<i class="fa-solid fa-save"></i> Guardar';
+    document.getElementById('form-inscripcion').reset();
+    document.getElementById('inscripcion-dni').value = '';
+    document.getElementById('inscripcion-competencia').value = '';
+    document.getElementById('inscripcion-categoria').value = '';
+    document.getElementById('inscripcion-numero-kart').value = '';
+    document.getElementById('inscripcion-concurrente').value = '';
+    document.getElementById('inscripcion-observaciones').value = '';
+    document.getElementById('inscripcion-btn-guardar').textContent = '<i class="fa-solid fa-save"></i> Guardar';
+    const modal = document.getElementById('modal-inscripcion');
+    if (modal) {
+        modal.style.display = 'block';
+        poblarSelectoresInscripcion();
+        poblarDatalistPilotos();
+    }
+}
+
+async function poblarSelectoresInscripcion() {
+    const { competencias, categorias } = await sincronizarSelectoresFormulario();
+    const categoriaSel = document.getElementById('inscripcion-categoria');
+    const competenciaSel = document.getElementById('inscripcion-competencia');
+    if (competenciaSel) {
+        competenciaSel.addEventListener('change', async () => {
+            const id = competenciaSel.value;
+            const filtradas = categorias.filter(c => {
+                if (!id) return true;
+                const competencia = competencias.find(c2 => String(c2.id) === String(id));
+                if (!competencia || !competencia.categoriasPermitidas) return true;
+                return String(competencia.categoriasPermitidas).includes(String(c.id));
+            });
+            categoriaSel.innerHTML = '<option value="">Seleccionar categoría</option>' +
+                filtradas.map(c => `<option value="${escapeHtml(String(c.id))}">${escapeHtml(c.nombre || 'Sin nombre')}</option>`).join('');
+        });
+    }
+}
+
+async function poblarDatalistPilotos() {
+    const datalist = document.getElementById('datalist-pilotos');
+    if (!datalist) return;
+    const pilotos = await obtenerListaPilotos();
+    datalist.innerHTML = pilotos.map(p =>
+        `<option value="${escapeHtml(p.dni)} - ${escapeHtml(p.nombre)}"></option>`
+    ).join('');
+}
+
+function limpiarFormularioInscripcion() {
+    document.getElementById('form-inscripcion').reset();
+
+async function editarInscripcion(id) {
+    if (!verificarPermiso(currentUser, 'inscripciones', 'editar')) return;
+    const inscripcion = await obtenerPorId('inscripciones', id);
+    if (!inscripcion) {
+        mostrarToast('Inscripción no encontrada.', 'error');
+        return;
+    }
+    document.getElementById('inscripcion-dni').value = inscripcion.pilotoDni || '';
+    document.getElementById('inscripcion-numero-kart').value = inscripcion.numeroKart || '';
+    document.getElementById('inscripcion-concurrente').value = inscripcion.concurrente || '';
+    document.getElementById('inscripcion-observaciones').value = inscripcion.observaciones || '';
+    const competenciaSel = document.getElementById('inscripcion-competencia');
+    const categoriaSel = document.getElementById('inscripcion-categoria');
+    if (competenciaSel) competenciaSel.value = inscripcion.competenciaId || '';
+    if (categoriaSel) categoriaSel.value = inscripcion.categoriaId || '';
+    const titulo = document.querySelector('.form-title');
+    if (titulo) titulo.innerHTML = '<i class="fa-solid fa-id-card"></i> Editando Inscripción';
+    document.getElementById('inscripcion-btn-guardar').textContent = '<i class="fa-solid fa-check"></i> Actualizar';
+    const modal = document.getElementById('modal-inscripcion');
+    if (modal) {
+        modal.dataset.inscripcionId = id;
+        modal.style.display = 'block';
+        poblarSelectoresInscripcion();
+        poblarDatalistPilotos();
+    }
+}
+
+function nuevoFecha() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+    document.getElementById('inscripcion-dni').value = '';
+    document.getElementById('inscripcion-competencia').value = '';
+    document.getElementById('inscripcion-categoria').value = '';
+    document.getElementById('inscripcion-numero-kart').value = '';
+    document.getElementById('inscripcion-concurrente').value = '';
+    document.getElementById('inscripcion-observaciones').value = '';
+    document.getElementById('inscripcion-btn-guardar').textContent = '<i class="fa-solid fa-save"></i> Guardar';
+    limpiarModalInscripcion();
+}
+
+function cerrarModalInscripcion() {
+    const modal = document.getElementById('modal-inscripcion');
+
+async function guardarInscripcion(e) {
+    e.preventDefault();
+    if (!verificarPermiso(currentUser, 'inscripciones', 'crear') && !verificarPermiso(currentUser, 'inscripciones', 'editar')) return;
+
+    const competenciaSel = document.getElementById('inscripcion-competencia');
+    const categoriaSel = document.getElementById('inscripcion-categoria');
+    const dniInput = document.getElementById('inscripcion-dni');
+    const numeroKartInput = document.getElementById('inscripcion-numero-kart');
+    const concurrenteInput = document.getElementById('inscripcion-concurrente');
+    const observacionesInput = document.getElementById('inscripcion-observaciones');
+
+    const competenciaId = competenciaSel ? competenciaSel.value : '';
+    const categoriaId = categoriaSel ? categoriaSel.value : '';
+    const pilotoDni = dniInput ? dniInput.value.trim() : '';
+    const numeroKart = numeroKartInput ? numeroKartInput.value.trim() : '';
+    const concurrente = concurrenteInput ? concurrenteInput.value.trim() : '';
+    const observaciones = observacionesInput ? observacionesInput.value.trim() : '';
+
+    if (!competenciaId) { mostrarToast('Seleccione una competencia.', 'error'); return; }
+    if (!categoriaId) { mostrarToast('Seleccione una categoría.', 'error'); return; }
+    if (!pilotoDni) { mostrarToast('Ingrese el DNI del piloto.', 'error'); return; }
+
+    const { competencias, categorias } = await sincronizarSelectoresFormulario();
+    const competenciaExiste = competencias.some(c => String(c.id) === String(competenciaId));
+    const categoriaExiste = categorias.some(c => String(c.id) === String(categoriaId));
+    if (!competenciaExiste) { mostrarToast('La competencia seleccionada no existe.', 'error'); return; }
+    if (!categoriaExiste) { mostrarToast('La categoría seleccionada no existe.', 'error'); return; }
+
+    const pilotos = await obtenerListaPilotos();
+    const pilotoExiste = pilotos.some(p => String(p.dni) === String(pilotoDni));
+    if (!pilotoExiste) { mostrarToast('El DNI ingresado no pertenece a ningún piloto registrado en el padrón.', 'error'); return; }
+
+    const modal = document.getElementById('modal-inscripcion');
+    const esEdicion = modal && modal.dataset.inscripcionId;
+    const id = esEdicion ? modal.dataset.inscripcionId : undefined;
+
+    const inscripcion = {
+        id,
+        competenciaId,
+        categoriaId,
+        pilotoDni,
+        numeroKart: numeroKart || null,
+        concurrente,
+        observaciones,
+        pilotoNombre: '',
+        pilotoApellido: '',
+        estadoInscripcion: esEdicion ? (await obtenerPorId('inscripciones', id))?.estadoInscripcion || 'pendiente' : 'pendiente',
+        fechaInscripcion: esEdicion ? (await obtenerPorId('inscripciones', id))?.fechaInscripcion || nuevoFecha() : nuevoFecha(),
+        createdAt: esEdicion ? (await obtenerPorId('inscripciones', id))?.createdAt || nuevoFecha() : nuevoFecha(),
+        updatedAt: nuevoFecha(),
+    };
+
+    const piloto = pilotos.find(p => String(p.dni) === String(pilotoDni));
+    if (piloto) {
+        inscripcion.pilotoNombre = piloto.nombre || '';
+        inscripcion.pilotoApellido = piloto.apellido || '';
+    }
+
+    if (numeroKart) {
+        const duplicados = inscripcionesCache.filter(i =>
+            i.numeroKart &&
+            String(i.numeroKart) === String(numeroKart) &&
+            String(i.competenciaId) === String(competenciaId) &&
+            String(i.categoriaId) === String(categoriaId) &&
+            (!esEdicion || String(i.id) !== String(id))
+        );
+        if (duplicados.length > 0) {
+            if (confirm('Este número de kart ya está asignado a otra inscripción en esta categoría. ¿Continuar?')) {
+                mostrarToast('ADVERTENCIA: ' + escapeHtml(numeroKart) + ' ya está registrado en esta categoría.', 'warning');
+            }
+        }
+    }
+
+    try {
+        const result = await guardar('inscripciones', inscripcion);
+        if (!result || !result.ok) {
+            mostrarToast('Error al guardar la inscripción: ' + (result.motivo || 'Error desconocido'), 'error');
+            return;
+        }
+        mostrarToast('Inscripción guardada correctamente.', 'success');
+        cerrarModalInscripcion();
+        await listarInscripciones();
+    } catch (err) {
+        mostrarToast('Error inesperado al guardar: ' + (err?.message || err), 'error');
+
+async function eliminarInscripcion(id) {
+    if (!verificarPermiso(currentUser, 'inscripciones', 'eliminar')) return;
+    const inscripcion = await obtenerPorId('inscripciones', id);
+    if (!inscripcion) { mostrarToast('Inscripción no encontrada.', 'error'); return; }
+    const confirmado = confirm('¿Cancelar inscripción de ' + (inscripcion.pilotoApellido || '') + ' ' + (inscripcion.pilotoNombre || '') + '? Se marcará como "cancelada".');
+    if (!confirmado) return;
+    await guardar('inscripciones', { ...inscripcion, estadoInscripcion: 'cancelada', updatedAt: nuevoFecha() })
+        .then(() => { mostrarToast('Inscripción cancelada.', 'success'); listarInscripciones(); })
+        .catch(() => mostrarToast('Error al cancelar.', 'error'));
+}
+
+if (typeof window !== 'undefined') {
+    window.listarInscripciones = listarInscripciones;
+    window.renderInscripcionPagina = renderInscripcionPagina;
+    window.renderInscripcionPaginador = renderInscripcionPaginador;
+    window.cambiarPaginaInscripciones = cambiarPaginaInscripciones;
+    window.openModalInscripcion = openModalInscripcion;
+    window.poblarSelectoresInscripcion = poblarSelectoresInscripcion;
+    window.poblarDatalistPilotos = poblarDatalistPilotos;
+    window.limpiarFormularioInscripcion = limpiarFormularioInscripcion;
+    window.cerrarModalInscripcion = cerrarModalInscripcion;
+    window.editarInscripcion = editarInscripcion;
+    window.guardarInscripcion = guardarInscripcion;
+    window.eliminarInscripcion = eliminarInscripcion;
+}
+// ==================== FIN INSCIPCIONES ====================
+    }
+}
+    if (modal) modal.style.display = 'none';
+}
+    renderInscripcionPaginador(filtrados.length, totalPaginas);
+}
+
+async function sincronizarSelectoresFormulario() {
+    const competencias = await obtenerCompetencias();
+    const categorias = await obtenerCategorias();
+    const competenciaSel = document.getElementById('inscripcion-competencia');
+    const categoriaSel = document.getElementById('inscripcion-categoria');
+    const busca = document.getElementById('buscar-inscripcion');
+    if (competenciaSel) {
+        competenciaSel.innerHTML = '<option value="">Seleccionar competencia</option>' +
+            competencias.map(c =>
+                '<option value="' + escapeHtml(String(c.id)) + '">' + escapeHtml(c.nombre || 'Sin nombre') + '</option>'
+            ).join('');
+    }
+    if (busca) {
+        busca.value = '';
+        inscripcionesPaginaActual = 1;
+    }
+    return { competencias, categorias };
+}

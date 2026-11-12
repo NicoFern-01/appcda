@@ -372,7 +372,7 @@ export async function cargarDatosVista(viewId) {
             await invocarGlobal('listarAutorizaciones');
             break;
         case 'inscripciones':
-            // Sub-menú de Pilotos en blanco: se desarrolla en una etapa posterior.
+            await invocarGlobal('listarInscripciones');
             break;
         case 'alojamiento':
             await invocarGlobal('listarAlojamientos');

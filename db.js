@@ -32,7 +32,7 @@ const DB_NAME = 'ControlAutomovilismoDB';
 // IndexedDB". Al subir a V18 el navegador ejecuta OBLIGATORIAMENTE esta
 // actualización (oldVersion 17 < 18) y el guard con .contains() garantiza la
 // creación física del store /autorizaciones/{id}.
-const DB_VERSION = 18;
+const DB_VERSION = 19;
 
 let dbInstance = null;
 
@@ -550,6 +550,11 @@ function openDB() {
             // Tabla de Competencias (Calendario)
             if (!db.objectStoreNames.contains('competencias')) {
                 db.createObjectStore('competencias', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Tabla de Inscripciones de Karting (clave UUID string, sin autoIncrement)
+            if (!db.objectStoreNames.contains('inscripciones')) {
+                db.createObjectStore('inscripciones', { keyPath: 'id' });
             }
 
             // Tabla de Gastos

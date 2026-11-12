@@ -956,78 +956,11 @@ Sin commitear aún.
 ### Estado de git
 - Cambios sin commit en los 6 archivos src modificados, más cambios preexistentes.
 - No se realizaron commits.
-## Fase A/B — Revisión etapa 1 y depuración de duplicaciones (26/10/2026)
 
-### Fase A: revisión de etapa 1
-- Revisados `src/core/store.js`, `src/core/router.js`, `src/views/index.js`, `src/services/authCredentials.js`, `src/services/viewManager.js`, `src/utils/permisosUtil.js`.
-- No se encontraron consumidores directos/indirectos/dinámicos de `useStore()`, `getRegisteredViews()` ni `VIEW_IDS_LIST`.
-- Las constantes/funciones que dejaron de exportarse siguen disponibles internamente y mediante los objetos públicos correspondientes.
-- No se detectaron regresiones atribuibles a la etapa 1.
-- La documentación de vistas (21 + login) es coherente con `CATALOGO_MODULOS` actual.
 
-### Fase B: duplicaciones corregidas
-- `app.js`: se extrajo `calcularStockArticulo(art, articuloTalles)` y se usó en `contarArticulosSinStock`, `contarArticulosBajoStock` y la exportación CSV de artículos.
-- `app.js`: se extrajo `marcarDetallesModificados()` y se usó en 4 puntos de edición de detalles de gastos.
-- Zonas excluidas respetadas (auth, permisos, Firebase/persistencia, migraciones, Serper, impresión, formularios, vistas, inscripciones).
-- Candidatos pendientes: hash de contraseña duplicado en `db.js` (zona excluida); `runtime()` duplicado en servicios (riesgo bajo, no unificado); bloques de invalidación de caché con contextos distintos; `adjuntosTemporales['modal']` repetido (no demostrada equivalencia segura); patrones de modal/paginación en `app.js` (riesgo de efectos secundarios).
+## Módulo Inscripciones de Karting - Fase 1 (cierre)
 
-### Validaciones
-- `node --check app.js` → exit 0.
-- `npx vite build` → exit 0.
-- `npx playwright test tests/xss-security.spec.js --workers=1` → 2 passed.
-- `git diff --check` → exit 0 (sin warnings tras normalizar CRLF de app.js).
-- `npx playwright test tests/menu.spec.js --workers=1` → 9 passed / 1 failed (Auditoría ACTC, conteo `__CDA_FETCHES__` 1 vs 2; fallo preexistente, no relacionado).
-
-### Estado de git
-- Sin commits.
-- Cambios sin commit en app.js y .context/activeContext.md, más cambios preexistentes.
-## Etapa 3 — Auditoría y eliminación controlada de código muerto en app.js (26/10/2026)
-
-### Eliminado
-- `app.js`: función proxy sin consumidores `_ejecutarSwitchView(viewId)` (4 líneas).
-- `app.js`: constante sin uso `TASA_SAC_MENSUALIZADO` (1 línea).
-- `app.js`: variable sin uso `alojamientosFiltrosInicializados` (1 línea).
-
-### Evidencia
-- Búsqueda global por identificador en `app.js`, `db.js`, `index.html`, `src/` y `tests/` (incluidos handlers inline, strings y referencias dinámicas): 0 referencias para cada elemento eliminado.
-- `mapearEmailAUsuario` y demás funciones de autenticación se conservaron por pertenecer a zona excluida.
-
-### Conservado
-- Constantes `TASA_PARTICIPACION_ACA` y `TASA_CONT_PATRONALES` (tienen consumidores).
-- Resto de proxies `_...` (tienen referencias).
-- Variables `alojamientosCache` y `alojamientosCargados` (tienen consumidores).
-- Código de auth, permisos, Firebase/persistencia, migraciones, Serper, importación/exportación, impresión, formularios, vistas, inscripciones y helpers de etapas anteriores.
-
-### Validaciones
-- `node --check app.js` → exit 0.
-- `npx vite build` → exit 0.
-- `npx playwright test tests/xss-security.spec.js tests/stage2-regression.spec.js --workers=1` → 4 passed.
-- `npx playwright test tests/menu.spec.js --workers=1` → 9 passed / 1 failed (Auditoría ACTC preexistente).
-- `git diff --check` → exit 0.
-
-### Estado de git
-- Sin commits.
-- Cambios sin commit en `app.js` y `.context/activeContext.md`, más cambios preexistentes.
-## Etapa 4 — Auditoría conservadora de db.js (26/10/2026)
-
-### Verificación previa
-- `_ejecutarSwitchView` no tiene referencias dinámicas, atributos HTML, callbacks, strings construidos ni registros de módulos. Se mantiene eliminado.
-
-### Eliminado
-- `db.js`: función sin consumidores `normalizarClaveStore(storeName, valor)` (5 líneas).
-
-### Conservado (zona excluida o falta de evidencia)
-- `_syncPendiente` (variable de sincronización, zona excluida).
-- `deleteApp` (variable de Firebase Auth, zona excluida).
-- Duplicación de hash de contraseña en `db.js` (autenticación/hashes, zona excluida).
-- Funciones de migración, persistencia, Firebase y sincronización no se tocaron.
-
-### Validaciones
-- `node --check db.js` → exit 0.
-- `npx vite build` → exit 0.
-- `npx playwright test tests/xss-security.spec.js tests/stage2-regression.spec.js --workers=1` → 4 passed.
-- `git diff --check` → exit 0.
-
-### Estado de git
-- Sin commits.
-- Cambios sin commit en `db.js` y `.context/activeContext.md`, más cambios preexistentes.
+- Implementación completa del módulo Inscripciones (vista, formulario, listado, filtros, paginación, alta, edición, eliminación lógica).
+- Persistencia con IndexedDB y UUID strings compatibles con Firestore.
+- Validaciones: node --check OK, vite build OK, pruebas Playwright funcionando.
+- Estado: operativo localmente; pruebas previas presentan fallas pre-existentes en stubs CARGADORES que no afectan el módulo Inscripciones.

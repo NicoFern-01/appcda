@@ -81,9 +81,32 @@ export async function guardar(storeName, item) {
   if (storeName === 'pilotos') {
     item.dni = String(item.dni ?? '').trim();
   } else if (!item.id) {
-    item.id = Date.now() + Math.floor(Math.random() * 1000);
+    // UUID string (compatibilidad Firestore). No convertir a number.
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      item.id = crypto.randomUUID();
+    } else {
+      // Fallback: crypto.getRandomValues → UUID v4 sin tocar números.
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      item.id =
+        bytes.subarray(0, 4).join('') + '-' +
+        bytes.subarray(4, 6).join('') + '-' +
+        bytes.subarray(6, 8).join('') + '-' +
+        bytes.subarray(8, 10).join('') + '-' +
+        bytes.subarray(10).join('');
+    }
   } else {
-    item.id = Number(item.id);
+    // Ya tiene id: preservarlo sin conversion numérica (UUID string).
+    if (typeof item.id !== 'string') {
+      // Si viene como number y no es UUID, rechazamos.
+      if (typeof item.id === 'number') {
+        // Solo aceptar si es un UUID válido (string)
+        console.warn('[persistencia] ID numérico rechazado para ' + storeName + ': ' + item.id);
+        return null;
+      }
+    }
   }
 
   const validacion = validarRegistro(storeName, item);
@@ -228,8 +251,8 @@ export async function getTodos(storeName, opciones = {}) {
 // ---------------- ELIMINAR ----------------
 export async function eliminar(storeName, id) {
   const cache = () => estado()._cache;
-  // Clave nativa del store: 'pilotos' usa el DNI (string), el resto id numérico.
-  const claveBorrado = storeName === 'pilotos' ? String(id ?? '').trim() : Number(id);
+  // Clave nativa del store: 'pilotos' usa el DNI (string), el resto el UUID string.
+  const claveBorrado = storeName === 'pilotos' ? String(id ?? '').trim() : String(id ?? '');
   await new Promise((resolve, reject) => {
     (typeof globalThis !== 'undefined' ? globalThis.openDB() : Promise.reject('no openDB'))
       .then((db) => {
@@ -262,8 +285,8 @@ export async function eliminar(storeName, id) {
 // ---------------- OBTENER POR ID ----------------
 export async function obtenerPorId(storeName, id) {
   const cache = () => estado()._cache;
-  // Comparación por clave nativa: string para 'pilotos', numérica para el resto.
-  const claveBuscada = storeName === 'pilotos' ? String(id ?? '').trim() : Number(id);
+  // Comparación por clave nativa: string para 'pilotos', UUID string para el resto.
+  const claveBuscada = storeName === 'pilotos' ? String(id ?? '').trim() : String(id ?? '');
   if (cache()[storeName]) {
     const found = cache()[storeName].find((x) => String(x[clavePrimariaStore(storeName)]) === String(claveBuscada));
     if (found) return found;

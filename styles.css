@@ -794,6 +794,31 @@ input:focus, select:focus, textarea:focus {
     flex: 0 0 auto;
 }
 
+.btn-outline {
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-hover);
+    border-radius: 6px;
+    padding: 0.75rem 1.5rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btn-outline:hover {
+    border-color: var(--accent-blue);
+    background: rgba(0, 210, 211, 0.1);
+    color: var(--accent-blue);
+}
+
+.btn-outline:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
+}
+
 .btn-danger {
     background-color: #ff3838;
 }
@@ -3483,3 +3508,132 @@ input[type="file"]:hover {
         box-sizing: border-box;
     }
 }
+
+/* ==================== TARJETAS: MEJORAS DE DISEÑO (ADITIVO) ====================
+   Este bloque SOLO AGREGA tokens y clases modificadoras. No sobrescribe
+   .stat-card, .chart-card, .form-card, .table-card ni .mes-card existentes,
+   por lo tanto no altera el layout de ninguna vista ya publicada.
+
+   Cómo usar: agregá las clases nuevas al HTML de una tarjeta, p. ej.
+     <div class="stat-card card--elevado card--interactivo card--entrada" ...>
+   ============================================================================ */
+
+/* Tokens de tarjeta (sobrescribibles por tema claro/oscuro) */
+:root {
+    --card-radius: 12px;
+    --card-border: 1px solid var(--border-color);
+    --card-shadow: 0 6px 18px -6px rgba(0, 0, 0, 0.30);
+    --card-shadow-hover: 0 16px 36px -10px rgba(0, 0, 0, 0.45);
+    --card-glass-bg: rgba(31, 42, 64, 0.55);
+    --card-glass-border: rgba(255, 255, 255, 0.14);
+    --card-transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    --card-accent-glow: rgba(0, 210, 211, 0.18);
+}
+
+/* Tarjeta elevada: propia de caja, ideal para KPIs del dashboard */
+.card--elevado {
+    box-shadow: var(--card-shadow);
+    border: var(--card-border);
+    border-radius: var(--card-radius);
+}
+.card--elevado:hover {
+    box-shadow: var(--card-shadow-hover);
+    transform: translateY(-4px);
+}
+
+/* Efecto glass (cristal difuminado) para tarjetas destacadas */
+.card--glass {
+    background: var(--card-glass-bg);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: var(--card-glass-border);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+}
+.card--glass:hover {
+    border-color: rgba(255, 255, 255, 0.28);
+    box-shadow: var(--card-shadow-hover);
+}
+
+/* Tarjeta destacada con borde y fondo de acento */
+.card--destacado {
+    border: 1px solid var(--accent-blue);
+    background: linear-gradient(135deg, var(--bg-card), rgba(0, 210, 211, 0.06));
+    border-radius: var(--card-radius);
+}
+.card--destacado:hover {
+    border-color: var(--accent);
+    box-shadow: 0 0 30px var(--card-accent-glow);
+}
+
+/* Animación de entrada suave para las tarjetas del dashboard */
+@keyframes cardEntrar {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.card--entrada {
+    animation: cardEntrar 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* Ícono con anillo (más moderno que el cuadrado lleno). Reemplaza opcionalmente
+   a .stat-icon sin romper el resto de la tarjeta. */
+.stat-icon-anillo {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    font-size: 1.25rem;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    transition: var(--card-transition);
+}
+.stat-icon-anillo:hover {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+    transform: rotate(-6deg) scale(1.05);
+}
+
+/* Badge de estado tipo pílula para usar dentro de las tarjetas */
+.badge-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.18rem 0.65rem;
+    border-radius: 50px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    line-height: 1;
+}
+
+/* Tarjetas interactivas: foco visible para teclado (accesibilidad) */
+.card--interactivo {
+    cursor: pointer;
+}
+.card--interactivo:focus-visible {
+    outline: 3px solid var(--accent-blue);
+    outline-offset: 4px;
+    border-radius: 8px;
+    box-shadow: 0 0 0 4px rgba(0, 210, 211, 0.25);
+}
+
+/* Ajustes responsivos de las nuevas variantes (sin tocar las reglas de 760px existentes) */
+@media (max-width: 760px) {
+    .card--elevado, .card--glass, .card--destacado {
+        transform: none !important;
+    }
+    .card--elevado:hover, .card--glass:hover, .card--destacado:hover {
+        transform: none !important;
+        box-shadow: var(--card-shadow);
+    }
+    .stat-icon-anillo {
+        width: 38px;
+        height: 38px;
+        font-size: 1.1rem;
+    }
+}
+

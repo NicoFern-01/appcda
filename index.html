@@ -121,11 +121,12 @@
                             <option value="11">Noviembre</option>
                             <option value="12">Diciembre</option>
                         </select>
+
                     </div>
                 </header>
 
                 <div class="stats-grid">
-                    <div class="stat-card dashboard-link-card" id="stat-gasto-acumulado-card" role="button" tabindex="0" onclick="scrollToDetalleAcumuladoDashboard()" onkeydown="if(event.key==='Enter' || event.key===' ') scrollToDetalleAcumuladoDashboard();" title="Ir al detalle mes a mes del gasto acumulado" aria-controls="dash-acumulado-card">
+                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" id="stat-gasto-acumulado-card" role="button" tabindex="0" onclick="scrollToDetalleAcumuladoDashboard()" onkeydown="if(event.key==='Enter' || event.key===' ') scrollToDetalleAcumuladoDashboard();" title="Ir al detalle mes a mes del gasto acumulado" aria-controls="dash-acumulado-card">
                         <div class="stat-info">
                             <h3 id="stat-gasto-acumulado-label">Gasto Acumulado Anual</h3>
                             <p id="stat-gasto-acumulado">$0.00</p>
@@ -135,31 +136,31 @@
                             <i class="fa-solid fa-chart-line"></i>
                         </div>
                     </div>
-                    <div class="stat-card dashboard-link-card" role="link" tabindex="0" onclick="navegarDesdeDashboard('gastos')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('gastos')" title="Ir a Control de Gastos">
+                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" role="link" tabindex="0" onclick="navegarDesdeDashboard('gastos')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('gastos')" title="Ir a Control de Gastos">
                         <div class="stat-info">
                             <h3 id="stat-gasto-total-label">Gasto Total Anual</h3>
                             <p id="stat-gasto-total">$0.00</p>
                             <span class="stat-delta" id="stat-gasto-variacion"></span>
                         </div>
-                        <div class="stat-icon">
+                        <div class="stat-icon stat-icon-blue">
                             <i class="fa-solid fa-dollar-sign"></i>
                         </div>
                     </div>
-                    <div class="stat-card dashboard-link-card" role="link" tabindex="0" onclick="navegarDesdeDashboard('competencias')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('competencias')" title="Ir al Calendario de Competencias">
+                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" role="link" tabindex="0" onclick="navegarDesdeDashboard('competencias')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('competencias')" title="Ir al Calendario de Competencias">
                         <div class="stat-info">
                             <h3>Competencias</h3>
                             <p id="stat-competencias-count">0</p>
                         </div>
-                        <div class="stat-icon">
+                        <div class="stat-icon stat-icon-green">
                             <i class="fa-solid fa-trophy"></i>
                         </div>
                     </div>
-                    <div class="stat-card dashboard-link-card" role="link" tabindex="0" onclick="navegarDesdeDashboard('staff')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('staff')" title="Ir al Staff">
+                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" role="link" tabindex="0" onclick="navegarDesdeDashboard('staff')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('staff')" title="Ir al Staff">
                         <div class="stat-info">
                             <h3>Staff Registrado</h3>
                             <p id="stat-staff-count">0</p>
                         </div>
-                        <div class="stat-icon">
+                        <div class="stat-icon stat-icon-blue">
                             <i class="fa-solid fa-user-gear"></i>
                         </div>
                     </div>
@@ -1359,16 +1360,111 @@
                 </div>
             </section>
 
-            <!-- VIEW: INSCRIPCIONES (en blanco - se desarrolla en etapa posterior) -->
+            <!-- VIEW: INSCRIPCIONES -->
             <section id="view-inscripciones" class="view">
                 <header>
                     <div>
-                        <h1 class="page-title">Inscripciones</h1>
-                        <p class="page-subtitle">Módulo en construcción. Pronto disponible.</p>
+                        <h1 class="page-title">Inscripciones de Karting</h1>
+                        <p class="page-subtitle">Gestión de pilotos y concurrentes por categoría</p>
+                        <div class="editor-only" style="display:flex;gap:0.5rem;align-items:center;">
+                            <button class="btn" onclick="openModalInscripcion()"><i class="fa-solid fa-plus"></i> Nueva Inscripción</button>
+                            <button class="btn btn-secondary" style="display:none" onclick="exportarPlanillaInscripciones()"><i class="fa-solid fa-file-excel"></i> Exportar</button>
+                        </div>
+                        <form id="form-inscripcion" class="form-card editor-only" onsubmit="guardarInscripcion(event)">
+                            <div class="form-title"><i class="fa-solid fa-id-card"></i> Nueva Inscripción</div>
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="inscripcion-competencia">Competencia</label>
+                                    <select id="inscripcion-competencia" class="form-control">
+                                        <option value="">Seleccionar competencia</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="inscripcion-categoria">Categoría</label>
+                                    <select id="inscripcion-categoria" class="form-control">
+                                        <option value="">Seleccionar categoría</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="inscripcion-dni">DNI Piloto</label>
+                                    <input type="text" id="inscripcion-dni" class="form-control" inputmode="numeric" placeholder="12345678" />
+                                    <datalist id="datalist-pilotos"></datalist>
+                                </div>
+                                <div class="form-group">
+                                    <label for="inscripcion-numero-kart">Número de Kart</label>
+                                    <input type="text" id="inscripcion-numero-kart" class="form-control" placeholder="Número de kart" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="inscripcion-concurrente">Concurrente</label>
+                                    <input type="text" id="inscripcion-concurrente" class="form-control" placeholder="Nombre del concurrente" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="inscripcion-observaciones">Observaciones</label>
+                                    <textarea id="inscripcion-observaciones" class="form-control" rows="3"></textarea>
+                                </div>
+                            </div>
+                            <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--border);">
+                                <button type="button" class="btn btn-secondary" onclick="limpiarFormularioInscripcion()">Cancelar</button>
+                                <button type="submit" class="btn btn-primary" id="inscripcion-btn-guardar"><i class="fa-solid fa-save"></i> Guardar</button>
+                            </div>
+                        </form>
                     </div>
                 </header>
-                <div style="display:flex;justify-content:center;align-items:center;min-height:300px;color:var(--text-secondary);">
-                    <p>Inscripciones — módulo vacío (pendiente de desarrollo).</p>
+
+                <div class="table-card" style="margin-top:1.5rem;">
+                    <div class="table-header-tools">
+                        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+                            <div style="flex:1;min-width:200px;position:relative;">
+                                <input type="text" id="buscar-inscripcion" class="search-input" placeholder="Buscar por piloto, DNI o número de kart..." style="width:100%;padding:0.5rem 0.75rem;" oninput="listarInscripciones()" />
+                                <i class="fa-solid fa-search search-icon"></i>
+                            </div>
+                            <div style="flex:0 0 200px;">
+                                <select id="filtro-competencia" class="form-control" onchange="listarInscripciones()">
+                                    <option value="">Todas las competencias</option>
+                                </select>
+                            </div>
+                            <div style="flex:0 0 200px;">
+                                <select id="filtro-categoria" class="form-control" onchange="listarInscripciones()">
+                                    <option value="">Todas las categorías</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="tabla-lista">
+                            <thead>
+                                <tr>
+                                    <th>Piloto</th>
+                                    <th>DNI</th>
+                                    <th>Categoría</th>
+                                    <th>N° Kart</th>
+                                    <th>Competencia</th>
+                                    <th>Estado</th>
+                                    <th class="editor-only" style="text-align:right;white-space:nowrap;">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="inscripciones-tbody"></tbody>
+                        </table>
+                    </div>
+
+                    <div id="inscripciones-pagination" style="margin-top:1rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
+                        <span id="inscripciones-contador" style="color:var(--text-secondary);"></span>
+                        <div style="display:flex;gap:0.5rem;">
+                            <button class="btn btn-secondary" id="inscripciones-anterior" onclick="cambiarPaginaInscripciones(-1)" disabled><i class="fa-solid fa-chevron-left"></i> Anterior</button>
+                            <button class="btn btn-secondary" id="inscripciones-siguiente" onclick="cambiarPaginaInscripciones(1)" disabled>Siguiente <i class="fa-solid fa-chevron-right"></i></button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="modal-inscripcion" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2000;justify-content:center;align-items:center;">
+                    <div style="background:var(--bg-card);padding:2rem;border-radius:8px;max-width:500px;width:90%;max-height:90vh;overflow-y:auto;">
+                        <h3 style="margin-top:0;">Inscripción de Karting</h3>
+                        <p style="color:var(--text-secondary);">Utilice el formulario de Nueva Inscripción en la parte superior de la vista para cargar los datos.</p>
+                        <div style="display:flex;justify-content:flex-end;margin-top:1.5rem;">
+                            <button type="button" class="btn btn-secondary" onclick="cerrarModalInscripcion()">Cerrar</button>
+                        </div>
+                    </div>
                 </div>
             </section>
 
