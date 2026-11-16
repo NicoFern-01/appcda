@@ -7,7 +7,32 @@ const DB_NAME = 'ControlAutomovilismoDB';
 // a V11 el navegador se ve OBLIGADO a ejecutar la migración y a crear la tabla faltante.
 // V12: agrega el store 'configuracionGlobal' (documento único de ajustes de la app, p.ej. el
 // enlace CSV de Google Sheets del módulo Calendario). La creación con .contains() es idempotente.
-const DB_VERSION = 12;
+// V13: agrega el store 'penalidades' (planilla de sanciones a pilotos del módulo Pilotos).
+// Los PDFs adjuntos NO viven acá: se guardan en el store existente 'adjuntos' referenciados
+// con penalidadId (mismo patrón que detalleGastoId de la Carga Detallada).
+// V14: agrega el store 'tiposSancion' (catálogo EDITABLE de tipos de sanción de la planilla
+// de Penalidades), sembrado con los 5 valores por defecto en migrarTiposSancionV14().
+// V15: agrega el store 'pilotos' (Listado de Pilotos). El DNI es la clave primaria
+// (keyPath 'dni', SIN autoIncrement): evita duplicados en local y espeja el doc ID
+// `/pilotos/{dni}` de Firestore.
+// V16: REPARACIÓN DEFINITIVA del store 'pilotos'. Mismo caso que V11: una build
+// pudo desplegar el gatillo de importación (IndexedDB + Firestore) en navegadores
+// cuya base quedó en V15 pero SIN el object store materializado (esquema a medio
+// camino), por eso el import lanzaba "El store local 'pilotos' no está disponible".
+// Al subir a V16 el navegador ejecuta OBLIGATORIAMENTE esta actualización y el
+// guard con .contains() garantiza la creación física del store /pilotos/{dni}.
+// V17: agrega el store 'autorizaciones' (submódulo del grupo Pilotos, debajo de
+// Penalidades): autorizaciones a pilotos con nombre, apellido, categoría y un
+// enlace opcional a Drive/archivo ("Ver Archivos", mismo patrón que competencias).
+// keyPath 'id' con autoIncrement, igual que 'penalidades'. Se importa además desde XLS.
+// V18: REPARACIÓN DEFINITIVA del store 'autorizaciones'. Mismo caso que V11 y V16:
+// un navegador pudo abrir la base en V17 (p. ej. tras recargar la app desplegada)
+// y el store 'autorizaciones' quedó SIN materializar físicamente, por lo que el
+// guardado manual fallaba con "Object store 'autorizaciones' no disponible en
+// IndexedDB". Al subir a V18 el navegador ejecuta OBLIGATORIAMENTE esta
+// actualización (oldVersion 17 < 18) y el guard con .contains() garantiza la
+// creación física del store /autorizaciones/{id}.
+const DB_VERSION = 19;
 
 let dbInstance = null;
 
@@ -128,9 +153,10 @@ function obtenerConfigFirebase() {
 }
 
 // Variables de módulos de Firebase
-let initializeApp, initializeFirestore, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, writeBatch, query, where, enableIndexedDbPersistence;
+let initializeApp, initializeFirestore, getFirestore, collection, doc, setDoc, getDocs, getDoc, deleteDoc, onSnapshot, writeBatch, query, where;
 let getStorage, refStorage, uploadBytes, getDownloadURL, deleteObject;
 let storageFirebase = null;
+let persistentLocalCache, persistentMultipleTabManager;
 
 // Variables de módulo de Firebase Auth
 let getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword;
@@ -291,10 +317,12 @@ async function inicializarFirebase() {
         getDocs = fsMod.getDocs;
         getDoc = fsMod.getDoc;
         deleteDoc = fsMod.deleteDoc;
+        onSnapshot = fsMod.onSnapshot;
         writeBatch = fsMod.writeBatch;
         query = fsMod.query;
         where = fsMod.where;
-        enableIndexedDbPersistence = fsMod.enableIndexedDbPersistence;
+        persistentLocalCache = fsMod.persistentLocalCache;
+        persistentMultipleTabManager = fsMod.persistentMultipleTabManager;
         getDocsFromServer = fsMod.getDocsFromServer;
         getStorage = storageMod.getStorage;
         refStorage = storageMod.ref;
@@ -314,9 +342,17 @@ async function inicializarFirebase() {
         storageFirebase = getStorage(app);
         authFirebase = getAuth(app);
         if (initializeFirestore) {
-            dbFirebase = initializeFirestore(app, {
+            const firestoreOptions = {
                 experimentalAutoDetectLongPolling: true // Crucial para saltarse bloqueos de red en hosting públicos como GitHub Pages.
-            });
+            };
+            if (typeof persistentLocalCache === 'function' && typeof persistentMultipleTabManager === 'function') {
+                firestoreOptions.localCache = persistentLocalCache({
+                    tabManager: persistentMultipleTabManager()
+                });
+            } else {
+                console.warn('Persistencia multi-pestaña de Firestore no disponible; se usará caché en memoria.');
+            }
+            dbFirebase = initializeFirestore(app, firestoreOptions);
             console.log('Firestore inicializado con experimentalAutoDetectLongPolling.');
         } else {
             dbFirebase = getFirestore(app);
@@ -324,24 +360,6 @@ async function inicializarFirebase() {
 
         if (!dbFirebase) {
             throw new Error('No se pudo inicializar Firestore.');
-        }
-
-        // HABILITAR PERSISTENCIA LOCAL EN EL NAVEGADOR (WEB PERSISTENCE / IndexedDB)
-        // Garantiza que los datos consultados en Firestore se guarden en el caché del navegador
-        // y se rendericen de inmediato sin quedarse congelados en la carga.
-        if (typeof enableIndexedDbPersistence === 'function') {
-            try {
-                await enableIndexedDbPersistence(dbFirebase);
-                console.log('Persistencia local IndexedDB habilitada correctamente.');
-            } catch (persistErr) {
-                if (persistErr.code === 'failed-precondition') {
-                    console.warn('Persistencia IndexedDB no habilitada: múltiples pestañas abiertas en el mismo navegador.');
-                } else if (persistErr.code === 'unimplemented') {
-                    console.warn('Persistencia IndexedDB no soportada por este navegador.');
-                } else {
-                    console.warn('Error al habilitar persistencia IndexedDB:', persistErr);
-                }
-            }
         }
 
         useFirebase = true;
@@ -369,6 +387,7 @@ async function inicializarFirebase() {
                 getDocsFromServer,
                 getDoc,
                 deleteDoc,
+                onSnapshot,
                 query,
                 where,
                 writeBatch,
@@ -533,6 +552,11 @@ function openDB() {
                 db.createObjectStore('competencias', { keyPath: 'id', autoIncrement: true });
             }
 
+            // Tabla de Inscripciones de Karting (clave UUID string, sin autoIncrement)
+            if (!db.objectStoreNames.contains('inscripciones')) {
+                db.createObjectStore('inscripciones', { keyPath: 'id' });
+            }
+
             // Tabla de Gastos
             if (!db.objectStoreNames.contains('gastos')) {
                 db.createObjectStore('gastos', { keyPath: 'id', autoIncrement: true });
@@ -656,6 +680,43 @@ function openDB() {
                 db.createObjectStore('configuracionGlobal', { keyPath: 'id', autoIncrement: true });
             }
 
+            // ============ NUEVO EN DB_VERSION 13: PENALIDADES A PILOTOS ============
+            // Registros de sanciones (nombre, apellido, dni, nroAuto, categoria, sancion,
+            // motivo). Los PDFs se persisten en 'adjuntos' con la clave foránea penalidadId.
+            // Guard .contains() idempotente, igual que el resto de las creaciones.
+            if (!db.objectStoreNames.contains('penalidades')) {
+                db.createObjectStore('penalidades', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // ============ NUEVO EN DB_VERSION 14: CATÁLOGO DE TIPOS DE SANCIÓN ============
+            // Lista editable (ruedita de la planilla de Penalidades) con los tipos de
+            // sanción que ofrece el datalist. El índice único en 'valor' evita duplicados
+            // (la deduplicación se valida además en agregarTipoSancion()).
+            if (!db.objectStoreNames.contains('tiposSancion')) {
+                const tiposSancionStore = db.createObjectStore('tiposSancion', { keyPath: 'id', autoIncrement: true });
+                tiposSancionStore.createIndex('valor', 'valor', { unique: true });
+            }
+
+            // ============ NUEVO EN DB_VERSION 17: AUTORIZACIONES A PILOTOS ============
+            // Submódulo del grupo Pilotos (debajo de Penalidades). Campos: nombre,
+            // apellido, categoria y enlaceArchivo (URL a Drive/archivo). Mismo
+            // patrón de clave que 'penalidades' (keyPath 'id', autoIncrement).
+            // Guard .contains() idempotente para no romper bases ya abiertas.
+            if (!db.objectStoreNames.contains('autorizaciones')) {
+                db.createObjectStore('autorizaciones', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // ============ NUEVO EN DB_VERSION 15/16: LISTADO DE PILOTOS ============
+            // keyPath 'dni' (string, SIN autoIncrement): el DNI es la clave
+            // primaria y el doc ID `/pilotos/{dni}` en Firestore. El keyPath
+            // rechaza duplicados en IndexedDB a nivel de motor (ConstraintError),
+            // como segunda barrera además del getDoc previo en el formulario.
+            // El bloque V16 (más abajo) re-crea el store si una build previa lo
+            // dejó sin materializar (bug: "El store local 'pilotos' no está disponible").
+            if (!db.objectStoreNames.contains('pilotos')) {
+                db.createObjectStore('pilotos', { keyPath: 'dni' });
+            }
+
             // ============ DB_VERSION 11: REPARACIÓN DEFINITIVA DE ESQUEMAS INCONSISTENTES ============
             // MOTIVO DEL BUMP: en V10 la base pudo abrirse bajo una build que no materializó
             // 'tiposMovimiento'. Como ya se estaba en la versión objetivo, el evento
@@ -672,6 +733,39 @@ function openDB() {
                         // Si la creación fallara, la garantía la da el bloque V10 de arriba y el
                         // control defensivo de transacciones (no congelar la app). Log limpio.
                         console.warn('[db] V11: no se pudo crear el store tiposMovimiento:', storeErrV11?.message || storeErrV11);
+                    }
+                }
+            }
+
+            // ============ DB_VERSION 16: REPARACIÓN DEFINITIVA DE 'pilotos' ============
+            // MOTIVO DEL BUMP: un navegador podía quedar en V15 con el store 'pilotos'
+            // SIN materializar físicamente (despliegue del gatillo de importación a
+            // medio camino). Al subir a V16 se repite la misma técnica que V11:
+            // garantizar con .contains() que el store exista (keyPath 'dni', string).
+            if (event.oldVersion < 16) {
+                if (!db.objectStoreNames.contains('pilotos')) {
+                    try {
+                        db.createObjectStore('pilotos', { keyPath: 'dni' });
+                    } catch (storeErrV16) {
+                        console.warn('[db] V16: no se pudo crear el store pilotos:', storeErrV16?.message || storeErrV16);
+                    }
+                }
+            }
+
+            // ============ DB_VERSION 18: REPARACIÓN DEFINITIVA DE 'autorizaciones' ============
+            // MOTIVO DEL BUMP: mismo caso que V11 (tiposMovimiento) y V16 (pilotos).
+            // Un navegador pudo abrir la base en V17 sin materializar físicamente el
+            // store 'autorizaciones', lo que hacía fallar el guardado manual con
+            // "Object store 'autorizaciones' no disponible en IndexedDB". Al subir a
+            // V18 el navegador ejecuta OBLIGATORIAMENTE esta actualización (oldVersion
+            // 17 < 18) y el guard con .contains() garantiza la creación física del
+            // store (keyPath 'id', autoIncrement, igual que 'penalidades').
+            if (event.oldVersion < 18) {
+                if (!db.objectStoreNames.contains('autorizaciones')) {
+                    try {
+                        db.createObjectStore('autorizaciones', { keyPath: 'id', autoIncrement: true });
+                    } catch (storeErrV18) {
+                        console.warn('[db] V18: no se pudo crear el store autorizaciones:', storeErrV18?.message || storeErrV18);
                     }
                 }
             }
@@ -959,6 +1053,31 @@ async function migrarTiposMovimientoV10() {
         }
     } catch (e) {
         console.warn('Migración V10 no pudo completarse (se reintentará en el próximo arranque):', e);
+    }
+}
+
+// ============ MIGRACIÓN V14: SEED DEL CATÁLOGO DE TIPOS DE SANCIÓN ============
+// Seed IDEMPOTENTE de los 5 tipos de sanción por defecto de la planilla de Penalidades.
+// El usuario puede agregar/quitar tipos desde la ruedita (#subModalTiposSancion); si el
+// catálogo queda vacío, obtenerTiposSancion() en app.js vuelve a ofrecer estos valores.
+const SEED_TIPOS_SANCION_V14 = ['Advertencia', 'Amonestación', 'Multa', 'Suspensión', 'Descalificación'];
+
+async function migrarTiposSancionV14() {
+    try {
+        const existentes = await getTodos('tiposSancion', { soloLocal: true });
+        const valoresExistentes = new Set((existentes || []).map(t => String(t.valor).toLowerCase()));
+        let agregados = 0;
+        for (const label of SEED_TIPOS_SANCION_V14) {
+            if (valoresExistentes.has(label.toLowerCase())) continue;
+            await guardar('tiposSancion', { valor: label, label, activo: true });
+            agregados++;
+        }
+        invalidarCache('tiposSancion');
+        if (agregados > 0) {
+            console.log(`Migración V14 OK: catálogo de tipos de sanción sembrado (${agregados} agregados).`);
+        }
+    } catch (e) {
+        console.warn('Migración V14 no pudo completarse (se reintentará en el próximo arranque):', e);
     }
 }
 
@@ -1319,8 +1438,11 @@ function abrirTransaccionDefensiva(db, storeName, modo) {
 
 // Stores PROHIBIDOS de sincronizar con la nube (A-4): operan SOLO en IndexedDB local.
 // - 'usuarios': contiene passwordHash; jamás debe viajar a Firestore.
-// - 'configuracionGlobal': ajustes de la app puramente locales.
-const STORES_NO_SYNC = Object.freeze(['usuarios', 'configuracionGlobal']);
+// - 'configuracionGlobal': SÍ se sincroniza a Firestore (documento id=1) para que
+//   la API key de Serper y los ajustes globales se lean desde cualquier navegador
+//   con sesión Firebase. La defensa de escritura son las reglas de firestore.rules
+//   (solo admin escribe).
+const STORES_NO_SYNC = Object.freeze(['usuarios']);
 
 function esStoreSincronizable(storeName) {
     return !STORES_NO_SYNC.includes(storeName);
@@ -1337,8 +1459,14 @@ function esMasReciente(a, b) {
     return ta > tb;
 }
 
+// Clave primaria por store: casi todos usan 'id' numérico autoincremental,
+// pero 'pilotos' usa 'dni' (string) como clave (doc ID `/pilotos/{dni}`).
+function clavePrimariaStore(storeName) {
+    return storeName === 'pilotos' ? 'dni' : 'id';
+}
+
 // Validador interceptor simple (A-5): evita persistir objetos corruptos en IndexedDB/Firestore.
-// - Problemas GRAVES (no es objeto / falta id / funciones / NaN / circular) abortan la escritura.
+// - Problemas GRAVES (no es objeto / falta clave primaria / funciones / NaN / circular) abortan la escritura.
 function validarRegistro(storeName, item) {
     const resultado = { ok: true, motivo: '' };
 
@@ -1348,9 +1476,9 @@ function validarRegistro(storeName, item) {
         return resultado;
     }
 
-    if (typeof item.id === 'undefined') {
+    if (typeof item[clavePrimariaStore(storeName)] === 'undefined') {
         resultado.ok = false;
-        resultado.motivo = `[${storeName}] No se escribió: falta el campo 'id'.`;
+        resultado.motivo = `[${storeName}] No se escribió: falta el campo '${clavePrimariaStore(storeName)}'.`;
         return resultado;
     }
 
@@ -1432,7 +1560,7 @@ async function sincronizarLocalAFirebase() {
 async function importarTodo(datos) {
     limpiarCacheCompleto(); // limpiar todo el caché antes de importar
     const db = await openDB();
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos', 'ubicacionesInventario', 'tiposMovimiento'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos', 'ubicacionesInventario', 'tiposMovimiento', 'penalidades', 'tiposSancion', 'pilotos', 'autorizaciones'];
     
     for (const storeName of stores) {
         if (datos[storeName]) {

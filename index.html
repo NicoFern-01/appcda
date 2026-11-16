@@ -12,8 +12,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script type="module" crossorigin src="./assets/index-BeiLhyuN.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-DUYeZ6_0.css">
+  <script type="module" crossorigin src="./assets/index-BxCQDlBt.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-_A7qp4JY.css">
 </head>
 <body>
 
@@ -93,17 +93,20 @@
 
         <!-- MAIN CONTENT -->
         <main>
-            <!-- VIEW: DASHBOARD -->
+
+        <!-- VIEW: DASHBOARD -->
             <section id="view-dashboard" class="view active">
+
+                    <div class="theme-switch" style="margin-left:1rem; display:flex; align-items:center; gap:8px; color:var(--text-secondary); font-size:0.85rem; flex-wrap:wrap;"><label class="theme-switch-container"><input type="checkbox" id="theme-checkbox-toggle"><span class="theme-slider"></span></label><span id="theme-label">Modo Oscuro</span></div>
                 <header style="margin-bottom: 1.2rem;">
                     <div>
                         <h1 class="page-title">Resumen Ejecutivo</h1>
                         <p class="page-subtitle">Monitoreo de costos y competencias en tiempo real</p>
                     </div>
                     <div class="dashboard-filtros" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                        <label for="dashboard-anio" style="font-size:0.85rem; color:#94a3b8;">Año</label>
+                        <label for="dashboard-anio" style="font-size:0.85rem; color:var(--text-secondary);">Año</label>
                         <select id="dashboard-anio" style="font-size:0.9rem;" onchange="dashboardDirty=true; renderDashboard();"></select>
-                        <label for="dashboard-mes" style="font-size:0.85rem; color:#94a3b8;">Mes</label>
+                        <label for="dashboard-mes" style="font-size:0.85rem; color:var(--text-secondary);">Mes</label>
                         <select id="dashboard-mes" style="font-size:0.9rem;" onchange="dashboardDirty=true; renderDashboard();">
                             <option value="all">Todo el año</option>
                             <option value="1">Enero</option>
@@ -119,11 +122,12 @@
                             <option value="11">Noviembre</option>
                             <option value="12">Diciembre</option>
                         </select>
+
                     </div>
                 </header>
 
                 <div class="stats-grid">
-                    <div class="stat-card dashboard-link-card" id="stat-gasto-acumulado-card" role="button" tabindex="0" onclick="scrollToDetalleAcumuladoDashboard()" onkeydown="if(event.key==='Enter' || event.key===' ') scrollToDetalleAcumuladoDashboard();" title="Ir al detalle mes a mes del gasto acumulado" aria-controls="dash-acumulado-card">
+                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" id="stat-gasto-acumulado-card" role="button" tabindex="0" onclick="scrollToDetalleAcumuladoDashboard()" onkeydown="if(event.key==='Enter' || event.key===' ') scrollToDetalleAcumuladoDashboard();" title="Ir al detalle mes a mes del gasto acumulado" aria-controls="dash-acumulado-card">
                         <div class="stat-info">
                             <h3 id="stat-gasto-acumulado-label">Gasto Acumulado Anual</h3>
                             <p id="stat-gasto-acumulado">$0.00</p>
@@ -133,31 +137,31 @@
                             <i class="fa-solid fa-chart-line"></i>
                         </div>
                     </div>
-                    <div class="stat-card dashboard-link-card" role="link" tabindex="0" onclick="navegarDesdeDashboard('gastos')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('gastos')" title="Ir a Control de Gastos">
+                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" role="link" tabindex="0" onclick="navegarDesdeDashboard('gastos')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('gastos')" title="Ir a Control de Gastos">
                         <div class="stat-info">
                             <h3 id="stat-gasto-total-label">Gasto Total Anual</h3>
                             <p id="stat-gasto-total">$0.00</p>
                             <span class="stat-delta" id="stat-gasto-variacion"></span>
                         </div>
-                        <div class="stat-icon">
+                        <div class="stat-icon stat-icon-blue">
                             <i class="fa-solid fa-dollar-sign"></i>
                         </div>
                     </div>
-                    <div class="stat-card dashboard-link-card" role="link" tabindex="0" onclick="navegarDesdeDashboard('competencias')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('competencias')" title="Ir al Calendario de Competencias">
+                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" role="link" tabindex="0" onclick="navegarDesdeDashboard('competencias')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('competencias')" title="Ir al Calendario de Competencias">
                         <div class="stat-info">
                             <h3>Competencias</h3>
                             <p id="stat-competencias-count">0</p>
                         </div>
-                        <div class="stat-icon">
+                        <div class="stat-icon stat-icon-green">
                             <i class="fa-solid fa-trophy"></i>
                         </div>
                     </div>
-                    <div class="stat-card dashboard-link-card" role="link" tabindex="0" onclick="navegarDesdeDashboard('staff')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('staff')" title="Ir al Staff">
+                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" role="link" tabindex="0" onclick="navegarDesdeDashboard('staff')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('staff')" title="Ir al Staff">
                         <div class="stat-info">
                             <h3>Staff Registrado</h3>
                             <p id="stat-staff-count">0</p>
                         </div>
-                        <div class="stat-icon">
+                        <div class="stat-icon stat-icon-blue">
                             <i class="fa-solid fa-user-gear"></i>
                         </div>
                     </div>
@@ -165,7 +169,7 @@
 
                 <div class="charts-grid">
                     <div class="chart-card">
-                        <h3>Gastos por Categoría <span id="dash-cat-periodo" style="font-size:0.8rem; color:#94a3b8; font-weight:400;"></span></h3>
+                        <h3>Gastos por Categoría <span id="dash-cat-periodo" style="font-size:0.8rem; color:var(--text-secondary); font-weight:400;"></span></h3>
                         <div class="chart-container">
                             <canvas id="chart-categorias"></canvas>
                         </div>
@@ -186,7 +190,7 @@
 
                 <div class="charts-grid">
                     <div class="chart-card" style="grid-column: 1 / -1;">
-                        <h3>Top 5 Conceptos de Mayor Gasto <span id="dash-conc-periodo" style="font-size:0.8rem; color:#94a3b8; font-weight:400;"></span></h3>
+                        <h3>Top 5 Conceptos de Mayor Gasto <span id="dash-conc-periodo" style="font-size:0.8rem; color:var(--text-secondary); font-weight:400;"></span></h3>
                         <div class="chart-container" style="height: 260px;">
                             <canvas id="chart-concepto"></canvas>
                         </div>
@@ -1011,6 +1015,460 @@
                 </div>
             </div>
 
+            <!-- VIEW: PILOTOS (dashboard del módulo: padre del grupo desplegable) -->
+            <section id="view-pilotos" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Control de Pilotos</h1>
+                        <p class="page-subtitle">Resumen del padrón de pilotos, categorías y sanciones vigentes</p>
+                    </div>
+                </header>
+
+                <!-- FILA 1: KPIs (reutiliza .stats-grid / .stat-card del Dashboard General) -->
+                <div class="stats-grid">
+                    <!-- ÍTEM 1: Total de pilotos (scorecard) -->
+                    <div class="stat-card dashboard-link-card" role="link" tabindex="0"
+                         onclick="navegarDesdeDashboard('listado-pilotos')"
+                         onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('listado-pilotos')"
+                         title="Ir al Listado de Pilotos" aria-controls="pilotos-categorias-card">
+                        <div class="stat-info">
+                            <h3>Pilotos Registrados</h3>
+                            <p id="pilotos-kpi-total">—</p>
+                            <span class="stat-delta" id="pilotos-kpi-total-nota">Cargando padrón…</span>
+                        </div>
+                        <div class="stat-icon stat-icon-blue">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <path d="M16 11a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-8 1a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h9v-2.5c0-.83.42-1.6 1.13-2.2A12.6 12.6 0 0 0 8 14zm8 0c-2.67 0-8 1.33-8 4v2h16v-2c0-2.67-5.33-4-8-4z"/>
+                            </svg>
+                        </div>
+                    </div>
+
+                    <!-- Acompañante: sanciones vigentes (contexto del panel de sancionados) -->
+                    <div class="stat-card dashboard-link-card" role="link" tabindex="0"
+                         onclick="navegarDesdeDashboard('penalidades')"
+                         onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('penalidades')"
+                         title="Ir a Penalidades" aria-controls="pilotos-sancionados-card">
+                        <div class="stat-info">
+                            <h3>Sanciones Vigentes</h3>
+                            <p id="pilotos-kpi-vigentes">—</p>
+                            <span class="stat-delta" id="pilotos-kpi-vigentes-nota">—</span>
+                        </div>
+                        <div class="stat-icon stat-icon-red">
+                            <i class="fa-solid fa-gavel"></i>
+                        </div>
+                    </div>
+
+                    <!-- ÍTEM 4: Consulta Pilotos ACTC — auditoría manual bajo demanda.
+                         SIN spinner ni búsquedas automáticas: input + botón "Auditar"
+                         viven dentro de la propia tarjeta. 100% client-side (GitHub
+                         Pages): el fetch a Serper sale desde el navegador. -->
+                    <div class="stat-card stat-card-alerta" id="pilotos-kpi-actc-card">
+                        <div class="stat-fila-actc">
+                            <div class="stat-info">
+                                <h3>CONSULTA PILOTOS ACTC
+                                    <!-- Badge que se enciende en rojo cuando hay auto-sanciones ACTC vigentes -->
+                                    <span id="pilotos-kpi-actc-badge" class="alerta-badge" hidden>PELIGRO</span>
+                                </h3>
+                                <!-- Placeholders "26" (número gigante) y "N categoría sin
+                                     fiscalizar" ELIMINADOS: no pertenecen a este módulo.
+                                     El encabezado solo conserva título + badge + ícono. -->
+                            </div>
+                            <div class="stat-icon stat-icon-alerta" id="pilotos-kpi-actc-icono">
+                                <i class="fa-solid fa-triangle-exclamation"></i>
+                            </div>
+                        </div>
+                        <!-- Auditoría ON DEMAND: solo se ejecuta al clickear "Auditar" (o Enter) -->
+                        <form class="auditoria-form auditoria-form--tarjeta"
+                              onsubmit="event.preventDefault(); auditarPiloto();">
+                            <input type="text" class="search-input" id="input-auditar-piloto"
+                                   placeholder="Nombre completo del piloto..."
+                                   autocomplete="off" aria-label="Nombre completo del piloto a auditar">
+                            <button type="submit" class="btn" id="btn-auditar-piloto">
+                                <i class="fa-solid fa-user-shield"></i> Auditar
+                            </button>
+                        </form>
+                        <div id="auditoria-estado" class="auditoria-estado" role="status" aria-live="polite"></div>
+                        <!-- Banner rojo flotante sobre el formulario: se enciende en positivo -->
+                        <div id="auditoria-banner" class="auditoria-banner" role="alert" hidden></div>
+                    </div>
+                </div>
+
+                <!-- FILA 2: distribución por categoría + sancionados (reutiliza .charts-grid / .chart-card) -->
+                <div class="charts-grid">
+                    <!-- ÍTEM 2: Distribución por categoría (barras CSS nativas, sin Chart.js) -->
+                    <div class="chart-card" id="pilotos-categorias-card">
+                        <h3>Distribución por Categoría <span id="pilotos-cat-total" style="font-size:0.8rem; color:var(--text-secondary); font-weight:400;"></span></h3>
+                        <div id="pilotos-categorias-body" class="cat-bars">
+                            <div class="cat-bar-placeholder">Cargando categorías…</div>
+                        </div>
+                    </div>
+
+                    <!-- ÍTEM 3: Pilotos sancionados (nombre, categoría, sanción/motivo, vencimiento) -->
+                    <div class="chart-card" id="pilotos-sancionados-card">
+                        <h3>Pilotos Sancionados <span style="font-size:0.8rem; color:var(--text-secondary); font-weight:400;">Vigentes y cumplidas</span></h3>
+                        <div class="table-responsive">
+                            <table class="tabla-sancionados">
+                                <thead>
+                                    <tr>
+                                        <th style="width:26%;">Nombre y Apellido</th>
+                                        <th style="width:15%;">Categoría</th>
+                                        <th style="width:39%;">Sanción / Motivo</th>
+                                        <th style="width:20%;">Vencimiento</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pilotos-sancionados-body">
+                                    <tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">Cargando sanciones…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pie: atajos a las vistas hijas + aviso del alcance ACTC.
+                     (El formulario de auditoría ahora vive DENTRO de la tarjeta
+                      "Consulta Pilotos ACTC".) -->
+                <div class="charts-grid">
+                    <div class="chart-card" style="grid-column: 1 / -1;">
+                        <div class="dash-pie-links">
+                            <a class="link-like" onclick="navegarDesdeDashboard('listado-pilotos')" role="button" tabindex="0">Ver Listado de Pilotos</a>
+                            <a class="link-like" onclick="navegarDesdeDashboard('penalidades')" role="button" tabindex="0">Ver Penalidades</a>
+                            <span class="dash-aviso-actc">
+                                <i class="fa-solid fa-circle-info"></i>
+                                Auditoría ACTC: cruce en caliente con Serper.dev; los positivos se auto-sancionan con vigencia hasta el 31/12 del año en curso.
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: LISTADO DE PILOTOS (formulario de alta + tabla reactiva) -->
+            <section id="view-listado-pilotos" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Listado de Pilotos</h1>
+                        <p class="page-subtitle">Listado general de pilotos participantes</p>
+                    </div>
+                </header>
+                <!-- Formulario de alta manual (DNI = clave primaria /pilotos/{dni}) -->
+                <form id="form-piloto" class="form-card editor-only" onsubmit="guardarPilotoForm(event)">
+                    <div class="form-title"><i class="fa-solid fa-id-card"></i> Nuevo Piloto</div>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="piloto-nombre">Nombre *</label>
+                            <input type="text" id="piloto-nombre" placeholder="Ej: Juan" autocomplete="off" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="piloto-apellido">Apellido *</label>
+                            <input type="text" id="piloto-apellido" placeholder="Ej: Pérez" autocomplete="off" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="piloto-dni">Documento (DNI) *</label>
+                            <input type="text" id="piloto-dni" placeholder="Ej: 30123456" inputmode="numeric" autocomplete="off" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="piloto-categoria">Categoría *</label>
+                            <input type="text" id="piloto-categoria" placeholder="Ej: TC2000" autocomplete="off" required list="categorias-piloto">
+                            <datalist id="categorias-piloto"></datalist>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
+                        <button type="submit" class="btn" id="piloto-btn-guardar"><i class="fa-solid fa-plus"></i> Agregar Piloto</button>
+                        <button type="button" class="btn btn-secondary" id="piloto-btn-importar" onclick="dispararImportarPadron()"><i class="fa-solid fa-file-import"></i> 📁 Importar Padrón</button>
+                        <input type="file" id="piloto-import-file" accept=".html,.htm,.xls,.xlsx" style="display:none" onchange="importarPadronPilotos(event)">
+                    </div>
+                </form>
+                <div class="table-card">
+                    <div class="table-header-tools">
+                        <h3>Pilotos Registrados</h3>
+                        <input type="text" id="buscar-piloto" class="search-input" placeholder="Buscar por nombre, DNI o categoría..." oninput="pilotoBuscarDebounced()">
+                    </div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Nombre y Apellido</th>
+                                    <th>Documento</th>
+                                    <th>Categoría</th>
+                                    <th class="editor-only" style="text-align: right;">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pilotos-table-body"></tbody>
+                        </table>
+                    </div>
+                    <div id="pilotos-pagination" class="pagination-controls"></div>
+                </div>
+            </section>
+
+            <!-- VIEW: PENALIDADES (planilla de sanciones a pilotos) -->
+            <section id="view-penalidades" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Penalidades</h1>
+                        <p class="page-subtitle">Planilla de sanciones a pilotos con documentación adjunta por enlace externo</p>
+                    </div>
+                </header>
+
+                <!-- Planilla de carga (solo usuarios con permiso de edición) -->
+                <form id="form-penalidad" class="form-card editor-only" onsubmit="guardarPenalidadForm(event)">
+                    <div class="form-title"><i class="fa-solid fa-gavel"></i> Nueva Penalidad</div>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="penalidad-nombre">Nombre *</label>
+                            <input type="text" id="penalidad-nombre" placeholder="Ej: Juan" autocomplete="off" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="penalidad-apellido">Apellido *</label>
+                            <input type="text" id="penalidad-apellido" placeholder="Ej: Pérez" autocomplete="off" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="penalidad-dni">DNI *</label>
+                            <input type="text" id="penalidad-dni" placeholder="Ej: 30123456" inputmode="numeric" autocomplete="off" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="penalidad-auto">Nro. de Auto *</label>
+                            <input type="number" id="penalidad-auto" min="0" placeholder="Ej: 12" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="penalidad-categoria">Categoría *</label>
+                            <input type="text" id="penalidad-categoria" placeholder="Ej: TC2000" autocomplete="off" required list="categorias-penalidad">
+                            <datalist id="categorias-penalidad"></datalist>
+                        </div>
+                        <div class="form-group">
+                            <label for="penalidad-sancion">Sanción *</label>
+                            <div class="input-con-gear">
+                                <input type="text" id="penalidad-sancion" list="tipos-sancion" placeholder="Escriba o seleccione una sanción..." autocomplete="off" required>
+                                <button type="button" class="action-btn gear-btn admin-only" onclick="abrirModalTiposSancion()" title="Gestionar tipos de sanción (Admin)"><i class="fa-solid fa-gear"></i></button>
+                            </div>
+                            <datalist id="tipos-sancion"></datalist>
+                            <small style="color:var(--text-secondary);">Sugerencias del catálogo, o escriba libremente.</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="penalidad-fecha-inicio">Fecha de Inicio *</label>
+                            <input type="date" id="penalidad-fecha-inicio" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="penalidad-fecha-fin">Fecha de Fin</label>
+                            <input type="date" id="penalidad-fecha-fin">
+                            <small style="color:var(--text-secondary);">Vacía = sanción aún vigente.</small>
+                        </div>
+                        <div class="form-group full-width">
+                            <label for="penalidad-motivo">Motivo de la sanción *</label>
+                            <textarea id="penalidad-motivo" rows="4" placeholder="Detalle completo del motivo de la sanción..." required></textarea>
+                        </div>
+                        <div class="form-group full-width">
+                            <label for="penalidad-enlace">Documentación adjunta (enlace externo)</label>
+                            <input type="text" id="penalidad-enlace" inputmode="url" placeholder="https://drive.google.com/...">
+                            <small style="color:var(--text-secondary);">Opcional. Pegá el enlace compartido de Drive/OneDrive. Se muestra como botón &ldquo;Ver Archivos&rdquo; en el listado.</small>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:0.5rem;justify-content:flex-end;">
+                        <button type="button" class="btn btn-secondary" onclick="limpiarFormularioPenalidad()"><i class="fa-solid fa-rotate-left"></i> Limpiar</button>
+                        <button type="submit" class="btn" id="penalidad-btn-guardar"><i class="fa-solid fa-floppy-disk"></i> Guardar Penalidad</button>
+                    </div>
+                </form>
+
+                <!-- Listado de penalidades registradas -->
+                <div class="table-card">
+                    <div class="table-header-tools">
+                        <h3>Penalidades Registradas</h3>
+                        <input type="text" id="buscar-penalidad" class="search-input" placeholder="Buscar por nombre, DNI, auto, categoría o sanción..." oninput="listarPenalidades()">
+                    </div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Piloto</th>
+                                    <th>DNI</th>
+                                    <th>Nro. Auto</th>
+                                    <th>Categoría</th>
+                                    <th>Sanción</th>
+                                    <th>Inicio</th>
+                                    <th>Fin</th>
+                                    <th>Motivo</th>
+                                    <th style="text-align:center;">Archivos</th>
+                                    <th class="editor-only" style="text-align: right;">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="penalidades-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: AUTORIZACIONES (autorizaciones a pilotos con enlace a Drive/archivo) -->
+            <section id="view-autorizaciones" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Autorizaciones</h1>
+                        <p class="page-subtitle">Autorizaciones de pilotos con enlace a la documentación (Drive / archivo)</p>
+                    </div>
+                </header>
+
+                <!-- Planilla de carga (solo usuarios con permiso de edición) -->
+                <form id="form-autorizacion" class="form-card editor-only" onsubmit="guardarAutorizacionForm(event)">
+                    <div class="form-title"><i class="fa-solid fa-file-signature"></i> Nueva Autorización</div>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="autorizacion-nombre">Nombre *</label>
+                            <input type="text" id="autorizacion-nombre" placeholder="Ej: Juan" autocomplete="off" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="autorizacion-apellido">Apellido *</label>
+                            <input type="text" id="autorizacion-apellido" placeholder="Ej: Pérez" autocomplete="off" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="autorizacion-categoria">Categoría *</label>
+                            <div class="input-con-gear">
+                                <input type="text" id="autorizacion-categoria" placeholder="Ej: TC2000" autocomplete="off" required list="categorias-autorizacion">
+                                <button type="button" class="action-btn gear-btn" onclick="abrirModalCategoriasAuth()" title="Gestionar categorías"><i class="fa-solid fa-gear"></i></button>
+                            </div>
+                            <datalist id="categorias-autorizacion"></datalist>
+                        </div>
+                        <div class="form-group full-width">
+                            <label for="autorizacion-enlace">Enlace a Documentos / Drive (PDFs, planillas, etc.)</label>
+                            <input type="text" id="autorizacion-enlace" inputmode="url" placeholder="https://drive.google.com/...">
+                            <small style="color:var(--text-secondary);">Opcional. Pegá el enlace compartido de Drive/OneDrive. Se muestra como botón &ldquo;Ver Archivos&rdquo; en el listado.</small>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:0.5rem;justify-content:flex-end;flex-wrap:wrap;">
+                        <button type="button" class="btn btn-secondary" id="autorizacion-btn-importar" onclick="dispararImportarAutorizaciones()"><i class="fa-solid fa-file-import"></i> Importar XLS</button>
+                        <input type="file" id="autorizacion-import-file" accept=".html,.htm,.xls,.csv" style="display:none" onchange="importarAutorizacionesPilotos(event)">
+                        <button type="button" class="btn btn-secondary" onclick="limpiarFormularioAutorizacion()"><i class="fa-solid fa-rotate-left"></i> Limpiar</button>
+                        <button type="submit" class="btn" id="autorizacion-btn-guardar"><i class="fa-solid fa-floppy-disk"></i> Guardar Autorización</button>
+                    </div>
+                </form>
+
+                <!-- Listado de autorizaciones registradas -->
+                <div class="table-card">
+                    <div class="table-header-tools">
+                        <h3>Autorizaciones Registradas</h3>
+                        <input type="text" id="buscar-autorizacion" class="search-input" placeholder="Buscar por nombre, apellido o categoría..." oninput="autorizacionBuscarDebounced()">
+                    </div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Piloto</th>
+                                    <th>Categoría</th>
+                                    <th style="text-align:center;">Archivos</th>
+                                    <th class="editor-only" style="text-align: right;">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="autorizaciones-table-body"></tbody>
+                        </table>
+                    </div>
+                    <div id="autorizaciones-pagination" class="pagination-controls"></div>
+                </div>
+            </section>
+
+            <!-- VIEW: INSCRIPCIONES -->
+            <section id="view-inscripciones" class="view">
+                <header>
+                    <div>
+                        <h1 class="page-title">Inscripciones de Karting</h1>
+                        <p class="page-subtitle">Gestión de pilotos y concurrentes por categoría</p>
+                        <div class="editor-only" style="display:flex;gap:0.5rem;align-items:center;">
+                            <button class="btn" onclick="openModalInscripcion()"><i class="fa-solid fa-plus"></i> Nueva Inscripción</button>
+                            <button class="btn btn-secondary" style="display:none" onclick="exportarPlanillaInscripciones()"><i class="fa-solid fa-file-excel"></i> Exportar</button>
+                        </div>
+                        <form id="form-inscripcion" class="form-card editor-only" onsubmit="guardarInscripcion(event)">
+                            <div class="form-title"><i class="fa-solid fa-id-card"></i> Nueva Inscripción</div>
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="inscripcion-competencia">Competencia</label>
+                                    <select id="inscripcion-competencia" class="form-control">
+                                        <option value="">Seleccionar competencia</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="inscripcion-categoria">Categoría</label>
+                                    <select id="inscripcion-categoria" class="form-control">
+                                        <option value="">Seleccionar categoría</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="inscripcion-dni">DNI Piloto</label>
+                                    <input type="text" id="inscripcion-dni" class="form-control" inputmode="numeric" placeholder="12345678" />
+                                    <datalist id="datalist-pilotos"></datalist>
+                                </div>
+                                <div class="form-group">
+                                    <label for="inscripcion-numero-kart">Número de Kart</label>
+                                    <input type="text" id="inscripcion-numero-kart" class="form-control" placeholder="Número de kart" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="inscripcion-concurrente">Concurrente</label>
+                                    <input type="text" id="inscripcion-concurrente" class="form-control" placeholder="Nombre del concurrente" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="inscripcion-observaciones">Observaciones</label>
+                                    <textarea id="inscripcion-observaciones" class="form-control" rows="3"></textarea>
+                                </div>
+                            </div>
+                            <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--border);">
+                                <button type="button" class="btn btn-secondary" onclick="limpiarFormularioInscripcion()">Cancelar</button>
+                                <button type="submit" class="btn btn-primary" id="inscripcion-btn-guardar"><i class="fa-solid fa-save"></i> Guardar</button>
+                            </div>
+                        </form>
+                    </div>
+                </header>
+
+                <div class="table-card" style="margin-top:1.5rem;">
+                    <div class="table-header-tools">
+                        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+                            <div style="flex:1;min-width:200px;position:relative;">
+                                <input type="text" id="buscar-inscripcion" class="search-input" placeholder="Buscar por piloto, DNI o número de kart..." style="width:100%;padding:0.5rem 0.75rem;" oninput="listarInscripciones()" />
+                                <i class="fa-solid fa-search search-icon"></i>
+                            </div>
+                            <div style="flex:0 0 200px;">
+                                <select id="filtro-competencia" class="form-control" onchange="listarInscripciones()">
+                                    <option value="">Todas las competencias</option>
+                                </select>
+                            </div>
+                            <div style="flex:0 0 200px;">
+                                <select id="filtro-categoria" class="form-control" onchange="listarInscripciones()">
+                                    <option value="">Todas las categorías</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="tabla-lista">
+                            <thead>
+                                <tr>
+                                    <th>Piloto</th>
+                                    <th>DNI</th>
+                                    <th>Categoría</th>
+                                    <th>N° Kart</th>
+                                    <th>Competencia</th>
+                                    <th>Estado</th>
+                                    <th class="editor-only" style="text-align:right;white-space:nowrap;">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="inscripciones-tbody"></tbody>
+                        </table>
+                    </div>
+
+                    <div id="inscripciones-pagination" style="margin-top:1rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
+                        <span id="inscripciones-contador" style="color:var(--text-secondary);"></span>
+                        <div style="display:flex;gap:0.5rem;">
+                            <button class="btn btn-secondary" id="inscripciones-anterior" onclick="cambiarPaginaInscripciones(-1)" disabled><i class="fa-solid fa-chevron-left"></i> Anterior</button>
+                            <button class="btn btn-secondary" id="inscripciones-siguiente" onclick="cambiarPaginaInscripciones(1)" disabled>Siguiente <i class="fa-solid fa-chevron-right"></i></button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="modal-inscripcion" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2000;justify-content:center;align-items:center;">
+                    <div style="background:var(--bg-card);padding:2rem;border-radius:8px;max-width:500px;width:90%;max-height:90vh;overflow-y:auto;">
+                        <h3 style="margin-top:0;">Inscripción de Karting</h3>
+                        <p style="color:var(--text-secondary);">Utilice el formulario de Nueva Inscripción en la parte superior de la vista para cargar los datos.</p>
+                        <div style="display:flex;justify-content:flex-end;margin-top:1.5rem;">
+                            <button type="button" class="btn btn-secondary" onclick="cerrarModalInscripcion()">Cerrar</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- VIEW: ALOJAMIENTO -->
             <section id="view-alojamiento" class="view">
                 <header>
@@ -1169,7 +1627,27 @@
                     </div>
                     <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1.5rem; align-items: center;">
                         <button class="btn" onclick="guardarConfiguracion()"><i class="fa-solid fa-floppy-disk"></i> Guardar Configuración</button>
-                        <span id="config-sheets-save-msg" style="color: var(--text-secondary); font-size: 0.9rem;"></span>
+                        <span id="config-sheets-save-msg" class="config-save-msg" style="color: var(--text-secondary); font-size: 0.9rem;"></span>
+                    </div>
+                </div>
+
+                <!-- Auditoría ACTC: API key de Serper.dev (X-API-KEY) -->
+                <div class="form-card admin-only" style="margin-bottom: 2rem;">
+                    <h3 class="form-title" style="display: flex; align-items: center; gap: 8px;">
+                        <i class="fa-solid fa-user-shield" style="color: var(--accent);"></i> Auditoría ACTC (Serper.dev)
+                    </h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.95rem;">
+                        Clave de la API de Serper.dev que usa la tarjeta "Consulta Pilotos ACTC" del dashboard de Pilotos para cruzar al piloto con la fuente externa. Se guarda en Firebase (documento `configuracionGlobal/1`) y se replica en este navegador (localStorage <code>serper_api_key</code> + base local) como respaldo offline: cualquier navegador con sesión Firebase lee la misma clave, sin depender del dispositivo donde se guardó. La consulta sale 100% desde el JavaScript del navegador, apta para despliegues estáticos en GitHub Pages (sin backend ni scripts de Python).
+                    </p>
+                    <div class="form-grid" style="grid-template-columns: 1fr;">
+                        <div class="form-group full-width">
+                            <label for="config-serper-key">API Key de Serper.dev (header X-API-KEY)</label>
+                            <input type="password" id="config-serper-key" placeholder="0a1b2c3d4e..." autocomplete="off" style="background: rgba(0,0,0,0.2); color: #fff; padding: 10px; border-radius: 4px; border: 1px solid var(--border); width: 100%; box-sizing: border-box;">
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1.5rem; align-items: center;">
+                        <button class="btn" onclick="guardarConfiguracion()"><i class="fa-solid fa-floppy-disk"></i> Guardar Configuración</button>
+                        <span id="config-serper-save-msg" class="config-save-msg" style="color: var(--text-secondary); font-size: 0.9rem;"></span>
                     </div>
                 </div>
 
@@ -2451,6 +2929,176 @@
         </div>
     </div>
 
+    <!-- MODAL: EDITAR PENALIDAD (agregar o cambiar el enlace de archivos) -->
+    <!-- Mismo criterio que #modal-editar-autorizacion: va ANTES de #subModalTiposSancion
+         para que la ruedita de tipos de sanción quede apilada encima. -->
+    <div id="modal-editar-penalidad" class="modal-overlay">
+        <div class="modal" style="max-width: 640px;">
+            <div class="modal-header">
+                <h2 class="modal-title"><i class="fa-solid fa-file-pen"></i> Editar Penalidad</h2>
+                <button class="modal-close" onclick="closeModal('modal-editar-penalidad')">&times;</button>
+            </div>
+            <div class="modal-content">
+                <div id="editar-penalidad-info" style="margin-bottom:1rem;color:var(--text-secondary);font-size:0.9rem;"></div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="editar-penalidad-nombre">Nombre *</label>
+                        <input type="text" id="editar-penalidad-nombre" placeholder="Ej: Juan" autocomplete="off" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-apellido">Apellido *</label>
+                        <input type="text" id="editar-penalidad-apellido" placeholder="Ej: Pérez" autocomplete="off" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-dni">DNI *</label>
+                        <input type="text" id="editar-penalidad-dni" placeholder="Ej: 30123456" inputmode="numeric" autocomplete="off" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-auto">Nro. de Auto *</label>
+                        <input type="number" id="editar-penalidad-auto" min="0" placeholder="Ej: 12" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-categoria">Categoría *</label>
+                        <input type="text" id="editar-penalidad-categoria" placeholder="Ej: TC2000" autocomplete="off" required list="categorias-penalidad">
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-sancion">Sanción *</label>
+                        <div class="input-con-gear">
+                            <input type="text" id="editar-penalidad-sancion" list="tipos-sancion" placeholder="Escriba o seleccione una sanción..." autocomplete="off" required>
+                            <button type="button" class="action-btn gear-btn admin-only" onclick="abrirModalTiposSancion()" title="Gestionar tipos de sanción (Admin)"><i class="fa-solid fa-gear"></i></button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-fecha-inicio">Fecha de Inicio *</label>
+                        <input type="date" id="editar-penalidad-fecha-inicio" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-penalidad-fecha-fin">Fecha de Fin</label>
+                        <input type="date" id="editar-penalidad-fecha-fin">
+                        <small style="color:var(--text-secondary);">Vacía = sanción aún vigente.</small>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="editar-penalidad-motivo">Motivo de la sanción *</label>
+                        <textarea id="editar-penalidad-motivo" rows="3" placeholder="Detalle completo del motivo de la sanción..." required></textarea>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="editar-penalidad-enlace">Enlace a Documentos / Drive (PDFs, planillas, etc.)</label>
+                        <input type="text" id="editar-penalidad-enlace" inputmode="url" placeholder="https://drive.google.com/...">
+                        <small style="color:var(--text-secondary);">Si la penalidad no tenía archivos, pegá acá el enlace compartido de Drive/OneDrive y se mostrará como botón &ldquo;Ver Archivos&rdquo;. Dejalo vacío para quitar el enlace actual.</small>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-editar-penalidad')">Cancelar</button>
+                <button type="button" class="btn" id="editar-penalidad-btn-guardar" onclick="guardarEdicionPenalidad()"><i class="fa-solid fa-check"></i> Guardar Cambios</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SUB-MODAL: GESTIÓN DE TIPOS DE SANCIÓN (SOLO ADMIN) -->
+    <div id="subModalTiposSancion" class="modal-overlay">
+        <div class="modal" style="max-width: 520px;">
+            <div class="modal-header">
+                <h2 class="modal-title"><i class="fa-solid fa-gear"></i> Gestionar Tipos de Sanción</h2>
+                <button class="modal-close" onclick="closeModal('subModalTiposSancion')">&times;</button>
+            </div>
+            <div class="modal-content">
+                <form id="form-nuevo-tipo-sancion" onsubmit="event.preventDefault(); guardarTipoSancionModal();" style="display:flex;gap:0.5rem;align-items:flex-end;margin-bottom:1rem;">
+                    <div class="form-group" style="flex:1;margin-bottom:0;">
+                        <label for="nuevo-tipo-sancion" id="nuevo-tipo-sancion-label">Nombre del tipo</label>
+                        <input type="text" id="nuevo-tipo-sancion" placeholder="Ej: Suspensión de 2 fechas" maxlength="60">
+                    </div>
+                    <button type="submit" class="btn" id="nuevo-tipo-sancion-btn" style="padding:0.5rem 1rem;" title="Agregar tipo"><i class="fa-solid fa-plus"></i></button>
+                    <button type="button" class="btn btn-secondary" id="nuevo-tipo-sancion-cancel" style="padding:0.5rem 1rem;display:none;" title="Cancelar edición" onclick="cancelarEdicionTipoSancion()">Cancelar</button>
+                </form>
+                <div class="form-title" style="font-size:0.95rem;margin-bottom:0.5rem;"><i class="fa-solid fa-list"></i> Tipos de Sanción Actuales</div>
+                <div id="lista-tipos-sancion" style="display:flex;flex-direction:column;gap:0.5rem;max-height:280px;overflow-y:auto;">
+                    <!-- Se renderiza dinámicamente desde renderizarListaTiposSancion() -->
+                </div>
+                <p style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-secondary);">
+                    <i class="fa-solid fa-circle-info"></i> Los tipos son solo sugerencias: en el campo "Sanción" también puede escribir libremente cualquier texto.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('subModalTiposSancion'); poblarTiposSancion();">Cerrar</button>
+            </div>
+        </div>
+    </div>
+    <!-- MODAL: EDITAR AUTORIZACIÓN (agregar o cambiar el enlace de archivos) -->
+    <!-- Permite completar el enlace de un registro que se cargó sin él, o corregir
+         nombre/apellido/categoría/enlace. Va ANTES de #subModalCategoriasAuth para
+         que la ruedita de categorías quede apilada encima (mismo criterio que los
+         sub-modales sobre #modal-alerta). -->
+    <div id="modal-editar-autorizacion" class="modal-overlay">
+        <div class="modal" style="max-width: 560px;">
+            <div class="modal-header">
+                <h2 class="modal-title"><i class="fa-solid fa-file-pen"></i> Editar Autorización</h2>
+                <button class="modal-close" onclick="closeModal('modal-editar-autorizacion')">&times;</button>
+            </div>
+            <div class="modal-content">
+                <div id="editar-autorizacion-info" style="margin-bottom:1rem;color:var(--text-secondary);font-size:0.9rem;"></div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="editar-autorizacion-nombre">Nombre *</label>
+                        <input type="text" id="editar-autorizacion-nombre" placeholder="Ej: Juan" autocomplete="off" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editar-autorizacion-apellido">Apellido *</label>
+                        <input type="text" id="editar-autorizacion-apellido" placeholder="Ej: Pérez" autocomplete="off" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="editar-autorizacion-categoria">Categoría *</label>
+                        <div class="input-con-gear">
+                            <input type="text" id="editar-autorizacion-categoria" placeholder="Ej: TC2000" autocomplete="off" required list="categorias-autorizacion">
+                            <button type="button" class="action-btn gear-btn" onclick="abrirModalCategoriasAuth()" title="Gestionar categorías"><i class="fa-solid fa-gear"></i></button>
+                        </div>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="editar-autorizacion-enlace">Enlace a Documentos / Drive (PDFs, planillas, etc.)</label>
+                        <input type="text" id="editar-autorizacion-enlace" inputmode="url" placeholder="https://drive.google.com/...">
+                        <small style="color:var(--text-secondary);">Si el registro no tenía archivos, pegá acá el enlace compartido de Drive/OneDrive y se mostrará como botón &ldquo;Ver Archivos&rdquo;. Dejalo vacío para quitar el enlace actual.</small>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-editar-autorizacion')">Cancelar</button>
+                <button type="button" class="btn" id="editar-autorizacion-btn-guardar" onclick="guardarEdicionAutorizacion()"><i class="fa-solid fa-check"></i> Guardar Cambios</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SUB-MODAL: GESTIÓN DE CATEGORÍAS (desde el módulo Autorizaciones) -->
+
+    <!-- SUB-MODAL: GESTIÓN DE CATEGORÍAS (desde el módulo Autorizaciones) -->
+    <div id="subModalCategoriasAuth" class="modal-overlay">
+        <div class="modal" style="max-width: 520px;">
+            <div class="modal-header">
+                <h2 class="modal-title"><i class="fa-solid fa-tags"></i> Gestionar Categorías</h2>
+                <button class="modal-close" onclick="closeModal('subModalCategoriasAuth')">&times;</button>
+            </div>
+            <div class="modal-content">
+                <form id="form-nueva-categoria-auth" onsubmit="event.preventDefault(); guardarCategoriaAuthModal();" style="display:flex;gap:0.5rem;align-items:flex-end;margin-bottom:1rem;">
+                    <div class="form-group" style="flex:1;margin-bottom:0;">
+                        <label for="nueva-categoria-auth" id="nueva-categoria-auth-label">Nombre de la categoría</label>
+                        <input type="text" id="nueva-categoria-auth" placeholder="Ej: TC2000" maxlength="60">
+                    </div>
+                    <button type="submit" class="btn" id="nueva-categoria-auth-btn" style="padding:0.5rem 1rem;" title="Agregar categoría"><i class="fa-solid fa-plus"></i></button>
+                    <button type="button" class="btn btn-secondary" id="nueva-categoria-auth-cancel" style="padding:0.5rem 1rem;display:none;" title="Cancelar edición" onclick="cancelarEdicionCategoriaAuth()">Cancelar</button>
+                </form>
+                <div class="form-title" style="font-size:0.95rem;margin-bottom:0.5rem;"><i class="fa-solid fa-list"></i> Categorías Actuales</div>
+                <div id="lista-categorias-auth" style="display:flex;flex-direction:column;gap:0.5rem;max-height:280px;overflow-y:auto;">
+                    <!-- Se renderiza dinámicamente desde renderizarListaCategoriasAuth() -->
+                </div>
+                <p style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-secondary);">
+                    <i class="fa-solid fa-circle-info"></i> Estas categorías son las mismas de todo el sistema (Competencias, Pilotos, Penalidades).
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('subModalCategoriasAuth'); poblarCategoriasAutorizacion();">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
     <!-- MODAL: AJUSTAR STOCK (SOLO ADMIN) -->
     <div id="modalAjustarStockAdmin" class="modal-overlay">
         <div class="modal" style="max-width: 640px;">
@@ -2548,7 +3196,9 @@
       El `?v=` se inyecta en build con la fecha, de modo que cada deploy
       invalida la caché de estos dos archivos.
     -->
-    <script src="db.js?v=mumjy4b7"></script>
-    <script src="app.js?v=mumjy4b7"></script>
+    <!-- SheetJS (CDN): lectura nativa de archivos .xlsx/.xls sin convertir a HTML -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="db.js?v=mwij83j0"></script>
+    <script src="app.js?v=mwij83j0"></script>
 </body>
 </html>

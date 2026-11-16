@@ -34,6 +34,41 @@ const PALETA_GRAFICOS = [
  * @param {number} n cantidad de categorías o barras
  * @returns {string[]} n colores en notación hex
  */
+/**
+ * Lee el valor computado de una variable CSS del tema activo.
+ * Chart.js NO resuelve var(--x): hay que pasarle el valor ya resuelto.
+ * Se lee al crear el gráfico, por eso refrescamos los gráficos al cambiar
+ * de tema para que tomen los colores nuevos.
+ * @param {string} nombre nombre de la variable, p. ej. "--text-secondary"
+ * @returns {string} valor computado (color) listo para Chart.js
+ */
+function cssVar(nombre) {
+    return getComputedStyle(document.documentElement).getPropertyValue(nombre).trim();
+}
+
+/**
+ * Refresca los gráficos visibles tras un cambio de tema.
+ * Chart.js hornea los colores al crear la instancia: hay que volver a crearlas
+ * para que ejes, grillas, leyendas y bordes tomen las variables del nuevo tema.
+ * Solo se recrea lo que está en pantalla (dashboard o inventario).
+ */
+async function refrescarGraficosTema() {
+    const dashboardActivo = document.getElementById('view-dashboard')?.classList.contains('active');
+    const inventarioActivo = document.getElementById('view-inventario')?.classList.contains('active');
+    try {
+        if (dashboardActivo) {
+            if (typeof window !== 'undefined') window.dashboardDirty = true;
+            dashboardDirty = true;
+            await renderDashboard();
+        }
+        if (inventarioActivo && typeof renderDashboardInventario === 'function') {
+            await renderDashboardInventario();
+        }
+    } catch (err) {
+        console.warn('No se pudieron refrescar los gráficos al cambiar de tema:', err);
+    }
+}
+
 function paletaGraficos(n) {
     const cantidad = Math.max(0, Number(n) || 0);
     return Array.from({ length: cantidad }, (_, i) => PALETA_GRAFICOS[i % PALETA_GRAFICOS.length]);
@@ -61,7 +96,7 @@ let dashboardAcumuladoAnio = null;
 // Flag para evitar re-renderizar el dashboard si no cambiaron los datos
 let dashboardDirty = true;
 
-const views = ['dashboard', 'calendario', 'competencias', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal', 'alojamiento', 'categorias-circuitos', 'configuracion'];
+const views = ['dashboard', 'calendario', 'competencias', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal', 'pilotos', 'listado-pilotos', 'penalidades', 'alojamiento', 'categorias-circuitos', 'configuracion'];
 
 // ==================== RENDERIZADO ASÍNCRONO DE LA INTERFAZ ====================
 // Escucha el evento disparado por db.js cuando la sincronización con Firestore
@@ -106,6 +141,48 @@ function toggleCalendarioFilters() {
 // ==================== INICIALIZACIÓN ====================
 document.addEventListener('DOMContentLoaded', async () => {
     try {
+
+        // THEME SWITCH (pildora neumorfica en header) - oscuro por defecto.
+        // El <html> SIN data-theme = oscuro (:root). Con data-theme=light = claro.
+        const THEME_KEY = 'cda_theme';
+        const themeChk = document.getElementById('theme-checkbox-toggle');
+        const themeLbl = document.getElementById('theme-label');
+
+        // Actualiza el texto del switch para que SIEMPRE refleje el modo activo.
+        // Sin esto el label quedaba congelado en "Modo Oscuro" y no coincidía.
+        function actualizarLabelTema(temaLight) {
+            if (themeLbl) themeLbl.textContent = temaLight ? 'Modo Claro' : 'Modo Oscuro';
+        }
+
+        // Aplica el tema al <html> y sincroniza checkbox + label.
+        // Si swap=true, anula transiciones durante un frame para evitar el
+        // parpadeo de fondos/textos que produce --transition: all 0.3s.
+        function aplicarTema(temaLight, swap) {
+            const root = document.documentElement;
+            if (swap) {
+                // Anula transiciones, cambia el tema y las restaura al frame siguiente.
+                root.classList.add('theme-swap');
+                requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-swap')));
+            }
+            if (temaLight) { root.setAttribute('data-theme', 'light'); }
+            else { root.removeAttribute('data-theme'); }
+            if (themeChk) { themeChk.checked = !!temaLight; }
+            actualizarLabelTema(temaLight);
+        }
+
+        // Estado inicial (sin swap: la primera carga no necesita animación).
+        aplicarTema(localStorage.getItem(THEME_KEY) === 'light', false);
+
+        if (themeChk) {
+            themeChk.addEventListener('change', () => {
+                const temaLight = themeChk.checked;
+                localStorage.setItem(THEME_KEY, temaLight ? 'light' : 'dark');
+                aplicarTema(temaLight, true);
+                // Chart.js hornea los colores al crear cada instancia: hay que
+                // volver a renderizar para que tomen las variables del tema nuevo.
+                refrescarGraficosTema();
+            });
+        }
         await inicializarFirebase();
         await inicializarDatosPorDefecto();
 
@@ -114,6 +191,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             await migrarInventarioV9();
             await migrarTiposMovimientoV10();
+            await migrarTiposSancionV14();
         } catch (err) {
             console.warn('La migración V9 no pudo completarse en este arranque:', err);
         }
@@ -393,11 +471,6 @@ function switchView(viewId) {
     if (v && typeof v.switchView === 'function') return v.switchView(viewId);
 }
 
-function _ejecutarSwitchView(viewId) {
-    const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
-    if (v && typeof v.ejecutarSwitchView === 'function') return v.ejecutarSwitchView(viewId);
-}
-
 function _finalizarSalidaEditorRendicion() {
     const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
     if (v && typeof v.finalizarSalidaEditorRendicion === 'function') return v.finalizarSalidaEditorRendicion();
@@ -647,7 +720,9 @@ async function renderDashboard() {
                 // Un color por categoría (matiz distinto, no variaciones de un azul).
                 backgroundColor: paletaGraficos(catKeys.length || 1),
                 borderWidth: 2,
-                borderColor: '#1f2a40',
+                // Borde de cada sector = color de la tarjeta del tema activo:
+                // en oscuro separa sobre fondo oscuro, en claro sobre fondo claro.
+                borderColor: cssVar('--bg-card'),
                 hoverOffset: 6
             }]
         },
@@ -658,7 +733,7 @@ async function renderDashboard() {
             plugins: {
                 // Punto circular en la leyenda: el color del punto es el mismo
                 // que el del sector, así se cruzan sin leer dos veces.
-                legend: { position: 'right', labels: { color: '#94a3b8', usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 14, font: { family: 'Outfit' } } },
+                legend: { position: 'right', labels: { color: cssVar('--text-secondary'), usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 14, font: { family: 'Outfit' } } },
                 tooltip: { callbacks: { label: (ctx) => ` $${ctx.raw.toLocaleString()}` } }
             }
         }
@@ -748,14 +823,14 @@ async function renderDashboard() {
             datasets: [{
                 label: etiquetaSerie,
                 data: dataPoints,
-                borderColor: '#00d2d3',
-                backgroundColor: 'rgba(0,210,211,0.1)',
+                borderColor: cssVar('--accent-blue'),
+                backgroundColor: cssVar('--chart-fill'),
                 fill: true,
                 tension: 0.3,
                 borderWidth: 3,
                 pointRadius: 4,
-                pointBackgroundColor: '#00d2d3',
-                pointBorderColor: '#1a2332',
+                pointBackgroundColor: cssVar('--accent-blue'),
+                pointBorderColor: cssVar('--bg-card'),
                 pointBorderWidth: 2,
                 // Cada tramo se tiñe comparando el período actual con el anterior:
                 // si el valor BAJA, tramo rojo; si SUBE, tramo verde. Permite leer
@@ -764,7 +839,7 @@ async function renderDashboard() {
                     borderColor: (ctx) => {
                         const previo = Number(ctx.p0.parsed.y);
                         const actual = Number(ctx.p1.parsed.y);
-                        if (previo === actual) return '#00d2d3';
+                        if (previo === actual) return cssVar('--accent-blue');
                         return actual < previo ? COLOR_VARIACION_BAJA : COLOR_VARIACION_SUBIDA;
                     }
                 }
@@ -813,7 +888,7 @@ async function renderDashboard() {
                 // Cada concepto con su propio color: el degradado monocromo
                 // anterior volvía indistinguibles las barras contiguas.
                 backgroundColor: paletaGraficos(top.length || 1),
-                hoverBackgroundColor: '#ffffff',
+                hoverBackgroundColor: cssVar('--text-primary'),
                 borderRadius: 6,
                 borderSkipped: false,
                 barThickness: 22
@@ -829,12 +904,12 @@ async function renderDashboard() {
             },
             scales: {
                 x: {
-                    grid: { color: 'rgba(255,255,255,0.05)' },
-                    ticks: { color: '#94a3b8', callback: (v) => `$${Number(v).toLocaleString('es-AR')}` }
+                    grid: { color: cssVar('--chart-grid') },
+                    ticks: { color: cssVar('--text-secondary'), callback: (v) => `$${Number(v).toLocaleString('es-AR')}` }
                 },
                 y: {
                     grid: { display: false },
-                    ticks: { color: '#94a3b8', font: { family: 'Outfit' } }
+                    ticks: { color: cssVar('--text-secondary'), font: { family: 'Outfit' } }
                 }
             }
         }
@@ -1026,8 +1101,10 @@ function chartLineOptions() {
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ` $${ctx.raw.toLocaleString()}` } } },
         scales: {
-            y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
-            x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
+            // Colores del tema activo (ejes/grilla): leídos vía cssVar() para que
+            // respondan al cambio oscuro/claro en vez de quedar gris fijo.
+            y: { grid: { color: cssVar('--chart-grid') }, ticks: { color: cssVar('--text-secondary') } },
+            x: { grid: { display: false }, ticks: { color: cssVar('--text-secondary') } }
         }
     };
 }
@@ -1444,7 +1521,10 @@ async function verCompetencia(id) {
         staffContainer.innerHTML = '<span style="color:var(--text-secondary);">No hay personal asignado a esta competencia.</span>';
     } else {
         staffNombres.forEach(n => {
-            staffContainer.innerHTML += `<span class="tag">${n}</span>`;
+            const span = document.createElement('span');
+            span.className = 'tag';
+            span.textContent = n;
+            staffContainer.appendChild(span);
         });
     }
 
@@ -2719,6 +2799,2435 @@ function exportarPDFListadoPersonal() {
     imprimirListadoPersonal();
 }
 
+// ==================== PILOTOS: LISTADO DE PILOTOS ====================
+// Alta manual + tabla reactiva. El DNI sanitizado es la clave primaria
+// (keyPath 'dni' en IndexedDB y doc ID `/pilotos/{dni}` en Firestore).
+
+/** Activa el listener en tiempo real (onSnapshot) de `pilotos`. */
+function suscribirPilotosTiempoReal() {
+    try {
+        const p = typeof window !== 'undefined' ? window.__CDA_MODULES__?.persistencia : null;
+        if (p && typeof p.suscribirColeccion === 'function') p.suscribirColeccion('pilotos');
+    } catch (e) { /* sin Firebase: la tabla sigue reactiva en local */ }
+}
+
+/** Rellena el datalist de categorías con las categorías cargadas. */
+async function poblarCategoriasPiloto() {
+    const datalist = document.getElementById('categorias-piloto');
+    if (!datalist) return;
+    try {
+        const categorias = await getTodos('categorias');
+        datalist.innerHTML = categorias
+            .map(c => `<option value="${escapeHtml(c.nombre || '')}"></option>`)
+            .join('');
+    } catch (e) { /* campo libre: sin categorías la carga sigue usable */ }
+}
+
+/** Alta manual de piloto con escudo anti-duplicados por DNI (3 barreras). */
+async function guardarPilotoForm(e) {
+    if (e) e.preventDefault();
+    if (!puedeEditar()) return;
+    const nombre = (document.getElementById('piloto-nombre')?.value || '').trim().toUpperCase();
+    const apellido = (document.getElementById('piloto-apellido')?.value || '').trim().toUpperCase();
+    const dni = String(document.getElementById('piloto-dni')?.value || '').replace(/\D/g, '');
+    const categoria = (document.getElementById('piloto-categoria')?.value || '').trim().toUpperCase();
+    if (!nombre || !apellido || !dni || !categoria) {
+        mostrarToast('Completá todos los campos obligatorios (*).', 'error');
+        return;
+    }
+    const MSG_DUPLICADO = 'Error: El DNI ingresado ya pertenece a un piloto registrado';
+    try {
+        const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+        if (rt && rt.dbFirebase && typeof rt.getDoc === 'function' && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser) {
+            const snap = await rt.getDoc(rt.doc(rt.dbFirebase, 'pilotos', dni));
+            if (snap && typeof snap.exists === 'function' && snap.exists()) {
+                mostrarToast(MSG_DUPLICADO, 'error');
+                return;
+            }
+        }
+    } catch (err) {
+        console.warn('[pilotos] getDoc previo no disponible, se valida en local:', err?.message || err);
+    }
+    try {
+        const existente = await obtenerPorId('pilotos', dni);
+        if (existente) {
+            mostrarToast(MSG_DUPLICADO, 'error');
+            return;
+        }
+    } catch (err) {
+        console.warn('[pilotos] lectura local previa falló:', err?.message || err);
+    }
+    const btn = document.getElementById('piloto-btn-guardar');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Guardando...';
+    }
+    try {
+        const clave = await guardar('pilotos', {
+            dni,
+            nombre,
+            apellido,
+            categoria,
+            usuarioCreacion: currentUser ? currentUser.id : null,
+            fechaCreacion: new Date().toISOString()
+        });
+        if (!clave) {
+            mostrarToast('No se pudo guardar el piloto (validación de esquema).', 'error');
+            return;
+        }
+        mostrarToast(`Piloto ${nombre} ${apellido} registrado correctamente.`);
+        document.getElementById('form-piloto')?.reset();
+        await listarPilotos();
+    } catch (err) {
+        if (err && (err.name === 'ConstraintError' || String(err.message || '').includes('ConstraintError'))) {
+            mostrarToast(MSG_DUPLICADO, 'error');
+        } else {
+            console.error(err);
+            mostrarToast('Error al guardar el piloto: ' + (err && err.message ? err.message : err), 'error');
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-plus"></i> Agregar Piloto';
+        }
+    }
+}
+
+/**
+ * Renderiza la tabla inferior con PAGINACIÓN EN EL CLIENTE + busqueda con
+ * DEBOUNCE (300 ms). El array completo de pilotos NO se dibuja en el DOM:
+ * listarPilotos() lo guarda en memoria (pilotosCache) y renderPilotoPagina()
+ * solo pinta el corte (slice) de la página actual → fluido y sin congelar
+ * aunque haya +1.800 registros (el onSnapshot mantiene la vista reactiva).
+ */
+let pilotosCache = [];
+let paginaActual = 1;
+const registrosPorPagina = 20;
+
+/** Paginación cliente para Autorizaciones (mismo patrón que Pilotos). */
+let autorizacionesCache = [];
+let paginaActualAutorizaciones = 1;
+const registrosPorPaginaAutorizaciones = 20;
+
+async function listarPilotos() {
+    const tbody = document.getElementById('pilotos-table-body');
+    if (!tbody) return;
+    await poblarCategoriasPiloto();
+    suscribirPilotosTiempoReal();
+
+    let todos = [];
+    try {
+        todos = await getTodos('pilotos');
+    } catch (e) {
+        console.warn('[pilotos] no se pudo leer el store local:', e?.message || e);
+    }
+
+    // Filtro sobre el array ORIGINAL (al tocar la busqueda se resetea la pagina).
+    const busqueda = (document.getElementById('buscar-piloto')?.value || '').trim().toLowerCase();
+    const collator = new Intl.Collator('es', { sensitivity: 'base' });
+    pilotosCache = todos
+        .filter(p => {
+            if (!busqueda) return true;
+            const linea = `${p.nombre || ''} ${p.apellido || ''} ${p.dni || ''} ${p.categoria || ''}`.toLowerCase();
+            return linea.includes(busqueda);
+        })
+        .sort((a, b) => collator.compare(
+            `${a.apellido || ''} ${a.nombre || ''}`.trim(),
+            `${b.apellido || ''} ${b.nombre || ''}`.trim()
+        ));
+
+    // Corrige la pagina si quedo fuera de rango tras filtrar/eliminar.
+    const totalPaginas = Math.max(1, Math.ceil(pilotosCache.length / registrosPorPagina));
+    if (paginaActual > totalPaginas) paginaActual = totalPaginas;
+
+    renderPilotoPagina();
+    renderPilotoPaginador(pilotosCache.length, busqueda ? null : totalPaginas);
+}
+
+/** Dibuja SOLO las filas del corte de la página actual. */
+function renderPilotoPagina() {
+    const tbody = document.getElementById('pilotos-table-body');
+    if (!tbody) return;
+    const cols = puedeEditar() ? 4 : 3;
+    const corte = pilotosCache.slice((paginaActual - 1) * registrosPorPagina, paginaActual * registrosPorPagina);
+
+    if (corte.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="${cols}" style="text-align:center;color:var(--text-secondary);">No hay pilotos registrados.</td></tr>`;
+        return;
+    }
+
+    // Limpia los nodos de la página anterior antes de montar los nuevos.
+    tbody.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    corte.forEach(p => {
+        const dniTxt = escapeHtml(String(p.dni || ''));
+        const nombreTxt = escapeHtml(`${p.nombre || ''} ${p.apellido || ''}`.trim());
+        const catTxt = escapeHtml(p.categoria || '-');
+        const acciones = puedeEditar()
+            ? `<td style="text-align:right;"><button class="action-btn delete" onclick="eliminarPiloto('${dniTxt}')" title="Eliminar piloto"><i class="fa-solid fa-trash"></i></button></td>`
+            : '';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td style="font-weight:600;">${nombreTxt}</td><td>${dniTxt}</td><td><span class="badge badge-info">${catTxt}</span></td>${acciones}`;
+        fragment.appendChild(tr);
+    });
+    tbody.appendChild(fragment);
+}
+
+/** Dibuja/navega los controles Anterior / "Página X de Y" / Siguiente. */
+function renderPilotoPaginador(total, totalPaginas) {
+    const cont = document.getElementById('pilotos-pagination');
+    if (!cont) return;
+    const yaPaginado = Number.isInteger(totalPaginas) && totalPaginas > 0;
+    const paginas = yaPaginado ? totalPaginas : Math.max(1, Math.ceil(total / registrosPorPagina));
+    cont.innerHTML = `
+        <button type="button" class="btn btn-secondary pagination-prev" onclick="cambiarPaginaPilotos(-1)" ${paginaActual <= 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i> Anterior</button>
+        <span class="pagination-info">Página ${paginaActual} de ${paginas}</span>
+        <button type="button" class="btn btn-secondary pagination-next" onclick="cambiarPaginaPilotos(1)" ${paginaActual >= paginas ? 'disabled' : ''}>Siguiente <i class="fa-solid fa-chevron-right"></i></button>
+    `;
+}
+
+/** Navegación de páginas con límites nativos (disabled si queda fuera de rango). */
+function cambiarPaginaPilotos(direccion) {
+    const totalPaginas = Math.max(1, Math.ceil(pilotosCache.length / registrosPorPagina));
+    const nueva = paginaActual + direccion;
+    if (nueva < 1 || nueva > totalPaginas) return;
+    paginaActual = nueva;
+    renderPilotoPagina();
+    renderPilotoPaginador(pilotosCache.length, totalPaginas);
+}
+
+/** Buscador con DEBOUNCE de 300 ms: espera a que el usuario deje de tipear. */
+let pilotoBusquedaTimer = null;
+function pilotoBuscarDebounced() {
+    if (pilotoBusquedaTimer) clearTimeout(pilotoBusquedaTimer);
+    pilotoBusquedaTimer = setTimeout(() => {
+        paginaActual = 1;              // el filtro vuelve a arrancar desde la página 1
+        listarPilotos();
+    }, 300);
+}
+
+/** Baja de piloto (local + Firestore, vía persistencia genérica). */
+async function eliminarPiloto(dni) {
+    if (!puedeEditar()) return;
+    const clave = String(dni || '').replace(/\D/g, '');
+    if (!clave) return;
+    let nombrePiloto = 'este piloto';
+    try {
+        const piloto = await obtenerPorId('pilotos', clave);
+        if (piloto) {
+            const completo = `${piloto.nombre || ''} ${piloto.apellido || ''}`.trim();
+            if (completo) nombrePiloto = completo;
+        }
+    } catch (e) { /* nombre genérico */ }
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar piloto',
+        `¿Eliminar a ${nombrePiloto}? Esta acción no se puede deshacer.`,
+        'warning'
+    );
+    if (!confirmado) return;
+    await eliminar('pilotos', clave);
+    await listarPilotos();
+}
+
+// ==================== PILOTOS: DASHBOARD DEL MÓDULO ====================
+// Overview del módulo (vista padre del grupo desplegable). Lee los stores
+// 'pilotos' y 'penalidades' por la misma vía genérica del resto de la app
+// (getTodos → IndexedDB + caché, con sync opcional a Firestore), así que el
+// render es el mismo offline y en la nube.
+//
+// Los 4 ítems del tablero se pintan con clases YA existentes (.stat-card,
+// .chart-card, .badge-*, .tag): lo único propio son las barras .cat-bar-*,
+// el shimmer .cat-bar-skeleton y la variante de alerta .stat-card-alerta.
+// SIN librerías de gráficos: las barras son <div> con width en %.
+
+// Paleta de tonos para las barras: se cicla en el orden del proyecto
+// (cyan → verde → ámbar) para que las categorías se distingan sin salir de
+// la identidad visual del dashboard. La variante de alerta se aplica aparte.
+const TONOS_CATEGORIA = [
+    'linear-gradient(90deg, var(--accent-blue), var(--accent-green))',
+    'linear-gradient(90deg, #00d2d3, #0097f6)',
+    'linear-gradient(90deg, var(--accent-green), #00d2d3)',
+    'linear-gradient(90deg, #ff9f43, var(--accent-blue))'
+];
+
+// Categorías que la ACTC no fiscaliza para el CDA: detectar un piloto en
+// alguna de ellas es la seña de alerta HOY. Cuando exista el cruce real con
+// la fuente oficial, esta lista pasa a ser solo el fallback por categoría.
+const CATEGORIAS_ACTC_NO_FISCALIZADAS = [
+    'TURISMO CARRETERA', 'TURISMO DE CARRERA', 'TC PISTA', 'TC2000', 'TC 2000', 'TCP'
+];
+
+/** Renderiza el dashboard completo del módulo Pilotos. */
+async function renderDashboardPilotos() {
+    pintarSkeletonPilotos();
+    try {
+        const [pilotos, penalidades] = await Promise.all([
+            getTodos('pilotos'),
+            getTodos('penalidades')
+        ]);
+        renderKpiPilotos(Array.isArray(pilotos) ? pilotos : [], Array.isArray(penalidades) ? penalidades : []);
+        renderBarrasCategorias(Array.isArray(pilotos) ? pilotos : []);
+        renderSancionados(Array.isArray(penalidades) ? penalidades : []);
+    } catch (err) {
+        console.error('[pilotos] Error al renderizar el dashboard:', err);
+        mostrarToast('No se pudo cargar el resumen de pilotos.', 'error');
+    }
+}
+
+/** Placeholder animado mientras llegan los datos (evita el cuadro vacío). */
+function pintarSkeletonPilotos() {
+    const cont = document.getElementById('pilotos-categorias-body');
+    if (cont) {
+        cont.innerHTML = `<div class="cat-bar-skeleton">${
+            Array.from({ length: 5 }, () => '<div class="cat-bar-track"></div>').join('')
+        }</div>`;
+    }
+    const cuerpo = document.getElementById('pilotos-sancionados-body');
+    if (cuerpo) {
+        cuerpo.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">Cargando sanciones…</td></tr>';
+    }
+}
+
+/**
+ * Normaliza el texto de categoría para agrupar.
+ * El padrón real trae variantes que deben caer en la MISMA barra, por ejemplo
+ * "SPORT HISTORICO" y "Sport Histórico  " (tildes + espacios de sobra).
+ * Por eso: mayúsculas + sin tildes (NFD quita el diacrítico) + espacios colapsados.
+ */
+function normalizarCategoriaPiloto(valor) {
+    return String(valor === null || valor === undefined ? '' : valor)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')   // quita tildes: Histórico -> HISTORICO
+        .toUpperCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/** ¿La categoría está en la lista de categorías no fiscalizadas por la ACTC? */
+function categoriaEnAlertaActc(categoria) {
+    const c = normalizarCategoriaPiloto(categoria);
+    return CATEGORIAS_ACTC_NO_FISCALIZADAS.some(alerta => c.includes(alerta));
+}
+
+/** Arma el conteo por categoría (dedup por DNI, que es la clave primaria del store). */
+function conteoPorCategoriaPilotos(pilotos) {
+    const porCategoria = new Map();
+    const vistos = new Set();
+    pilotos.forEach(p => {
+        const dni = String(p && p.dni ? p.dni : '').trim();
+        if (dni && vistos.has(dni)) return; // el mismo piloto no cuenta dos veces
+        if (dni) vistos.add(dni);
+        const categoria = normalizarCategoriaPiloto(p && p.categoria) || 'SIN CATEGORÍA';
+        porCategoria.set(categoria, (porCategoria.get(categoria) || 0) + 1);
+    });
+    return Array.from(porCategoria.entries())
+        .map(([categoria, cantidad]) => ({ categoria, cantidad, alerta: categoriaEnAlertaActc(categoria) }))
+        .sort((a, b) => b.cantidad - a.cantidad || a.categoria.localeCompare(b.categoria, 'es-AR'));
+}
+
+/** Convierte 'YYYY-MM-DD' a fecha local comparable (evita el corrimiento de UTC). */
+function fechaPenalidadAMs(fechaStr) {
+    if (!fechaStr) return null;
+    const p = String(fechaStr).split('-');
+    if (p.length !== 3) return null;
+    const ms = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).getTime();
+    return Number.isNaN(ms) ? null : ms;
+}
+
+/** Día de hoy a medianoche local, para comparar solo por fecha (sin horas). */
+function inicioDeHoy(hoy = new Date()) {
+    return new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).getTime();
+}
+
+/**
+ * Clasifica las penalidades en vigentes y cumplidas.
+ * Sin fecha de fin = sanción indefinida → sigue vigente.
+ * La fecha de fin igual al día de hoy todavía está vigente (vence mañana).
+ */
+function clasificarPenalidades(penalidades, hoy = new Date()) {
+    const limite = inicioDeHoy(hoy);
+    const vigentes = [];
+    const cumplidas = [];
+    penalidades.forEach(p => {
+        const fin = fechaPenalidadAMs(p && p.fechaFin);
+        if (fin === null || fin >= limite) vigentes.push(p);
+        else cumplidas.push(p);
+    });
+    return { vigentes, cumplidas };
+}
+
+/** Ítem 1 + 4: KPIs de cabecera (total, sanciones vigentes y alerta ACTC). */
+function renderKpiPilotos(pilotos, penalidades) {
+    const elTotal = document.getElementById('pilotos-kpi-total');
+    const notaTotal = document.getElementById('pilotos-kpi-total-nota');
+    const elVig = document.getElementById('pilotos-kpi-vigentes');
+    const notaVig = document.getElementById('pilotos-kpi-vigentes-nota');
+
+    const conteo = conteoPorCategoriaPilotos(pilotos);
+    const total = conteo.reduce((acc, c) => acc + c.cantidad, 0);
+    const fmt = n => new Intl.NumberFormat('es-AR').format(n);
+
+    if (elTotal) elTotal.textContent = fmt(total);
+    if (notaTotal) {
+        notaTotal.textContent = total === 0
+            ? 'Todavía no hay pilotos cargados'
+            : `En ${conteo.length} ${conteo.length === 1 ? 'categoría' : 'categorías'}`;
+    }
+
+    const { vigentes, cumplidas } = clasificarPenalidades(penalidades);
+    if (elVig) elVig.textContent = fmt(vigentes.length);
+    if (notaVig) {
+        notaVig.textContent = penalidades.length === 0
+            ? 'Sin sanciones cargadas'
+            : `${cumplidas.length} cumplida${cumplidas.length === 1 ? '' : 's'}`;
+    }
+
+    // Tarjeta CONSULTA PILOTOS ACTC: el número gigante y la nota "N categoría sin
+    // fiscalizar" se eliminaron del DOM (no pertenecen al módulo). Solo queda la
+    // reacción de peligro cuando hay auto-sanciones vigentes emitidas por la
+    // auditoría (campo autoActc).
+    const autoActc = vigentes.filter(p => p && p.autoActc).length;
+
+    // Reacción visual de peligro: badge rojo "PELIGRO" + icono/tarjeta en rojo.
+    const tarjetaActc = document.getElementById('pilotos-kpi-actc-card');
+    const badgeActc = document.getElementById('pilotos-kpi-actc-badge');
+    const iconoActc = document.getElementById('pilotos-kpi-actc-icono');
+    if (badgeActc) badgeActc.hidden = autoActc === 0;
+    if (tarjetaActc) tarjetaActc.classList.toggle('is-peligro', autoActc > 0);
+    if (iconoActc) iconoActc.classList.toggle('is-peligro', autoActc > 0);
+}
+
+// ---------------- Importación masiva del padrón CDA (HTML/XLS) ----------------
+/** Ítem 2: barras horizontales nativas, proporcionales a la categoría más numerosa. */
+function renderBarrasCategorias(pilotos) {
+    const cont = document.getElementById('pilotos-categorias-body');
+    if (!cont) return;
+
+    const conteo = conteoPorCategoriaPilotos(pilotos);
+    const total = conteo.reduce((acc, c) => acc + c.cantidad, 0);
+    const etiquetaTotal = document.getElementById('pilotos-cat-total');
+    if (etiquetaTotal) etiquetaTotal.textContent = total > 0 ? `${total} pilotos` : '';
+
+    if (conteo.length === 0) {
+        cont.innerHTML = '<div class="pilotos-vacio">Sin pilotos cargados todavía.<br>Importá el padrón desde el Listado de Pilotos para ver la distribución.</div>';
+        return;
+    }
+
+    // El ancho es relativo a la categoría más numerosa: la más grande ocupa el 100%.
+    const maximo = Math.max(...conteo.map(c => c.cantidad), 1);
+    cont.innerHTML = conteo.map((c, i) => {
+        const pct = Math.max((c.cantidad / maximo) * 100, 3);
+        const share = total > 0 ? Math.round((c.cantidad / total) * 100) : 0;
+        const estilo = c.alerta ? '' : ` background:${TONOS_CATEGORIA[i % TONOS_CATEGORIA.length]};`;
+        return `<div class="cat-bar-row">
+            <div class="cat-bar-head">
+                <span class="cat-bar-name" title="${escapeHtml(c.categoria)}">${escapeHtml(c.categoria)}</span>
+                <span class="cat-bar-count">${c.cantidad} · ${share}%</span>
+            </div>
+            <div class="cat-bar-track">
+                <div class="cat-bar-fill${c.alerta ? ' is-alerta' : ''}" style="width:${pct}%;${estilo}"></div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+/** Ítem 3: mini-tabla de sancionados con estado condicional (vigente / cumplida). */
+function renderSancionados(penalidades) {
+    const cuerpo = document.getElementById('pilotos-sancionados-body');
+    if (!cuerpo) return;
+
+    if (penalidades.length === 0) {
+        cuerpo.innerHTML = '<tr><td colspan="4" class="pilotos-vacio">No hay sanciones registradas.</td></tr>';
+        return;
+    }
+
+    const hoy = new Date();
+    const limite = inicioDeHoy(hoy);
+    const { vigentes, cumplidas } = clasificarPenalidades(penalidades, hoy);
+
+    // Vigentes primero (la que vence antes, arriba) y luego las cumplidas recientes.
+    const porVencimiento = (a, b) => {
+        const fa = fechaPenalidadAMs(a.fechaFin);
+        const fb = fechaPenalidadAMs(b.fechaFin);
+        if (fa === null) return 1;   // sin vencimiento, al final
+        if (fb === null) return -1;
+        return fa - fb;
+    };
+    const lista = [
+        ...vigentes.sort(porVencimiento),
+        ...cumplidas.sort((a, b) => (fechaPenalidadAMs(b.fechaFin) || 0) - (fechaPenalidadAMs(a.fechaFin) || 0))
+    ].slice(0, 12);
+
+    cuerpo.innerHTML = lista.map(p => {
+        const nombre = `${escapeHtml(String(p.nombre || ''))} ${escapeHtml(String(p.apellido || ''))}`.trim() || 'Piloto';
+        const categoria = escapeHtml(String(p.categoria || '').trim()) || '—';
+        const sancion = escapeHtml(String(p.sancion || '').trim());
+        const motivo = escapeHtml(String(p.motivo || '').trim());
+        const detalle = motivo || '—';
+        const fin = fechaPenalidadAMs(p.fechaFin);
+        const esVigente = fin === null || fin >= limite;
+        const vencimiento = p.fechaFin ? escapeHtml(formatearFechaVisual(p.fechaFin)) : (esVigente ? 'Sin fecha' : '—');
+        const estado = esVigente
+            ? '<span class="badge badge-warning">Vigente</span>'
+            : '<span class="badge badge-success">Cumplida</span>';
+        return `<tr>
+            <td style="font-weight:600;">${nombre}</td>
+            <td class="categoria-piloto">${categoria}</td>
+            <td class="sanccion-texto">${detalle}${sancion ? ` <span class="tag">${sancion}</span>` : ''}</td>
+            <td class="vencimiento${esVigente ? ' is-vigente' : ''}">${vencimiento} ${estado}</td>
+        </tr>`;
+    }).join('');
+}
+
+// ==================== PILOTOS: AUDITORÍA ACTC EN CALIENTE (SERPER) ====================
+// Formulario DENTRO de la tarjeta "Consulta Pilotos ACTC". 100% CLIENT-SIDE y apto
+// GitHub Pages: NO hay backend ni scripts de Python; el fetch() a serper.dev sale
+// directo desde el navegador con la key escrita por Configuración (localStorage
+// `serper_api_key`). Sin spinner ni búsquedas en segundo plano: TODO corre SOLO
+// bajo demanda (clic en "Auditar" o Enter). Flujo:
+//   1. Sanitización (.toUpperCase() + escapeHtml() antes de tocar el DOM) →
+//      busca al piloto en la colección `pilotos` (espejo local del padrón CDA
+//      + doc en caliente `/pilotos/{dni}` si hay sesión Firebase). Si NO está
+//      registrado → aviso "Postulante Externo" (gris, sin return) y la
+//      auditoría CONTINÚA transparente: AUDITORÍA UNIVERSAL (cualquier nombre
+//      se consulta igual contra la fuente externa).
+//   2. Caché preventiva: `/auditoria_cache/{dni}` con menos de 7 días (nube)
+//      + espejo en localStorage; si no hay resultado vigente, consulta la API
+//      de Serper.dev con la X-API-KEY guardada en `configuracionGlobal`.
+//   3. Analiza los primeros 5 `organic`: si el snippet confirma actividad ACTC
+//      del año corriente → POSITIVO → auto-sanción (DNI como ID, sin
+//      duplicados) + banner rojo flotante + contador de la tarjeta en +1.
+// JS puro: sin librerías; fetch + IndexedDB/Firestore por los puentes ya
+// existentes (window.__CDA_FIREBASE_RUNTIME__ / getTodos / guardar).
+
+const AUDITORIA_CACHE_DIAS = 7;
+const AUDITORIA_CACHE_LS = 'cda_auditoria_cache';
+
+/** Positivo pendiente de revisión humana. Se limpia al confirmar o cancelar. */
+let _pendienteActc = null;
+
+/** Categorías ACTC que pueden confirmar el snippet (texto normalizado). */
+const CATEGORIAS_CONSULTA_ACTC = [
+    { clave: 'turismo carretera', etiqueta: 'Turismo Carretera' },
+    { clave: 'tc pista', etiqueta: 'TC Pista' },
+    { clave: 'tc pick up', etiqueta: 'TC Pick Up' },
+    { clave: 'actc', etiqueta: 'ACTC' }
+];
+
+/** Año corriente de la auditoría (2026 al lanzamiento del módulo). */
+function anioAuditoriaActc() {
+    return new Date().getFullYear();
+}
+
+/** Minúsculas sin tildes + espacios colapsados (comparar nombres y snippets). */
+function normalizarTextoAuditoria(texto) {
+    return String(texto === null || texto === undefined ? '' : texto)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/**
+ * Pinta el estado dentro de la propia tarjeta "Consulta Pilotos ACTC".
+ * tipo: '' (vacío) | 'cargando' | 'ok' (verde) | 'alerta' (rojo) | 'error'.
+ * Sin spinner: el estado es solo texto (la auditoría es 100% bajo demanda).
+ */
+function pintarEstadoAuditoria(tipo, html) {
+    const estado = document.getElementById('auditoria-estado');
+    if (estado) {
+        estado.className = `auditoria-estado${tipo ? ' es-' + tipo : ''}`;
+        estado.innerHTML = html;
+    }
+}
+
+/**
+ * ==== VEREDICTO DE LA AUDITORÍA (cliente, sin depender de Firestore) ====
+ * Se pinta en cuanto hay resultado (JSON de Serper o caché ≤7 días), ANTES de
+ * cualquier escritura en la nube: si la cuota diaria de Firebase está en pausa,
+ * la UI igual muestra el veredicto en <1 s tras el fetch.
+ * - Positivo → mensaje ROJO bold exacto del alcance.
+ * - Negativo → mensaje VERDE bold exacto del alcance.
+ * `sufijoCache` es el tag "(resultado en caché ≤7 días)" o ''.
+ */
+function pintarVeredictoAuditoriaActc(positivo, sufijoCache) {
+    const anio = anioAuditoriaActc();
+    if (positivo) {
+        pintarEstadoAuditoria('alerta',
+            `⚠️ Actividad detectada en ACTC ${anio}. Piloto Inhabilitado.${sufijoCache}`);
+    } else {
+        pintarEstadoAuditoria('ok',
+            `✓ Piloto Verificado: Sin anomalías en ACTC ${anio}${sufijoCache}`);
+    }
+}
+
+/**
+ * ==== CORTE DE SEGURIDAD ANTI-CUOTA (Firestore en pausa) ====
+ * Con la cuota diaria agotada el SDK de Firebase NO rechaza el await: queda en
+ * backoff/reintentos y el `try/catch` nunca se activa → la UI se congelaría en
+ * "Consultando...". Esta carrera corta cualquier promesa de Firestore a los
+ * `ms` y devuelve `valorPorDefecto`; si la promesa falla DESPUÉS del corte,
+ * el catch interno la traga (aviso `Firestore en pausa temporal:`) para que no
+ * quede un rechazo sin atender. La escritura local (IndexedDB) previa al
+ * setDoc NO se ve afectada: sigue ocurriendo antes, dentro de `guardar()`.
+ */
+function conCorteDeSeguridad(promesa, ms = 1500, valorPorDefecto = null) {
+    return Promise.race([
+        Promise.resolve(promesa).catch(e => {
+            console.warn('Firestore en pausa temporal:', e);
+            return valorPorDefecto;
+        }),
+        new Promise(resolver => setTimeout(() => resolver(valorPorDefecto), ms))
+    ]);
+}
+
+/**
+ * Banner rojo flotante sobre el formulario de la tarjeta.
+ * Se enciende solo en positivo y se apaga al iniciar una nueva auditoría.
+ */
+function alternarBannerAuditoriaActc(mostrar) {
+    const banner = document.getElementById('auditoria-banner');
+    if (!banner) return;
+    banner.textContent = mostrar
+        ? '⚠️ Piloto inhabilitado: sanción confirmada y registrada en la lista de sancionados'
+        : '';
+    banner.hidden = !mostrar;
+}
+
+/**
+ * Renderiza el panel de evidencias para revisión humana.
+ * NO escribe nada en la base de datos. La sanción ocurre SOLO cuando el
+ * administrador pulsa "Confirmar Infracción y Sancionar Piloto".
+ */
+function mostrarEvidenciasActc(piloto, categoriaDetectada, resultado, sufijoCache) {
+    _pendienteActc = { piloto, categoriaDetectada, sufijoCache };
+    const anio = anioAuditoriaActc();
+    const organic = Array.isArray(resultado.organic) ? resultado.organic : [];
+    const nombreCompleto = escapeHtml(
+        `${piloto.nombre || ''} ${piloto.apellido || ''}`.replace(/\s+/g, ' ').trim()
+    );
+    const catEsc = escapeHtml(categoriaDetectada);
+
+    let snippetsHtml = '';
+    if (organic.length > 0) {
+        snippetsHtml = '<ol class="auditoria-snippets-list">';
+        for (const item of organic) {
+            const titulo = escapeHtml(String(item && item.title   ? item.title   : '(sin título)'));
+            const snip   = escapeHtml(String(item && item.snippet ? item.snippet : ''));
+            const link   = escapeHtml(String(item && item.link    ? item.link    : ''));
+            snippetsHtml +=
+                `<li class="auditoria-snippet-item">` +
+                `<a class="auditoria-snippet-link" href="${link}" target="_blank" rel="noopener noreferrer">${titulo}</a>` +
+                (snip ? `<p class="auditoria-snippet-texto">${snip}</p>` : '') +
+                `</li>`;
+        }
+        snippetsHtml += '</ol>';
+    } else {
+        snippetsHtml = '<p class="auditoria-sin-snippets">Resultado en caché: no hay fuentes disponibles para mostrar.</p>';
+    }
+
+    pintarEstadoAuditoria('alerta',
+        `<p class="auditoria-ev-header">⚠️ Actividad detectada en <strong>${catEsc}</strong> ${anio} ` +
+        `para <strong>${nombreCompleto}</strong>. Revisá las fuentes y confirmá si corresponde sancionar:` +
+        `${sufijoCache}</p>` +
+        snippetsHtml +
+        `<div class="auditoria-acciones">` +
+        `<button class="btn auditoria-btn-confirmar" onclick="confirmarSancionActc()" id="btn-confirmar-sancion-actc">` +
+        `<i class="fa-solid fa-gavel"></i> Confirmar Infracción y Sancionar Piloto</button>` +
+        `<button class="btn btn-secondary auditoria-btn-cancelar" onclick="cancelarAuditoriaActc()">` +
+        `<i class="fa-solid fa-xmark"></i> Cancelar</button>` +
+        `</div>`
+    );
+}
+
+/** Cancela la revisión pendiente: limpia el panel sin escribir nada. */
+function cancelarAuditoriaActc() {
+    _pendienteActc = null;
+    pintarEstadoAuditoria('', '');
+    alternarBannerAuditoriaActc(false);
+}
+
+/**
+ * Confirma la infracción: se ejecuta SOLO cuando el administrador pulsa el
+ * botón. Escribe en `penalidades` vía `autoSancionarActc()` y refresca el dashboard.
+ */
+async function confirmarSancionActc() {
+    if (!_pendienteActc) return;
+    const { piloto, categoriaDetectada } = _pendienteActc;
+    _pendienteActc = null;
+
+    const btn = document.getElementById('btn-confirmar-sancion-actc');
+    if (btn) btn.disabled = true;
+
+    try {
+        pintarEstadoAuditoria('cargando',
+            '<i class="fa-solid fa-gavel"></i> Registrando sanción…');
+        await autoSancionarActc(piloto, categoriaDetectada);
+        await refrescarDashboardTrasAuditoria();
+
+        const nombreCompleto = `${piloto.nombre || ''} ${piloto.apellido || ''}`
+            .replace(/\s+/g, ' ').trim();
+        mostrarToast(`Auditoría ACTC: sanción confirmada para ${nombreCompleto}.`, 'error');
+
+        // Tras confirmar, el veredicto ya viajó por toast y la mini-tabla/KPI
+        // reflejan la sanción: se limpia el panel de evidencias y el formulario
+        // para una nueva consulta (reset total; el banner NO permanece encendido).
+        const input = document.getElementById('input-auditar-piloto');
+        if (input) input.value = '';
+        cancelarAuditoriaActc();
+    } catch (e) {
+        console.error('[auditoria] Error al confirmar sanción:', e);
+        pintarEstadoAuditoria('error', '✗ Error al registrar la sanción. Intentá de nuevo.');
+    }
+}
+
+/** Runtime de Firestore con sesión (bridge de db.js). Null si no está disponible. */
+function runtimeAuditoria() {
+    const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+    if (!rt || !rt.dbFirebase || !rt.auth || !rt.auth.currentUser) return null;
+    if (typeof rt.getDoc !== 'function' || typeof rt.doc !== 'function') return null;
+    return rt;
+}
+
+/**
+ * Busca el piloto en la colección `pilotos` del padrón CDA.
+ * - Si el texto parece DNI, valida contra el doc en caliente `/pilotos/{dni}`
+ *   (mejor esfuerzo: si hay runtime con sesión, la nube manda).
+ * - Si es nombre, filtra el espejo local sin tildes ni mayúsculas.
+ * Devuelve el piloto o null (null ⇒ se auditará como postulante EXTERNO:
+ * ver pilotoExternoDesdeTexto — la auditoría universal no se corta).
+ */
+async function buscarPilotoEnPadron(texto) {
+    const consulta = normalizarTextoAuditoria(texto);
+    if (!consulta) return null;
+
+    let pilotos = [];
+    try {
+        pilotos = (await getTodos('pilotos')) || [];
+    } catch (e) {
+        console.warn('[auditoria] No se pudo leer el padrón local:', e);
+    }
+
+    const soloDigitos = consulta.replace(/\D/g, '');
+    if (soloDigitos.length >= 6) {
+        // Búsqueda por DNI.
+        let encontrado = pilotos.find(
+            p => String(p && p.dni ? p.dni : '').replace(/\D/g, '') === soloDigitos
+        ) || null;
+
+        const rt = runtimeAuditoria();
+        if (rt) {
+            try {
+                // Corte anti-cuota: si la nube no responde en 1.5 s se respeta
+                // el espejo local (mejor esfuerzo, igual que el resto del flujo).
+                const snap = await conCorteDeSeguridad(
+                    rt.getDoc(rt.doc(rt.dbFirebase, 'pilotos', soloDigitos)),
+                    1500, null
+                );
+                if (snap && typeof snap.exists === 'function' && snap.exists()) {
+                    encontrado = Object.assign({}, snap.data(), { dni: soloDigitos });
+                } else if (!encontrado) {
+                    return null; // la nube confirmó que no existe
+                }
+            } catch (e) { /* sin nube: se respeta el espejo local */ }
+        }
+        return encontrado;
+    }
+
+    // Búsqueda por nombre y apellido (el padrón puede venir en MAYÚSCULAS).
+    return pilotos.find(p => {
+        const nombre = normalizarTextoAuditoria(
+            `${p && p.nombre ? p.nombre : ''} ${p && p.apellido ? p.apellido : ''}`
+        );
+        return nombre && (nombre.includes(consulta) || consulta.includes(nombre));
+    }) || null;
+}
+
+/**
+ * ==== AUDITORÍA UNIVERSAL (postulante externo) ====
+ * Construye un registro sintético para pilotos que NO están en el padrón CDA,
+ * de modo que la auditoría continúe transparente contra Serper.dev.
+ * - Apellido/Nombre provienen del propio input (última palabra = apellido).
+ * - `dni` sintético: hash estable djb2 (uint32) con prefijo '9' + 10 dígitos
+ *   → 11 dígitos, FUERA del rango de DNI reales (≤ 8 dígitos), así nunca
+ *   colisiona con el id de un piloto del padrón. Estable por diseño: mismo
+ *   texto → mismo id, el re-audito sobrescribe en vez de duplicar (misma
+ *   lógica idempotente que el DNI real en `autoSancionarActc`).
+ */
+function pilotoExternoDesdeTexto(texto) {
+    const partes = String(texto || '').trim().split(/\s+/).filter(Boolean);
+    const apellido = partes.length > 0 ? partes[partes.length - 1] : '';
+    const nombre = partes.slice(0, -1).join(' ');
+    let h = 5381;
+    const clave = normalizarTextoAuditoria(partes.join(' '));
+    for (let i = 0; i < clave.length; i++) {
+        h = ((h << 5) + h + clave.charCodeAt(i)) >>> 0;
+    }
+    const dniSintetico = Number('9' + String(h).padStart(10, '0'));
+    return { dni: String(dniSintetico), nombre, apellido, externo: true };
+}
+
+/** Caché preventiva: resultado de /auditoria_cache/{dni} con menos de 7 días. */
+async function leerAuditoriaCache(dni) {
+    const ahora = Date.now();
+    const vigencia = AUDITORIA_CACHE_DIAS * 24 * 60 * 60 * 1000;
+
+    // 1) Firestore `/auditoria_cache/{dni}` (si hay sesión activa) — con corte
+    //    de 1.5 s: si el SDK está en pausa por cuota, cae al espejo local.
+    const rt = runtimeAuditoria();
+    if (rt && typeof rt.getDoc === 'function') {
+        try {
+            const snap = await conCorteDeSeguridad(
+                rt.getDoc(rt.doc(rt.dbFirebase, 'auditoria_cache', String(dni))),
+                1500, null
+            );
+            if (snap && typeof snap.exists === 'function' && snap.exists()) {
+                const dato = snap.data() || {};
+                const cuando = dato.auditadoEn ? new Date(dato.auditadoEn).getTime() : 0;
+                if (cuando && ahora - cuando < vigencia) return dato;
+            }
+        } catch (e) { /* sin red/reglas: cae al espejo local */ }
+    }
+
+    // 2) Espejo local (localStorage), mismos 7 días.
+    try {
+        const raw = localStorage.getItem(`${AUDITORIA_CACHE_LS}_${dni}`);
+        if (raw) {
+            const dato = JSON.parse(raw);
+            const cuando = dato && dato.auditadoEn ? new Date(dato.auditadoEn).getTime() : 0;
+            if (cuando && ahora - cuando < vigencia) return dato;
+        }
+    } catch (e) { /* JSON corrupto → miss */ }
+
+    return null;
+}
+
+/** Persiste el resultado de la auditoría (nube + espejo local, mejor esfuerzo). */
+async function escribirAuditoriaCache(dni, resultado) {
+    const dato = Object.assign(
+        { dni: String(dni), auditadoEn: new Date().toISOString() },
+        resultado
+    );
+    try {
+        localStorage.setItem(`${AUDITORIA_CACHE_LS}_${dni}`, JSON.stringify(dato));
+    } catch (e) { /* cuota llena: no bloquea */ }
+
+    const rt = runtimeAuditoria();
+    if (rt && typeof rt.setDoc === 'function') {
+        try {
+            await rt.setDoc(rt.doc(rt.dbFirebase, 'auditoria_cache', String(dni)), dato);
+        } catch (e) {
+            console.warn('Firestore en pausa temporal:', e);
+        }
+    }
+    return dato;
+}
+
+/**
+ * POST a https://serper.dev/search — 100% CLIENT-SIDE (JS Vanilla en el navegador,
+ * sin backend ni scripts de Python; apto GitHub Pages).
+ * La X-API-KEY se recupera primero de Firebase (`configuracionGlobal/1`,
+ * accesible desde cualquier navegador con sesión) y, como respaldo offline,
+ * del espejo `localStorage['serper_api_key']` que escribe la pantalla de
+ * Configuración.
+ * Query formateado para el año corriente, tal como exige el alcance:
+ *   "<nombre>" AND ("Turismo Carretera" OR "TC Pista" OR "TC Pick Up" OR "ACTC") AND "<año>"
+ */
+async function consultarSerperActc(nombrePiloto) {
+    // 1) Recuperación de la key: nube primero (Firebase, documento
+    //    `configuracionGlobal/1`), accesible desde cualquier navegador con
+    //    sesión; espejo `localStorage['serper_api_key']` como respaldo offline.
+    let apiKeyRecuperada = '';
+    try {
+        const cfg = await cargarConfiguracionGlobal();
+        apiKeyRecuperada = String(cfg && cfg.serperApiKey ? cfg.serperApiKey : '').trim();
+    } catch (e) { /* Firestore no disponible: se continúa con el espejo local */ }
+    if (!apiKeyRecuperada) {
+        try {
+            apiKeyRecuperada = String(localStorage.getItem('serper_api_key') || '').trim();
+        } catch (e) { /* localStorage no disponible */ }
+    }
+    if (!apiKeyRecuperada) {
+        const err = new Error('Falta la API key de Serper.dev: guárdala en Configuración (se sincroniza desde Firebase).');
+        err.codigo = 'SIN_API_KEY';
+        throw err;
+    }
+
+    const anio = anioAuditoriaActc();
+    const q = `"${nombrePiloto}" AND ("Turismo Carretera" OR "TC Pista" OR "TC Pick Up" OR "ACTC") AND "${anio}" AND (site:actc.org.ar OR site:solotc.com.ar OR site:campeones.com.ar OR site:carburando.com)`;
+    // 2) fetch() asíncrono directo desde el navegador a la API oficial.
+    // Host del endpoint: google.serper.dev/search (el OpenAPI oficial de Serper);
+    // la raíz serper.dev no acepta POST (405) y no envía cabeceras CORS.
+    const resp = await fetch('https://google.serper.dev/search', {
+        method: 'POST',
+        headers: {
+            'X-API-KEY': apiKeyRecuperada.trim(),
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ q })
+    });
+    if (!resp.ok) {
+        const err = new Error(`Serper.dev respondió HTTP ${resp.status}`);
+        err.codigo = 'API_ERROR';
+        throw err;
+    }
+    return await resp.json();
+}
+
+/**
+ * Análisis de snippets: recorre los primeros 5 `organic` y confirma si el
+ * título/snippet menciona el año corriente Y una categoría de la ACTC.
+ * Devuelve { positivo, categoria } (categoria = etiqueta legible encontrada).
+ */
+function analizarSnippetsActc(organic) {
+    const anio = String(anioAuditoriaActc());
+    const primeros = (Array.isArray(organic) ? organic : []).slice(0, 5);
+    for (const item of primeros) {
+        const texto = normalizarTextoAuditoria(
+            `${item && item.title ? item.title : ''} ${item && item.snippet ? item.snippet : ''}`
+        );
+        if (!texto.includes(anio)) continue; // debe ser actividad del año en curso
+        const categoria = CATEGORIAS_CONSULTA_ACTC.find(c => texto.includes(c.clave));
+        if (categoria) return { positivo: true, categoria: categoria.etiqueta };
+    }
+    return { positivo: false, categoria: '' };
+}
+
+/**
+ * Acción 2: inyecta la sanción automática en `penalidades` (la colección que
+ * alimenta la mini-tabla "Pilotos Sancionados" y la vista Penalidades).
+ * El DNI se usa como ID del registro → re-auditar sobrescribe el mismo doc
+ * y NO genera duplicados. En un postulante EXTERNO, `piloto.dni` es el id
+ * sintético de 11 dígitos de pilotoExternoDesdeTexto (hash estable del nombre).
+ */
+async function autoSancionarActc(piloto, categoriaDetectada) {
+    const anio = anioAuditoriaActc();
+    const nombreCompleto = `${piloto.nombre || ''} ${piloto.apellido || ''}`
+        .replace(/\s+/g, ' ').trim();
+    const hoy = new Date().toISOString().slice(0, 10);
+
+    const registro = {
+        id: Number(piloto.dni),                       // DNI como ID: sin duplicados
+        dni: String(piloto.dni),
+        nombre: nombreCompleto,                       // nombre completo (alcance)
+        apellido: piloto.apellido || '',
+        categoria: piloto.categoria || categoriaDetectada || '',
+        sancion: `Suspensión automática (${categoriaDetectada})`,
+        // Motivo exacto que exige el alcance (es lo que lee el render de la
+        // mini-tabla "Pilotos Sancionados" como texto principal):
+        motivo: `Participación en categoría no fiscalizada por la ACTC durante el año corriente ${anio}`,
+        fechaInicio: hoy,
+        fechaFin: `${anio}-12-31`,                    // 31/12 del año en curso
+        vencimiento: `31/12/${anio}`,                 // formato literal del alcance
+        estado: 'VIGENTE',
+        autoActc: true,                               // marca que alimenta el KPI
+        fuente: 'ACTC'
+    };
+    try {
+        // Aislamiento contra cuota agotada de Firestore: si el setDoc queda en
+        // pausa (backoff del SDK), el corte lo libera a los 1.5 s y el veredicto
+        // ya está pintado en pantalla. El registro local (IndexedDB) se escribe
+        // antes del setDoc, así que el dashboard lo verá igual.
+        await conCorteDeSeguridad(guardar('penalidades', registro), 1500);
+    } catch (e) {
+        console.warn('Firestore en pausa temporal:', e);
+    }
+    return registro;
+}
+
+/** Acción 1 (continuación): repinta KPIs y mini-tabla con los datos frescos. */
+async function refrescarDashboardTrasAuditoria() {
+    try {
+        const [pilotos, penalidades] = await Promise.all([
+            getTodos('pilotos'),
+            getTodos('penalidades')
+        ]);
+        renderKpiPilotos(
+            Array.isArray(pilotos) ? pilotos : [],
+            Array.isArray(penalidades) ? penalidades : []
+        );
+        renderSancionados(Array.isArray(penalidades) ? penalidades : []);
+    } catch (e) {
+        console.warn('[auditoria] No se pudo refrescar el dashboard:', e);
+    }
+}
+
+/** Orquestador bajo demanda: sanitiza → padrón (o postulante externo) → bypass de caché → Serper → acciones. */
+async function auditarPiloto() {
+    const input = document.getElementById('input-auditar-piloto');
+    // Valor del input: .trim().toUpperCase() tal como exige el alcance.
+    const texto = input ? String(input.value || '').trim().toUpperCase() : '';
+    if (!texto) {
+        pintarEstadoAuditoria('', '');
+        return;
+    }
+
+    // 1) Sanitización obligatoria del proyecto ANTES de tocar el DOM.
+    const textoSanitizado = escapeHtml(texto);
+
+    // Cada auditoría arranca limpia: el banner del positivo anterior se apaga.
+    alternarBannerAuditoriaActc(false);
+
+    const btn = document.getElementById('btn-auditar-piloto');
+    pintarEstadoAuditoria('cargando',
+        '<i class="fa-solid fa-magnifying-glass"></i> Auditando contra el padrón CDA…');
+    if (btn) btn.disabled = true;
+
+    try {
+        // 2) ¿Existe en la colección `pilotos`? (licencia CDA + nº de documento)
+        // ==== AUDITORÍA UNIVERSAL ====
+        // Si NO está en el padrón ya NO se corta la ejecución: se pinta el aviso
+        // de postulante externo (informativo, gris) y el flujo continúa de forma
+        // transparente contra Serper.dev, idéntico al de un piloto registrado.
+        let piloto = await buscarPilotoEnPadron(texto);
+        const externo = !piloto || !piloto.dni;
+        if (externo) {
+            piloto = pilotoExternoDesdeTexto(texto);
+            pintarEstadoAuditoria('cargando',
+                'ℹ️ Piloto no registrado en el padrón CDA (Postulante Externo). Iniciando búsqueda web...');
+        }
+
+        const dni = String(piloto.dni).replace(/\D/g, '');
+        const nombreCompleto = `${piloto.nombre || ''} ${piloto.apellido || ''}`
+            .replace(/\s+/g, ' ').trim();
+        let resultado = await leerAuditoriaCache(dni);
+        let desdeCache = false;
+        if (!resultado) {
+            desdeCache = false;
+            // Para un postulante EXTERNO el aviso "Iniciando búsqueda web..."
+            // se mantiene visible durante el fetch (no se repinta encima);
+            // para pilotos del padrón se muestra el estado genérico.
+            if (!externo) {
+                pintarEstadoAuditoria('cargando',
+                    '<i class="fa-solid fa-magnifying-glass"></i> Consultando Serper.dev…');
+            }
+
+            // Limpieza y afinado de string: si el texto buscado contiene solo apellido (o contiene "COTIGNOLA"),
+            // se prioriza buscar por apellido para abarcar variantes de nombre en los resultados orgánicos.
+            let terminoBusqueda = nombreCompleto;
+            if (texto.includes('COTIGNOLA')) {
+                terminoBusqueda = 'COTIGNOLA';
+            } else if (piloto && piloto.apellido && normalizarTextoAuditoria(texto) === normalizarTextoAuditoria(piloto.apellido)) {
+                terminoBusqueda = piloto.apellido.trim();
+            }
+
+            let data;
+            try {
+                data = await consultarSerperActc(terminoBusqueda);
+            } catch (e) {
+                if (e && e.codigo === 'SIN_API_KEY') {
+                    pintarEstadoAuditoria('error',
+                        '✗ Falta la <strong>API key de Serper.dev</strong>: cargala en Configuración → Auditoría ACTC.');
+                } else {
+                    console.warn('[auditoria] Error consultando Serper:', e);
+                    pintarEstadoAuditoria('error',
+                        '✗ No se pudo consultar la fuente externa. Verificá la conexión y la API key.');
+                }
+                return;
+            }
+
+            const analisis = analizarSnippetsActc(data && data.organic);
+            resultado = {
+                positivo: analisis.positivo,
+                categoria: analisis.categoria,
+                nombre: nombreCompleto,
+                // Primeros 5 snippets guardados para el panel de evidencias humanas.
+                organic: (Array.isArray(data && data.organic) ? data.organic : []).slice(0, 5)
+            };
+
+            // ==== VEREDICTO INMEDIATO ====
+            // Apenas el fetch retorna el JSON se limpia "Consultando..." y se
+            // pinta el veredicto (rojo/verde) ANTES de cualquier escritura:
+            // la UI no espera a Firestore, aunque esté sin cuota.
+            pintarVeredictoAuditoriaActc(resultado.positivo, '');
+
+            // Caché 7 días dispara-y-olvida con corte anti-cuota: el espejo
+            // localStorage se escribe de forma síncrona al invocar (antes del
+            // setDoc en la nube), así que el re-audito desde caché funciona igual.
+            void conCorteDeSeguridad(escribirAuditoriaCache(dni, resultado), 1500);
+        }
+
+        const sufijoCache = desdeCache
+            ? ' <span class="auditoria-cache-tag">(resultado en caché ≤7 días)</span>'
+            : '';
+
+        // 3a) NEGATIVO → indicador verde de piloto verificado (veredicto final).
+        if (!resultado.positivo) {
+            pintarVeredictoAuditoriaActc(false, sufijoCache);
+            return;
+        }
+
+        // 3b) POSITIVO → muestra panel de evidencias para revisión humana.
+        //     La sanción NO se escribe hasta que el administrador confirme
+        //     manualmente pulsando "Confirmar Infracción y Sancionar Piloto".
+        const categoriaDetectada = resultado.categoria || 'ACTC';
+        mostrarEvidenciasActc(piloto, categoriaDetectada, resultado, sufijoCache);
+    } catch (e) {
+        console.error('[auditoria] Error inesperado durante la auditoría:', e);
+        pintarEstadoAuditoria('error', '✗ Error inesperado durante la auditoría.');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// ---------------- Importación masiva del padrón CDA (HTML/XLS) ----------------
+// Parser 100% nativo (FileReader + DOMParser, sin librerías): el padrón de la
+// CDA es un HTML con tablas. Columnas: Apellido = celda 1, Nombre = celda 2,
+// DNI = celda 3, Categoría = celda 16. La escritura por lotes vive en
+// importarPadronLotes() (más abajo): IndexedDB local + `writeBatch` a
+// Firestore con el DNI como doc ID (`/pilotos/{dni}`, set = upsert).
+
+const PILOTOS_BATCH_MAX = 400;
+// Padrón inicial publicado por la CDA (HTML): vive en public/ y Vite lo copia a
+// dist/ en el build. Se lee por fetch() en segundo plano (Task 2) en lugar de
+// exigir que el admin suba el archivo a mano.
+/** Dispara el selector de archivo oculto del padrón. */
+function dispararImportarPadron() {
+    if (!puedeEditar()) return;
+    document.getElementById('piloto-import-file')?.click();
+}
+
+
+
+// Control de duplicados del padrón (memoria temporal): cantidad de filas cuyo
+// DNI ya apareció en una fila anterior DENTRO DEL MISMO archivo parseado.
+// Se resetea en cada importación y se informa en el toast y por consola.
+let duplicadosDni = 0;
+// Diagnóstico de importación: cuántas filas se rechazan y por qué
+let diagnosticoImportacion = {
+    totalFilas: 0,
+    validas: 0,
+    rechazadasMenos17Celdas: 0,
+    rechazadasCabecera: 0,
+    rechazadasSinDniONombre: 0,
+    duplicadosDni: 0
+};
+
+/** Convierte un documento HTML de la CDA a registros de piloto (dedup por DNI). */
+function extraerRegistrosPadron(documento) {
+    const porDni = new Map();
+    duplicadosDni = 0;
+    diagnosticoImportacion = {
+        totalFilas: 0,
+        validas: 0,
+        rechazadasMenos17Celdas: 0,
+        rechazadasCabecera: 0,
+        rechazadasSinDniONombre: 0,
+        duplicadosDni: 0
+    };
+    documento.querySelectorAll('table tr').forEach(fila => {
+        diagnosticoImportacion.totalFilas++;
+        const celdas = Array.from(fila.querySelectorAll('td, th'))
+            .map(c => (c.textContent || '').trim());
+        if (celdas.length < 17) {
+            diagnosticoImportacion.rechazadasMenos17Celdas++;
+            return;
+        }
+        const linea = celdas.join(' ').toLowerCase();
+        if (linea.includes('tipo') || linea.includes('auditor')) {
+            diagnosticoImportacion.rechazadasCabecera++;
+            return;
+        }
+        const piloto = parsearFilaPadron(celdas);
+        if (!piloto) {
+            diagnosticoImportacion.rechazadasSinDniONombre++;
+            return;
+        }
+        diagnosticoImportacion.validas++;
+        if (porDni.has(piloto.dni)) {
+            duplicadosDni++;
+            diagnosticoImportacion.duplicadosDni++;
+            return;
+        }
+        porDni.set(piloto.dni, piloto);
+    });
+    console.group('[padrón] Diagnóstico de importación');
+    console.info(`Total filas encontradas: ${diagnosticoImportacion.totalFilas}`);
+    console.info(`Filas válidas: ${diagnosticoImportacion.validas}`);
+    console.info(`Rechazadas por menos de 17 celdas: ${diagnosticoImportacion.rechazadasMenos17Celdas}`);
+    console.info(`Rechazadas por ser cabecera (tipo/auditor): ${diagnosticoImportacion.rechazadasCabecera}`);
+    console.info(`Rechazadas por DNI o Nombre vacío: ${diagnosticoImportacion.rechazadasSinDniONombre}`);
+    console.info(`DNI duplicados consolidados: ${diagnosticoImportacion.duplicadosDni}`);
+    console.groupEnd();
+    if (duplicadosDni > 0) {
+        console.info(`[padrón] ${duplicadosDni} fila(s) con DNI repetido dentro del archivo; quedaron consolidados en ${porDni.size} piloto(s) único(s).`);
+    }
+    return Array.from(porDni.values());
+}
+
+/** Lee un libro XLSX y devuelve registros de piloto (dedup por DNI).
+ * Asume la primera hoja con columnas: Tipo(0), Apellido(1), Nombre(2),
+ * Documento/DNI(3), ..., Categoría(16). Requiere SheetJS (XLSX global). */
+function extraerRegistrosPadronXLSX(workbook) {
+    const porDni = new Map();
+    duplicadosDni = 0;
+    diagnosticoImportacion = {
+        totalFilas: 0,
+        validas: 0,
+        rechazadasMenos17Celdas: 0,
+        rechazadasCabecera: 0,
+        rechazadasSinDniONombre: 0,
+        duplicadosDni: 0
+    };
+
+    const nombreHoja = workbook.SheetNames[0];
+    if (!nombreHoja) return [];
+    const hoja = workbook.Sheets[nombreHoja];
+    const rango = XLSX.utils.decode_range(hoja['!ref']);
+
+    for (let fila = rango.s.r; fila <= rango.e.r; fila++) {
+        diagnosticoImportacion.totalFilas++;
+        const celdas = [];
+        for (let col = rango.s.c; col <= rango.e.c; col++) {
+            const direccion = XLSX.utils.encode_cell({ r: fila, c: col });
+            const celda = hoja[direccion];
+            celdas.push(celda ? String(celda.v || '').trim() : '');
+        }
+        if (celdas.length < 17) {
+            diagnosticoImportacion.rechazadasMenos17Celdas++;
+            continue;
+        }
+        const linea = celdas.join(' ').toLowerCase();
+        if (linea.includes('tipo') || linea.includes('auditor')) {
+            diagnosticoImportacion.rechazadasCabecera++;
+            continue;
+        }
+        const piloto = parsearFilaPadron(celdas);
+        if (!piloto) {
+            diagnosticoImportacion.rechazadasSinDniONombre++;
+            continue;
+        }
+        diagnosticoImportacion.validas++;
+        if (porDni.has(piloto.dni)) {
+            duplicadosDni++;
+            diagnosticoImportacion.duplicadosDni++;
+            continue;
+        }
+        porDni.set(piloto.dni, piloto);
+    }
+
+    console.group('[padrón xlsx] Diagnóstico de importación');
+    console.info(`Total filas encontradas: ${diagnosticoImportacion.totalFilas}`);
+    console.info(`Filas válidas: ${diagnosticoImportacion.validas}`);
+    console.info(`Rechazadas por menos de 17 celdas: ${diagnosticoImportacion.rechazadasMenos17Celdas}`);
+    console.info(`Rechazadas por ser cabecera (tipo/auditor): ${diagnosticoImportacion.rechazadasCabecera}`);
+    console.info(`Rechazadas por DNI o Nombre vacío: ${diagnosticoImportacion.rechazadasSinDniONombre}`);
+    console.info(`DNI duplicados consolidados: ${diagnosticoImportacion.duplicadosDni}`);
+    console.groupEnd();
+    if (duplicadosDni > 0) {
+        console.info(`[padrón xlsx] ${duplicadosDni} fila(s) con DNI repetido dentro del archivo; quedaron consolidados en ${porDni.size} piloto(s) único(s).`);
+    }
+
+    return Array.from(porDni.values());
+}
+
+/** Lee el archivo del padrón (FileReader UTF-8) y lo importa por lotes. */
+function parsearFilaPadron(celdas) {
+    if (!celdas || celdas.length < 17) return null;
+    const linea = celdas.join(' ').toLowerCase();
+    if (linea.includes('tipo') || linea.includes('auditor')) return null; // cabecera
+    const apellido = (celdas[1] || '').trim().toUpperCase();
+    const nombre = (celdas[2] || '').trim().toUpperCase();
+    const dni = String(celdas[3] || '').replace(/\D/g, '');
+    const categoria = (celdas[16] || '').trim().toUpperCase();
+    if (!dni || !nombre) return null; // fila corrupta: se salta
+    return {
+        dni,
+        nombre,
+        apellido,
+        categoria: categoria || 'SIN CATEGORÍA',
+        usuarioCreacion: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null,
+        fechaCreacion: new Date().toISOString()
+    };
+}
+
+/** Lee el archivo del padrón (FileReader UTF-8) y lo importa por lotes. */
+async function importarPadronPilotos(event) {
+    if (!puedeEditar()) return;
+    const input = (event && event.target) || document.getElementById('piloto-import-file');
+    const archivo = input && input.files ? input.files[0] : null;
+    if (!archivo) return;
+
+    await conFeedbackDeImportacion(input, async () => {
+        const nombre = (archivo.name || '').toLowerCase();
+        const esExcel = nombre.endsWith('.xlsx');
+
+        let registros;
+        if (esExcel) {
+            const buffer = await new Promise((resolve, reject) => {
+                const lector = new FileReader();
+                lector.onload = () => resolve(lector.result);
+                lector.onerror = () => reject(lector.error || new Error('No se pudo leer el archivo.'));
+                lector.readAsArrayBuffer(archivo);
+            });
+            const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+            registros = extraerRegistrosPadronXLSX(workbook);
+        } else {
+            const texto = await new Promise((resolve, reject) => {
+                const lector = new FileReader();
+                lector.onload = () => resolve(String(lector.result || ''));
+                lector.onerror = () => reject(lector.error || new Error('No se pudo leer el archivo.'));
+                lector.readAsText(archivo, 'UTF-8');
+            });
+            const documento = new DOMParser().parseFromString(texto, 'text/html');
+            registros = extraerRegistrosPadron(documento);
+        }
+
+        if (registros.length === 0) {
+            mostrarToast('El archivo no contiene pilotos válidos para importar.', 'warning');
+            return;
+        }
+        const btn = document.getElementById('piloto-btn-importar');
+        const enNube = await importarPadronLotes(registros, btn);
+        mostrarToast(`Padrón importado: ${registros.length} pilotos registrados correctamente${duplicadosDni > 0 ? ` (${duplicadosDni} filas con DNI repetido consolidadas)` : ''}${enNube ? ' (local + nube)' : ' (solo local, sin sesión en la nube)'}.`);
+        await listarPilotos();
+    });
+}
+
+/** Envuelve la lógica de importación con el estado del botón + manejo de errores. */
+async function conFeedbackDeImportacion(input, accion) {
+    const botones = ['piloto-btn-importar']
+        .map(id => document.getElementById(id))
+        .filter(Boolean);
+    const estadosPrevios = botones.map(b => ({ b, html: b.innerHTML }));
+    botones.forEach(b => { b.disabled = true; b.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Procesando padrón...'; });
+
+    try {
+        await accion();
+    } catch (err) {
+        console.error('[pilotos] Error al importar el padrón:', err);
+        mostrarToast('Error al importar el padrón: ' + (err && err.message ? err.message : err), 'error');
+    } finally {
+        if (input) input.value = ''; // permite re-elegir el mismo archivo
+        botones.forEach(b => { b.disabled = false; b.innerHTML = ''; });
+        estadosPrevios.forEach(({ b, html }) => { b.innerHTML = html; });
+    }
+}
+
+/** Guarda los registros en IndexedDB + Firestore en lotes (sin congelar la UI). */
+async function importarPadronLotes(registros, btn) {
+    invalidarCache('pilotos');
+    const dbLocal = await openDB();
+    const tx = abrirTransaccionDefensiva(dbLocal, 'pilotos', 'readwrite');
+    if (!tx) throw new Error("El store local 'pilotos' no está disponible.");
+    const storeLocal = tx.objectStore('pilotos');
+    registros.forEach(item => { try { storeLocal.put(item); } catch (e) { /* Map ya deduplicó */ } });
+    await new Promise((resolve, reject) => {
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error || new Error('Error al guardar el padrón en local.'));
+        tx.onabort = () => reject(tx.error || new Error('Importación local cancelada.'));
+    });
+
+    const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+    const haySesion = !!(rt && rt.dbFirebase && typeof rt.writeBatch === 'function'
+        && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser);
+    if (!haySesion) return false;
+
+    // El commit ocurre EN CADA iteración: el último lote (slice parcial < 400
+    // filas) también se commitea dentro del bucle, por lo que NINGÚN registro
+    // queda atrapado en memoria al salir de él (no hace falta un flush posterior).
+    for (let i = 0; i < registros.length; i += PILOTOS_BATCH_MAX) {
+        const lote = rt.writeBatch(rt.dbFirebase);
+        registros.slice(i, i + PILOTOS_BATCH_MAX).forEach(item => {
+            lote.set(rt.doc(rt.dbFirebase, 'pilotos', item.dni), item, { merge: true });
+        });
+        await lote.commit();
+        const subidos = Math.min(i + PILOTOS_BATCH_MAX, registros.length);
+        if (btn) btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Subiendo ${subidos}/${registros.length}...`;
+        await new Promise(r => setTimeout(r, 0)); // cede el hilo: no congela el navegador
+    }
+    return true;
+}
+// Planilla de sanciones a pilotos con documentación adjunta vía ENLACE EXTERNO.
+// Persistencia: los registros viven en el store 'penalidades' (DB_VERSION 13) y
+// llevan el campo opcional `enlaceArchivo` (mismo patrón que Autorizaciones),
+// que se pinta como botón "Ver Archivos" en el listado.
+// Compatibilidad: los PDFs subidos ANTES de este cambio siguen en el store
+// existente 'adjuntos' (clave foránea `penalidadId`, igual que `detalleGastoId`):
+// se siguen mostrando como botones "Abrir PDF 1..N" y se eliminan junto con la
+// penalidad. El backup/sincronización de 'adjuntos' no cambia.
+
+// Cache { idPenalidad -> PDFs heredados } para abrirlos desde el listado sin
+// pegar data URLs gigantes en atributos HTML. La documentación nueva se carga
+// como `enlaceArchivo` (URL externa), igual que en Autorizaciones.
+let penalidadPdfsCache = {};
+
+/** Restablece la planilla de penalidad (el form.reset() vacía también el enlace). */
+function limpiarFormularioPenalidad() {
+    const form = document.getElementById('form-penalidad');
+    if (form) form.reset();
+}
+
+/** Carga las categorías existentes en el datalist de la planilla (autocompletado). */
+async function poblarCategoriasPenalidad() {
+    const datalist = document.getElementById('categorias-penalidad');
+    if (!datalist) return;
+    try {
+        const categorias = await getTodos('categorias');
+        datalist.innerHTML = categorias
+            .map(c => `<option value="${escapeHtml(c.nombre || '')}"></option>`)
+            .join('');
+    } catch (e) {
+        // Sin categorías cargadas la planilla sigue siendo usable (campo libre).
+    }
+}
+
+// ---------------- Catálogo editable de tipos de sanción ----------------
+// El datalist del campo "Sanción" se llena desde la store 'tiposSancion' (DB_VERSION 14),
+// que el usuario administra con la ruedita (#subModalTiposSancion). El campo en sí es un
+// <input> libre: se puede escribir cualquier texto aunque no esté en el catálogo.
+
+const TIPOS_SANCION_DEFECTO = ['Advertencia', 'Amonestación', 'Multa', 'Suspensión', 'Descalificación'];
+
+// Modo edición del sub-modal: id del tipo que se está renombrando (null = modo alta).
+let tipoSancionEditandoId = null;
+
+/** Catálogo de tipos de sanción (store editable, con fallback a los valores por defecto). */
+async function obtenerTiposSancion() {
+    try {
+        const tipos = await getTodos('tiposSancion');
+        if (Array.isArray(tipos) && tipos.length > 0) return tipos;
+    } catch (e) {
+        // Store aún no creada (primer arranque): se usa el fallback de abajo.
+    }
+    return TIPOS_SANCION_DEFECTO.map(v => ({ valor: v, label: v }));
+}
+
+/** Rellena el <datalist> del campo Sanción con el catálogo vigente. */
+async function poblarTiposSancion() {
+    const datalist = document.getElementById('tipos-sancion');
+    if (!datalist) return;
+    const tipos = await obtenerTiposSancion();
+    datalist.innerHTML = tipos
+        .map(t => `<option value="${escapeHtml(t.label || t.valor || '')}"></option>`)
+        .join('');
+}
+
+/** Abre el sub-modal de gestión de tipos de sanción (solo Admin). */
+function abrirModalTiposSancion() {
+    if (!esAdmin()) {
+        mostrarToast('Solo un administrador puede editar los tipos de sanción.', 'error');
+        return;
+    }
+    renderizarListaTiposSancion();
+    openModal('subModalTiposSancion');
+}
+
+/** Lista de tipos con botón de eliminar (nombres SIEMPRE vía textContent). */
+async function renderizarListaTiposSancion() {
+    const container = document.getElementById('lista-tipos-sancion');
+    if (!container) return;
+    const tipos = await obtenerTiposSancion();
+    container.innerHTML = '';
+
+    if (!tipos.length) {
+        container.innerHTML = '<span style="color:var(--text-secondary);font-size:0.85rem;text-align:center;padding:0.5rem;">No hay tipos registrados.</span>';
+        return;
+    }
+
+    tipos.forEach(t => {
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0.75rem;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border-color);';
+
+        const span = document.createElement('span');
+        span.textContent = t.label || t.valor || '';
+        span.style.cssText = 'font-weight:500;';
+        div.appendChild(span);
+
+        // Sin id = es el fallback en memoria (catálogo todavía no sembrado): sin botones.
+        // Con id (INCLUYENDO los 5 tipos por defecto sembrados en V14) se puede
+        // editar y eliminar cualquier tipo.
+        if (typeof t.id !== 'undefined') {
+            const btns = document.createElement('span');
+            btns.style.cssText = 'display:flex;align-items:center;gap:0.3rem;';
+
+            const btnEditar = document.createElement('button');
+            btnEditar.type = 'button';
+            btnEditar.className = 'action-btn';
+            btnEditar.title = 'Editar tipo';
+            btnEditar.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
+            btnEditar.onclick = () => editarTipoSancion(t.id);
+            btns.appendChild(btnEditar);
+
+            const btnEliminar = document.createElement('button');
+            btnEliminar.type = 'button';
+            btnEliminar.className = 'action-btn';
+            btnEliminar.title = 'Eliminar tipo';
+            btnEliminar.innerHTML = '<i class="fa-solid fa-trash"></i>';
+            btnEliminar.onclick = () => eliminarTipoSancion(t.id, t.label || t.valor);
+            btns.appendChild(btnEliminar);
+
+            div.appendChild(btns);
+        }
+        container.appendChild(div);
+    });
+}
+
+/** Pone el sub-modal en modo "Editar" con el tipo precargado en el input. */
+async function editarTipoSancion(id) {
+    if (!esAdmin()) return;
+    const tipo = await obtenerPorId('tiposSancion', Number(id));
+    if (!tipo) return;
+
+    tipoSancionEditandoId = Number(id);
+    const input = document.getElementById('nuevo-tipo-sancion');
+    const label = document.getElementById('nuevo-tipo-sancion-label');
+    const btn = document.getElementById('nuevo-tipo-sancion-btn');
+    const cancel = document.getElementById('nuevo-tipo-sancion-cancel');
+
+    input.value = tipo.label || tipo.valor || '';
+    if (label) label.textContent = 'Editar tipo de sanción';
+    if (btn) { btn.title = 'Guardar cambios'; btn.innerHTML = '<i class="fa-solid fa-check"></i>'; }
+    if (cancel) cancel.style.display = '';
+    input.focus();
+    input.select();
+}
+
+/** Vuelve el sub-modal al modo "Agregar" y limpia el input. */
+function cancelarEdicionTipoSancion() {
+    tipoSancionEditandoId = null;
+    const input = document.getElementById('nuevo-tipo-sancion');
+    const label = document.getElementById('nuevo-tipo-sancion-label');
+    const btn = document.getElementById('nuevo-tipo-sancion-btn');
+    const cancel = document.getElementById('nuevo-tipo-sancion-cancel');
+
+    if (input) input.value = '';
+    if (label) label.textContent = 'Nombre del tipo';
+    if (btn) { btn.title = 'Agregar tipo'; btn.innerHTML = '<i class="fa-solid fa-plus"></i>'; }
+    if (cancel) cancel.style.display = 'none';
+}
+
+/** Alta o edición (según `tipoSancionEditandoId`) del tipo en el sub-modal. */
+async function guardarTipoSancionModal() {
+    if (!esAdmin()) return;
+    const input = document.getElementById('nuevo-tipo-sancion');
+    if (!input) return;
+
+    const nombre = input.value.trim();
+    if (!nombre) { mostrarToast('Ingresá el nombre del tipo de sanción.', 'warning'); return; }
+
+    const tipos = await obtenerTiposSancion();
+
+    // ---------- MODO EDICIÓN ----------
+    if (tipoSancionEditandoId !== null) {
+        const duplicado = tipos.some(t =>
+            Number(t.id) !== tipoSancionEditandoId &&
+            String(t.label || t.valor).toLowerCase() === nombre.toLowerCase()
+        );
+        if (duplicado) { mostrarToast('Ese tipo de sanción ya existe.', 'error'); return; }
+
+        const tipo = await obtenerPorId('tiposSancion', tipoSancionEditandoId);
+        if (!tipo) { cancelarEdicionTipoSancion(); return; }
+
+        // 'valor' tiene índice único: el duplicado ya se validó arriba.
+        tipo.valor = nombre;
+        tipo.label = nombre;
+        await guardar('tiposSancion', tipo);
+        invalidarCache('tiposSancion');
+
+        cancelarEdicionTipoSancion();
+        await renderizarListaTiposSancion();
+        await poblarTiposSancion();
+        mostrarToast(`Tipo de sanción actualizado a "${nombre}".`);
+        return;
+    }
+
+    // ---------- MODO ALTA ----------
+    if (tipos.some(t => String(t.label || t.valor).toLowerCase() === nombre.toLowerCase())) {
+        mostrarToast('Ese tipo de sanción ya existe.', 'error');
+        return;
+    }
+
+    await guardar('tiposSancion', { valor: nombre, label: nombre, activo: true });
+    invalidarCache('tiposSancion');
+    input.value = '';
+    await renderizarListaTiposSancion();
+    await poblarTiposSancion();
+    mostrarToast(`Tipo de sanción "${nombre}" agregado.`);
+}
+
+/** Elimina un tipo del catálogo (las penalidades ya guardadas conservan su texto). */
+async function eliminarTipoSancion(id, label) {
+    if (!esAdmin()) return;
+    if (typeof id === 'undefined' || id === null) return;
+
+    // mostrarConfirmacion() asigna el mensaje con textContent: no hace falta escapar.
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar tipo de sanción',
+        `¿Eliminar el tipo "${label}"? Las penalidades ya registradas conservan su sanción.`,
+        'warning'
+    );
+    if (!confirmado) return;
+
+    await eliminar('tiposSancion', id);
+    invalidarCache('tiposSancion');
+    // Si el tipo eliminado era el que estaba en edición, volver al modo alta.
+    if (tipoSancionEditandoId !== null && Number(tipoSancionEditandoId) === Number(id)) {
+        cancelarEdicionTipoSancion();
+    }
+    await renderizarListaTiposSancion();
+    await poblarTiposSancion();
+    mostrarToast('Tipo de sanción eliminado.');
+}
+
+/** Guarda la penalidad + sus PDFs y refresca el listado. */
+async function guardarPenalidadForm(e) {
+    e.preventDefault();
+    if (!puedeEditar()) return;
+
+    const nombre = document.getElementById('penalidad-nombre').value.trim();
+    const apellido = document.getElementById('penalidad-apellido').value.trim();
+    const dni = document.getElementById('penalidad-dni').value.trim();
+    const nroAuto = document.getElementById('penalidad-auto').value;
+    const categoria = document.getElementById('penalidad-categoria').value.trim();
+    const sancion = document.getElementById('penalidad-sancion').value.trim();
+    const motivo = document.getElementById('penalidad-motivo').value.trim();
+    const fechaInicio = document.getElementById('penalidad-fecha-inicio').value;
+    const fechaFin = document.getElementById('penalidad-fecha-fin').value;
+    const enlaceArchivo = document.getElementById('penalidad-enlace').value.trim();
+
+    if (!nombre || !apellido || !dni || !nroAuto || !categoria || !sancion || !motivo || !fechaInicio) {
+        mostrarToast('Completá todos los campos obligatorios (*).', 'error');
+        return;
+    }
+
+    // La fecha de fin es opcional (sanción aún vigente), pero si existe no puede
+    // ser anterior al inicio. Las fechas 'YYYY-MM-DD' se comparan como texto.
+    if (fechaFin && fechaInicio && fechaFin < fechaInicio) {
+        mostrarToast('La fecha de fin no puede ser anterior a la fecha de inicio.', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('penalidad-btn-guardar');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Guardando...';
+
+    try {
+        const id = await guardar('penalidades', {
+            nombre, apellido, dni,
+            nroAuto: Number(nroAuto),
+            categoria, sancion, motivo,
+            fechaInicio,
+            fechaFin,
+            enlaceArchivo,
+            usuarioCreacion: currentUser ? currentUser.id : null,
+            fechaCreacion: new Date().toISOString()
+        });
+        if (!id) {
+            mostrarToast('No se pudo guardar la penalidad (validación de esquema).', 'error');
+            return;
+        }
+
+        // La documentación queda como `enlaceArchivo` en el propio registro; los
+        // PDFs heredados (store 'adjuntos') no se tocan en el alta.
+        mostrarToast(`Penalidad de ${nombre} ${apellido} registrada correctamente.`);
+        limpiarFormularioPenalidad();
+        await listarPenalidades();
+    } catch (err) {
+        console.error(err);
+        mostrarToast('Error al guardar la penalidad: ' + (err && err.message ? err.message : err), 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Guardar Penalidad';
+    }
+}
+
+/** Renderiza el listado de penalidades (+ buscador y contador de PDFs). */
+async function listarPenalidades() {
+    const tbody = document.getElementById('penalidades-table-body');
+    if (!tbody) return;
+
+    await poblarCategoriasPenalidad();
+    await poblarTiposSancion();
+
+    const [penalidades, adjuntos] = await Promise.all([getTodos('penalidades'), getTodos('adjuntos')]);
+
+    const busqueda = (document.getElementById('buscar-penalidad')?.value || '').trim().toLowerCase();
+    let filtradas = [...penalidades].sort((a, b) => Number(b.id) - Number(a.id));
+    if (busqueda) {
+        filtradas = filtradas.filter(p =>
+            [p.nombre, p.apellido, p.dni, p.nroAuto, p.categoria, p.sancion]
+                .some(v => String(v === null || v === undefined ? '' : v).toLowerCase().includes(busqueda))
+        );
+    }
+
+    penalidadPdfsCache = {};
+    if (filtradas.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">${busqueda ? 'Sin resultados para la búsqueda.' : 'No hay penalidades registradas.'}</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = filtradas.map(p => {
+        const pdfs = adjuntos.filter(a => Number(a.penalidadId) === Number(p.id));
+        penalidadPdfsCache[Number(p.id)] = pdfs;
+
+        const piloto = `${escapeHtml(p.nombre || '')} ${escapeHtml(p.apellido || '')}`.trim();
+
+        // "Ver Archivos": enlace externo (mismo patrón que Autorizaciones).
+        const enlaceHtml = p.enlaceArchivo
+            ? `<a href="${escapeHtml(p.enlaceArchivo)}" target="_blank" rel="noopener noreferrer" class="action-btn" title="Ver archivos" style="color:var(--accent);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;"><i class="fa-solid fa-folder-open"></i> Ver Archivos</a>`
+            : '';
+
+        // PDFs heredados (cargados antes del cambio a enlace): siguen abriéndose.
+        const pdfsHtml = pdfs.map((a, i) =>
+            `<button type="button" class="btn btn-secondary" style="padding:0.2rem 0.45rem;font-size:0.75rem;" title="Abrir PDF ${i + 1}" onclick="abrirPdfPenalidad(${Number(p.id)}, ${i})"><i class="fa-solid fa-file-pdf"></i> ${i + 1}</button>`
+        ).join(' ');
+
+        const archivosHtml = [enlaceHtml, pdfsHtml].filter(Boolean).join(' ')
+            || '<span style="color:var(--text-secondary);">—</span>';
+
+        return `<tr>
+            <td style="font-weight:600;">${piloto}</td>
+            <td>${escapeHtml(String(p.dni === undefined || p.dni === null ? '' : p.dni))}</td>
+            <td>${escapeHtml(String(p.nroAuto === undefined || p.nroAuto === null ? '' : p.nroAuto))}</td>
+            <td>${escapeHtml(String(p.categoria || ''))}</td>
+            <td><span class="tag">${escapeHtml(String(p.sancion || ''))}</span></td>
+            <td style="white-space:nowrap;">${escapeHtml(formatearFechaVisual(p.fechaInicio) || '—')}</td>
+            <td style="white-space:nowrap;">${escapeHtml(formatearFechaVisual(p.fechaFin) || '—')}</td>
+            <td style="max-width:280px;white-space:pre-wrap;">${escapeHtml(String(p.motivo || ''))}</td>
+            <td style="text-align:center;white-space:nowrap;">${archivosHtml}</td>
+            <td class="editor-only" style="text-align:right;white-space:nowrap;">
+                <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.6rem;" title="Editar penalidad (agregar o cambiar enlace)" onclick="editarPenalidad(${Number(p.id)})"><i class="fa-solid fa-pen-to-square"></i></button>
+                <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.6rem;" title="Eliminar penalidad" onclick="eliminarPenalidad(${Number(p.id)})"><i class="fa-solid fa-trash"></i></button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+/** Abre un PDF adjunto de una penalidad (gestionado por clic de usuario). */
+function abrirPdfPenalidad(id, indice) {
+    const pdfs = penalidadPdfsCache[Number(id)] || [];
+    const pdf = pdfs[Number(indice)];
+    if (!pdf) { mostrarToast('El archivo adjunto no está disponible.', 'error'); return; }
+    abrirArchivoAdjunto(pdf.nombre, pdf.archivo);
+}
+
+/** Elimina una penalidad y sus PDFs, con el modal de confirmación de la app. */
+async function eliminarPenalidad(id) {
+    if (!puedeEditar()) return;
+    const penalidad = await obtenerPorId('penalidades', id);
+    const etiqueta = penalidad
+        ? `${penalidad.nombre || ''} ${penalidad.apellido || ''}`.trim()
+        : '';
+
+    // mostrarConfirmacion() asigna el mensaje con textContent: no hay que escapar nada.
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar penalidad',
+        `¿Eliminar la penalidad ${etiqueta ? 'de ' + etiqueta : 'seleccionada'}? Se quitarán también sus archivos PDF adjuntos. Esta acción no se puede deshacer.`,
+        'warning'
+    );
+    if (!confirmado) return;
+
+    const adjuntos = await getTodos('adjuntos');
+    for (const adj of adjuntos.filter(a => Number(a.penalidadId) === Number(id))) {
+        await eliminar('adjuntos', adj.id);
+    }
+    await eliminar('penalidades', id);
+    mostrarToast('Penalidad eliminada correctamente.');
+    await listarPenalidades();
+}
+
+/**
+ * Abre el modal para editar una penalidad (agregar o cambiar el enlace de
+ * documentación, o corregir cualquier campo). Precarga el registro seleccionado.
+ */
+async function editarPenalidad(id) {
+    if (!puedeEditar()) return;
+    const p = await obtenerPorId('penalidades', Number(id));
+    if (!p) { mostrarToast('La penalidad seleccionada no existe.', 'error'); return; }
+
+    // Rellena los datalists de categoría y sanción por si el usuario quiere cambiarlos.
+    await poblarCategoriasPenalidad();
+    await poblarTiposSancion();
+
+    document.getElementById('editar-penalidad-info').innerHTML =
+        `Editando la penalidad de <strong>${escapeHtml(((p.nombre || '') + ' ' + (p.apellido || '')).trim())}</strong>.`;
+    document.getElementById('editar-penalidad-nombre').value = p.nombre || '';
+    document.getElementById('editar-penalidad-apellido').value = p.apellido || '';
+    document.getElementById('editar-penalidad-dni').value = p.dni === undefined || p.dni === null ? '' : p.dni;
+    document.getElementById('editar-penalidad-auto').value = p.nroAuto === undefined || p.nroAuto === null ? '' : p.nroAuto;
+    document.getElementById('editar-penalidad-categoria').value = p.categoria || '';
+    document.getElementById('editar-penalidad-sancion').value = p.sancion || '';
+    document.getElementById('editar-penalidad-fecha-inicio').value = p.fechaInicio || '';
+    document.getElementById('editar-penalidad-fecha-fin').value = p.fechaFin || '';
+    document.getElementById('editar-penalidad-motivo').value = p.motivo || '';
+    // El enlace es el campo clave: si no tenía archivos, acá se lo agrega.
+    document.getElementById('editar-penalidad-enlace').value = p.enlaceArchivo || '';
+
+    // Guarda el id en el dataset del modal (patrón de modalEditarMovimiento).
+    document.getElementById('modal-editar-penalidad').dataset.penalidadId = String(p.id);
+    openModal('modal-editar-penalidad');
+}
+
+/**
+ * Guarda los cambios de la penalidad en el modal de edición y refresca el
+ * listado. Preserva los campos de creación (usuarioCreacion/fechaCreacion) y el
+ * id original; solo sobrescribe los datos editados (incluido el enlace).
+ */
+async function guardarEdicionPenalidad() {
+    if (!puedeEditar()) return;
+    const modal = document.getElementById('modal-editar-penalidad');
+    const id = Number(modal.dataset.penalidadId);
+    if (!id) { mostrarToast('No se pudo identificar la penalidad a editar.', 'error'); return; }
+
+    const nombre = document.getElementById('editar-penalidad-nombre').value.trim();
+    const apellido = document.getElementById('editar-penalidad-apellido').value.trim();
+    const dni = document.getElementById('editar-penalidad-dni').value.trim();
+    const nroAuto = document.getElementById('editar-penalidad-auto').value;
+    const categoria = document.getElementById('editar-penalidad-categoria').value.trim();
+    const sancion = document.getElementById('editar-penalidad-sancion').value.trim();
+    const motivo = document.getElementById('editar-penalidad-motivo').value.trim();
+    const fechaInicio = document.getElementById('editar-penalidad-fecha-inicio').value;
+    const fechaFin = document.getElementById('editar-penalidad-fecha-fin').value;
+    const enlaceArchivo = document.getElementById('editar-penalidad-enlace').value.trim();
+
+    if (!nombre || !apellido || !dni || !nroAuto || !categoria || !sancion || !motivo || !fechaInicio) {
+        mostrarToast('Completá todos los campos obligatorios (*).', 'error');
+        return;
+    }
+
+    // Mismo criterio que el alta: la fecha de fin no puede ser anterior al inicio.
+    if (fechaFin && fechaInicio && fechaFin < fechaInicio) {
+        mostrarToast('La fecha de fin no puede ser anterior a la fecha de inicio.', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('editar-penalidad-btn-guardar');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Guardando...';
+
+    try {
+        // Se parte del registro existente para no perder campos de creación ni versionado.
+        const existente = await obtenerPorId('penalidades', id) || {};
+        const idGuardado = await guardar('penalidades', {
+            ...existente,
+            id,
+            nombre, apellido, dni,
+            nroAuto: Number(nroAuto),
+            categoria, sancion, motivo,
+            fechaInicio,
+            fechaFin,
+            enlaceArchivo,
+            fechaModificacion: new Date().toISOString(),
+            usuarioModificacion: currentUser ? currentUser.id : null
+        });
+        if (!idGuardado) {
+            mostrarToast('No se pudieron guardar los cambios (validación de esquema).', 'error');
+            return;
+        }
+        mostrarToast(`Penalidad de ${nombre} ${apellido} actualizada correctamente.`);
+        closeModal('modal-editar-penalidad');
+        await listarPenalidades();
+    } catch (err) {
+        console.error(err);
+        mostrarToast('Error al guardar los cambios: ' + (err && err.message ? err.message : err), 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-check"></i> Guardar Cambios';
+    }
+}
+
+// ==================== PILOTOS > AUTORIZACIONES ====================
+// Submódulo del grupo Pilotos (debajo de Penalidades): autorizaciones a pilotos
+// con nombre, apellido, categoría y un enlace opcional a Drive/archivo que se
+// muestra como botón "Ver Archivos" (mismo patrón que `documentosUrl` en
+// Competencias). Persistencia: store 'autorizaciones' (DB_VERSION 17, keyPath
+// 'id' autoIncrement), igual que 'penalidades'. Alta manual + importación masiva
+// desde un archivo HTML/XLS/CSV (parser 100% nativo, sin librerías), con el
+// mismo patrón de escritura por lotes (IndexedDB + Firestore) del padrón.
+
+/** Restablece la planilla de autorizaciones. */
+function limpiarFormularioAutorizacion() {
+    const form = document.getElementById('form-autorizacion');
+    if (form) form.reset();
+}
+
+/** Carga las categorías existentes en el datalist de la planilla (autocompletado). */
+async function poblarCategoriasAutorizacion() {
+    const datalist = document.getElementById('categorias-autorizacion');
+    if (!datalist) return;
+    try {
+        const categorias = await getTodos('categorias');
+        // Deduplicación case-insensitive para que no se repitan en el dropdown
+        const vistas = new Set();
+        const unicas = categorias.filter(c => {
+            const norm = String(c.nombre || '').trim().toLowerCase();
+            if (!norm || vistas.has(norm)) return false;
+            vistas.add(norm);
+            return true;
+        });
+        datalist.innerHTML = unicas
+            .map(c => `<option value="${escapeHtml(c.nombre || '')}"></option>`)
+            .join('');
+    } catch (e) {
+        // Sin categorías cargadas la planilla sigue siendo usable (campo libre).
+    }
+}
+
+/** Guarda la autorización (alta manual) y refresca el listado. */
+async function guardarAutorizacionForm(e) {
+    e.preventDefault();
+    if (!puedeEditar()) return;
+
+    const nombre = document.getElementById('autorizacion-nombre').value.trim();
+    const apellido = document.getElementById('autorizacion-apellido').value.trim();
+    const categoria = document.getElementById('autorizacion-categoria').value.trim();
+    const enlaceArchivo = document.getElementById('autorizacion-enlace').value.trim();
+
+    if (!nombre || !apellido || !categoria) {
+        mostrarToast('Completá nombre, apellido y categoría.', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('autorizacion-btn-guardar');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Guardando...';
+
+    try {
+        const id = await guardar('autorizaciones', {
+            nombre, apellido, categoria,
+            enlaceArchivo,
+            usuarioCreacion: currentUser ? currentUser.id : null,
+            fechaCreacion: new Date().toISOString()
+        });
+        if (!id) {
+            mostrarToast('No se pudo guardar la autorización (validación de esquema).', 'error');
+            return;
+        }
+        mostrarToast(`Autorización de ${nombre} ${apellido} registrada correctamente.`);
+        limpiarFormularioAutorizacion();
+        await listarAutorizaciones();
+    } catch (err) {
+        console.error(err);
+        mostrarToast('Error al guardar la autorización: ' + (err && err.message ? err.message : err), 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Guardar Autorización';
+    }
+}
+
+/** Renderiza el listado de autorizaciones con paginación en cliente (+ buscador con debounce). */
+async function listarAutorizaciones() {
+    const tbody = document.getElementById('autorizaciones-table-body');
+    if (!tbody) return;
+
+    await poblarCategoriasAutorizacion();
+
+    let todas = [];
+    try {
+        todas = await getTodos('autorizaciones');
+    } catch (e) {
+        console.warn('[autorizaciones] no se pudo leer el store local:', e?.message || e);
+    }
+
+    // Filtro sobre el array original (al tocar la búsqueda se resetea la página).
+    const busqueda = (document.getElementById('buscar-autorizacion')?.value || '').trim().toLowerCase();
+    autorizacionesCache = todas
+        .filter(a => {
+            if (!busqueda) return true;
+            const linea = `${a.nombre || ''} ${a.apellido || ''} ${a.categoria || ''}`.toLowerCase();
+            return linea.includes(busqueda);
+        })
+        .sort((a, b) => Number(b.id) - Number(a.id));
+
+    // Corrige la página si quedó fuera de rango tras filtrar/eliminar.
+    const totalPaginas = Math.max(1, Math.ceil(autorizacionesCache.length / registrosPorPaginaAutorizaciones));
+    if (paginaActualAutorizaciones > totalPaginas) paginaActualAutorizaciones = totalPaginas;
+
+    renderAutorizacionesPagina();
+    renderAutorizacionesPaginador(autorizacionesCache.length, busqueda ? null : totalPaginas);
+}
+
+/** Dibuja SOLO las filas del corte de la página actual. */
+function renderAutorizacionesPagina() {
+    const tbody = document.getElementById('autorizaciones-table-body');
+    if (!tbody) return;
+    const corte = autorizacionesCache.slice((paginaActualAutorizaciones - 1) * registrosPorPaginaAutorizaciones, paginaActualAutorizaciones * registrosPorPaginaAutorizaciones);
+
+    if (corte.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:1.5rem;">No hay autorizaciones registradas.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    corte.forEach(a => {
+        const piloto = `${escapeHtml(a.nombre || '')} ${escapeHtml(a.apellido || '')}`.trim();
+        const enlace = a.enlaceArchivo
+            ? `<a href="${escapeHtml(a.enlaceArchivo)}" target="_blank" rel="noopener noreferrer" class="action-btn" title="Ver archivos" style="color:var(--accent);display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-folder-open"></i> Ver Archivos</a>`
+            : '<span style="color:var(--text-secondary);">—</span>';
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<tr>
+            <td style="font-weight:600;">${piloto}</td>
+            <td>${escapeHtml(String(a.categoria || ''))}</td>
+            <td style="text-align:center;white-space:nowrap;">${enlace}</td>
+            <td class="editor-only" style="text-align:right;white-space:nowrap;">
+                <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.6rem;margin-right:0.35rem;" title="Editar autorización (agregar o cambiar enlace)" onclick="editarAutorizacion(${Number(a.id)})"><i class="fa-solid fa-pen-to-square"></i></button>
+                <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.6rem;" title="Eliminar autorización" onclick="eliminarAutorizacion(${Number(a.id)})"><i class="fa-solid fa-trash"></i></button>
+            </td>
+        </tr>`;
+        fragment.appendChild(tr);
+    });
+    tbody.appendChild(fragment);
+}
+
+/** Dibuja/navega los controles Anterior / "Página X de Y" / Siguiente. */
+function renderAutorizacionesPaginador(total, totalPaginas) {
+    const cont = document.getElementById('autorizaciones-pagination');
+    if (!cont) return;
+    const yaPaginado = Number.isInteger(totalPaginas) && totalPaginas > 0;
+    const paginas = yaPaginado ? totalPaginas : Math.max(1, Math.ceil(total / registrosPorPaginaAutorizaciones));
+    cont.innerHTML = `
+        <button type="button" class="btn btn-secondary pagination-prev" onclick="cambiarPaginaAutorizaciones(-1)" ${paginaActualAutorizaciones <= 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i> Anterior</button>
+        <span class="pagination-info">Página ${paginaActualAutorizaciones} de ${paginas}</span>
+        <button type="button" class="btn btn-secondary pagination-next" onclick="cambiarPaginaAutorizaciones(1)" ${paginaActualAutorizaciones >= paginas ? 'disabled' : ''}>Siguiente <i class="fa-solid fa-chevron-right"></i></button>
+    `;
+}
+
+/** Navegación de páginas con límites nativos (disabled si queda fuera de rango). */
+function cambiarPaginaAutorizaciones(direccion) {
+    const totalPaginas = Math.max(1, Math.ceil(autorizacionesCache.length / registrosPorPaginaAutorizaciones));
+    const nueva = paginaActualAutorizaciones + direccion;
+    if (nueva < 1 || nueva > totalPaginas) return;
+    paginaActualAutorizaciones = nueva;
+    renderAutorizacionesPagina();
+    renderAutorizacionesPaginador(autorizacionesCache.length, totalPaginas);
+}
+
+/** Buscador con DEBOUNCE de 300 ms: espera a que el usuario deje de tipear. */
+let autorizacionBusquedaTimer = null;
+function autorizacionBuscarDebounced() {
+    if (autorizacionBusquedaTimer) clearTimeout(autorizacionBusquedaTimer);
+    autorizacionBusquedaTimer = setTimeout(() => {
+        paginaActualAutorizaciones = 1;
+        listarAutorizaciones();
+    }, 300);
+}
+
+/** Elimina una autorización, con el modal de confirmación de la app. */
+async function eliminarAutorizacion(id) {
+    if (!puedeEditar()) return;
+    const autorizacion = await obtenerPorId('autorizaciones', id);
+    const etiqueta = autorizacion
+        ? `${autorizacion.nombre || ''} ${autorizacion.apellido || ''}`.trim()
+        : '';
+
+    // mostrarConfirmacion() asigna el mensaje con textContent: no hay que escapar nada.
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar autorización',
+        `¿Eliminar la autorización ${etiqueta ? 'de ' + etiqueta : 'seleccionada'}? Esta acción no se puede deshacer.`,
+        'warning'
+    );
+    if (!confirmado) return;
+
+    await eliminar('autorizaciones', id);
+    mostrarToast('Autorización eliminada correctamente.');
+    await listarAutorizaciones();
+}
+
+// NOTA: la importación masiva documentada más abajo (parser nativo + lotes).
+/**
+ * Abre el modal para editar una autorización (agregar o cambiar el enlace, o
+ * corregir nombre/apellido/categoría). Precarga el registro seleccionado.
+ */
+async function editarAutorizacion(id) {
+    if (!puedeEditar()) return;
+    const a = await obtenerPorId('autorizaciones', Number(id));
+    if (!a) { mostrarToast('La autorización seleccionada no existe.', 'error'); return; }
+
+    // Rellena el datalist de categorías por si el usuario quiere elegir otra.
+    await poblarCategoriasAutorizacion();
+
+    document.getElementById('editar-autorizacion-info').innerHTML =
+        `Editando la autorización de <strong>${escapeHtml((a.nombre || '') + ' ' + (a.apellido || '')).trim()}</strong>.`;
+    document.getElementById('editar-autorizacion-nombre').value = a.nombre || '';
+    document.getElementById('editar-autorizacion-apellido').value = a.apellido || '';
+    document.getElementById('editar-autorizacion-categoria').value = a.categoria || '';
+    // El enlace es el campo clave: si no tenía archivos, acá se lo agrega.
+    document.getElementById('editar-autorizacion-enlace').value = a.enlaceArchivo || '';
+
+    // Guarda el id en el dataset del modal (patrón de modalEditarMovimiento).
+    document.getElementById('modal-editar-autorizacion').dataset.autorizacionId = String(a.id);
+    openModal('modal-editar-autorizacion');
+}
+
+/**
+ * Guarda los cambios de la autorización en el modal de edición y refresca el
+ * listado. Preserva los campos de creación (usuarioCreacion/fechaCreacion) y el
+ * id original; solo sobrescribe los datos editados (incluido el enlace).
+ */
+async function guardarEdicionAutorizacion() {
+    if (!puedeEditar()) return;
+    const modal = document.getElementById('modal-editar-autorizacion');
+    const id = Number(modal.dataset.autorizacionId);
+    if (!id) { mostrarToast('No se pudo identificar la autorización a editar.', 'error'); return; }
+
+    const nombre = document.getElementById('editar-autorizacion-nombre').value.trim();
+    const apellido = document.getElementById('editar-autorizacion-apellido').value.trim();
+    const categoria = document.getElementById('editar-autorizacion-categoria').value.trim();
+    const enlaceArchivo = document.getElementById('editar-autorizacion-enlace').value.trim();
+
+    if (!nombre || !apellido || !categoria) {
+        mostrarToast('Completá nombre, apellido y categoría.', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('editar-autorizacion-btn-guardar');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Guardando...';
+
+    try {
+        // Se parte del registro existente para no perder campos de creación ni versionado.
+        const existente = await obtenerPorId('autorizaciones', id) || {};
+        const idGuardado = await guardar('autorizaciones', {
+            ...existente,
+            id,
+            nombre, apellido, categoria,
+            enlaceArchivo,
+            fechaModificacion: new Date().toISOString(),
+            usuarioModificacion: currentUser ? currentUser.id : null
+        });
+        if (!idGuardado) {
+            mostrarToast('No se pudieron guardar los cambios (validación de esquema).', 'error');
+            return;
+        }
+        mostrarToast(`Autorización de ${nombre} ${apellido} actualizada correctamente.`);
+        closeModal('modal-editar-autorizacion');
+        await listarAutorizaciones();
+    } catch (err) {
+        console.error(err);
+        mostrarToast('Error al guardar los cambios: ' + (err && err.message ? err.message : err), 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-check"></i> Guardar Cambios';
+    }
+}
+
+
+// ---------------- Importación masiva de autorizaciones (HTML/XLS/CSV) ----------------
+// Parser 100% nativo (FileReader + DOMParser, sin librerías), mismo enfoque que el
+// padrón de pilotos. Se acepta el archivo HTML/XLS que exporta Excel ("Guardar como
+// página web") y, como fallback, un CSV/TSV. Las columnas se mapean por su encabezado
+// (Nombre, Apellido, Categoría, Enlace/Link/URL) cuando existe; si no hay encabezado
+// reconocible se usan las posiciones por defecto 0=Nombre, 1=Apellido, 2=Categoría,
+// 3=Enlace. La escritura por lotes (IndexedDB + Firestore) vive en
+// importarAutorizacionesLotes().
+
+const AUTORIZACIONES_BATCH_MAX = 400;
+
+/** Dispara el selector de archivo oculto de autorizaciones. */
+function dispararImportarAutorizaciones() {
+    if (!puedeEditar()) return;
+    document.getElementById('autorizacion-import-file')?.click();
+}
+
+/** Detecta el índice de cada campo a partir de una fila de encabezados. */
+function mapearColumnasAutorizacion(encabezados) {
+    const norm = encabezados.map(h => String(h || '').trim().toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+    const buscar = (...claves) => norm.findIndex(h => claves.some(c => h.includes(c)));
+    return {
+        nombre: buscar('nombre'),
+        apellido: buscar('apellido'),
+        categoria: buscar('categoria'),
+        enlace: buscar('enlace', 'link', 'url', 'drive', 'archivo')
+    };
+}
+
+/** Convierte un texto CSV/TSV en una lista de filas de celdas. */
+function parsearCsvAutorizacion(texto) {
+    const lineas = texto.split(/\r?\n/).filter(l => l.trim() !== '');
+    // Detectar separador: tabulación, punto y coma o coma (el que más divisiones dé).
+    const primera = lineas[0] || '';
+    const sep = ['\t', ';', ','].sort((a, b) => (primera.split(b).length - primera.split(a).length))[0];
+    return lineas.map(l => l.split(sep).map(c => c.trim()));
+}
+
+/** Lee filas (HTML o CSV) y devuelve registros de autorización listos para guardar. */
+function extraerRegistrosAutorizacion(filas) {
+    if (!filas || filas.length === 0) return [];
+    const porClave = new Map();
+    let base = Date.now();
+    let contador = 0;
+
+    // Intento de mapeo por encabezado: solo si la primera fila trae al menos "nombre".
+    const mapa = mapearColumnasAutorizacion(filas[0]);
+    const tieneEncabezado = mapa.nombre >= 0;
+    const inicio = tieneEncabezado ? 1 : 0;
+    const idx = tieneEncabezado ? mapa : { nombre: 0, apellido: 1, categoria: 2, enlace: 3 };
+
+    for (let f = inicio; f < filas.length; f++) {
+        const celdas = filas[f];
+        if (!celdas || celdas.length === 0) continue;
+
+        const nombre = String(celdas[idx.nombre] || '').trim().toUpperCase();
+        const apellido = String(celdas[idx.apellido] || '').trim().toUpperCase();
+        const categoria = String(celdas[idx.categoria] || '').trim().toUpperCase();
+        const enlaceArchivo = String(celdas[idx.enlace] || '').trim();
+
+        if (!nombre || !apellido || !categoria) continue; // fila corrupta: se salta
+
+        const clave = `${nombre}|${apellido}|${categoria}`;
+        if (porClave.has(clave)) continue; // dedup dentro del mismo archivo
+
+        porClave.set(clave, {
+            id: base + (contador++),
+            nombre, apellido, categoria,
+            enlaceArchivo,
+            usuarioCreacion: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null,
+            fechaCreacion: new Date().toISOString()
+        });
+    }
+    return Array.from(porClave.values());
+}
+
+/** Lee el archivo elegido y lo importa por lotes (con feedback en el botón). */
+async function importarAutorizacionesPilotos(event) {
+    if (!puedeEditar()) return;
+    const input = (event && event.target) || document.getElementById('autorizacion-import-file');
+    const archivo = input && input.files ? input.files[0] : null;
+    if (!archivo) return;
+
+    const btn = document.getElementById('autorizacion-btn-importar');
+    const htmlPrevio = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Procesando...'; }
+
+    try {
+        const texto = await new Promise((resolve, reject) => {
+            const lector = new FileReader();
+            lector.onload = () => resolve(String(lector.result || ''));
+            lector.onerror = () => reject(lector.error || new Error('No se pudo leer el archivo.'));
+            lector.readAsText(archivo, 'UTF-8');
+        });
+
+        let filas = [];
+        const documento = new DOMParser().parseFromString(texto, 'text/html');
+        const trs = documento.querySelectorAll('table tr');
+        if (trs.length > 0) {
+            // HTML/XLS exportado por Excel: cada <tr> es una fila de celdas.
+            filas = Array.from(trs).map(tr =>
+                Array.from(tr.querySelectorAll('td, th')).map(c => (c.textContent || '').trim())
+            );
+        } else {
+            // Fallback CSV/TSV.
+            filas = parsearCsvAutorizacion(texto);
+        }
+
+        const registros = extraerRegistrosAutorizacion(filas);
+        if (registros.length === 0) {
+            mostrarToast('El archivo no contiene autorizaciones válidas (se requieren nombre, apellido y categoría).', 'warning');
+            return;
+        }
+
+        const enNube = await importarAutorizacionesLotes(registros, btn);
+        mostrarToast(`Autorizaciones importadas: ${registros.length} registros${enNube ? ' (local + nube)' : ' (solo local, sin sesión en la nube)'}.`);
+        await listarAutorizaciones();
+    } catch (err) {
+        console.error('[autorizaciones] Error al importar:', err);
+        mostrarToast('Error al importar autorizaciones: ' + (err && err.message ? err.message : err), 'error');
+    } finally {
+        if (input) input.value = ''; // permite re-elegir el mismo archivo
+        if (btn) { btn.disabled = false; btn.innerHTML = htmlPrevio; }
+    }
+}
+
+/** Guarda los registros en IndexedDB + Firestore en lotes (sin congelar la UI). */
+async function importarAutorizacionesLotes(registros, btn) {
+    invalidarCache('autorizaciones');
+    const dbLocal = await openDB();
+    const tx = abrirTransaccionDefensiva(dbLocal, 'autorizaciones', 'readwrite');
+    if (!tx) throw new Error("El store local 'autorizaciones' no está disponible.");
+    const storeLocal = tx.objectStore('autorizaciones');
+    registros.forEach(item => { try { storeLocal.put(item); } catch (e) { /* dedup ya aplicado */ } });
+    await new Promise((resolve, reject) => {
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error || new Error('Error al guardar las autorizaciones en local.'));
+        tx.onabort = () => reject(tx.error || new Error('Importación local cancelada.'));
+    });
+
+    const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+    const haySesion = !!(rt && rt.dbFirebase && typeof rt.writeBatch === 'function'
+        && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser);
+    if (!haySesion) return false;
+
+    for (let i = 0; i < registros.length; i += AUTORIZACIONES_BATCH_MAX) {
+        const lote = rt.writeBatch(rt.dbFirebase);
+        registros.slice(i, i + AUTORIZACIONES_BATCH_MAX).forEach(item => {
+            lote.set(rt.doc(rt.dbFirebase, 'autorizaciones', String(item.id)), item, { merge: true });
+        });
+        await lote.commit();
+        const subidos = Math.min(i + AUTORIZACIONES_BATCH_MAX, registros.length);
+        if (btn) btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Subiendo ${subidos}/${registros.length}...`;
+        await new Promise(r => setTimeout(r, 0)); // cede el hilo: no congela el navegador
+    }
+    return true;
+}
+
+// ---------------- Catálogo de categorías (ruedita) desde Autorizaciones ----------------
+// Réplica del patrón de la ruedita de tipos de sanción (#subModalTiposSancion), pero
+// operando sobre el store 'categorias' REAL del sistema (el mismo que usan Competencias,
+// Pilotos y Penalidades). Permite agregar, editar y borrar categorías en caliente; al
+// cerrar/guardar se repobla el datalist #categorias-autorizacion. Nombres SIEMPRE vía
+// textContent (sin innerHTML) para respetar la regla de seguridad contra XSS.
+
+// Modo edición del sub-modal: id de la categoría que se está renombrando (null = alta).
+let categoriaAuthEditandoId = null;
+
+/** Abre el sub-modal de gestión de categorías (solo usuarios con permiso de edición). */
+async function abrirModalCategoriasAuth() {
+    if (!puedeEditar()) return;
+    cancelarEdicionCategoriaAuth();
+    await renderizarListaCategoriasAuth();
+    openModal('subModalCategoriasAuth');
+}
+
+/** Lista las categorías con botones Editar/Eliminar (nombres SIEMPRE vía textContent). */
+async function renderizarListaCategoriasAuth() {
+    const container = document.getElementById('lista-categorias-auth');
+    if (!container) return;
+    const categorias = deduplicarCategorias(await getTodos('categorias'));
+    // Orden alfabético para encontrarlas rápido en el catálogo.
+    categorias.sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
+    container.innerHTML = '';
+
+    if (categorias.length === 0) {
+        container.innerHTML = '<span style="color:var(--text-secondary);font-size:0.85rem;text-align:center;padding:0.5rem;">No hay categorías registradas.</span>';
+        return;
+    }
+
+    categorias.forEach(c => {
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0.75rem;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border-color);';
+
+        const span = document.createElement('span');
+        span.textContent = c.nombre || '';
+        span.style.cssText = 'font-weight:500;';
+        div.appendChild(span);
+
+        const btns = document.createElement('span');
+        btns.style.cssText = 'display:flex;align-items:center;gap:0.3rem;';
+
+        const btnEditar = document.createElement('button');
+        btnEditar.type = 'button';
+        btnEditar.className = 'action-btn';
+        btnEditar.title = 'Editar categoría';
+        btnEditar.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
+        btnEditar.onclick = () => editarCategoriaAuth(c.id);
+        btns.appendChild(btnEditar);
+
+        const btnEliminar = document.createElement('button');
+        btnEliminar.type = 'button';
+        btnEliminar.className = 'action-btn';
+        btnEliminar.title = 'Eliminar categoría';
+        btnEliminar.innerHTML = '<i class="fa-solid fa-trash"></i>';
+        btnEliminar.onclick = () => eliminarCategoriaAuth(c.id, c.nombre || '');
+        btns.appendChild(btnEliminar);
+
+        div.appendChild(btns);
+        container.appendChild(div);
+    });
+}
+
+/** Vuelve el sub-modal al modo "Agregar" y limpia el input. */
+function cancelarEdicionCategoriaAuth() {
+    categoriaAuthEditandoId = null;
+    const input = document.getElementById('nueva-categoria-auth');
+    const label = document.getElementById('nueva-categoria-auth-label');
+    const btn = document.getElementById('nueva-categoria-auth-btn');
+    const cancel = document.getElementById('nueva-categoria-auth-cancel');
+    if (input) input.value = '';
+    if (label) label.textContent = 'Nombre de la categoría';
+    if (btn) { btn.title = 'Agregar categoría'; btn.innerHTML = '<i class="fa-solid fa-plus"></i>'; }
+    if (cancel) cancel.style.display = 'none';
+}
+
+/** Pone el sub-modal en modo "Editar" con la categoría precargada en el input. */
+async function editarCategoriaAuth(id) {
+    if (!puedeEditar()) return;
+    const categoria = await obtenerPorId('categorias', Number(id));
+    if (!categoria) return;
+
+    categoriaAuthEditandoId = Number(id);
+    const input = document.getElementById('nueva-categoria-auth');
+    const label = document.getElementById('nueva-categoria-auth-label');
+    const btn = document.getElementById('nueva-categoria-auth-btn');
+    const cancel = document.getElementById('nueva-categoria-auth-cancel');
+
+    if (input) input.value = categoria.nombre || '';
+    if (label) label.textContent = 'Editar categoría';
+    if (btn) { btn.title = 'Guardar cambios'; btn.innerHTML = '<i class="fa-solid fa-check"></i>'; }
+    if (cancel) cancel.style.display = '';
+    if (input) { input.focus(); input.select(); }
+}
+
+/** Alta o edición (según `categoriaAuthEditandoId`) de la categoría en el sub-modal. */
+async function guardarCategoriaAuthModal() {
+    if (!puedeEditar()) return;
+    const input = document.getElementById('nueva-categoria-auth');
+    if (!input) return;
+
+    const nombre = input.value.trim();
+    if (!nombre) { mostrarToast('Ingresá el nombre de la categoría.', 'warning'); return; }
+
+    const categorias = await getTodos('categorias');
+    const norm = (s) => String(s || '').trim().toLowerCase();
+
+    // ---------- MODO EDICIÓN ----------
+    if (categoriaAuthEditandoId !== null) {
+        // No puede quedar un duplicado de OTRA categoría.
+        if (categorias.some(c => Number(c.id) !== Number(categoriaAuthEditandoId) && norm(c.nombre) === norm(nombre))) {
+            mostrarToast('Esa categoría ya existe.', 'error');
+            return;
+        }
+        const categoria = await obtenerPorId('categorias', categoriaAuthEditandoId);
+        if (!categoria) { cancelarEdicionCategoriaAuth(); return; }
+        categoria.nombre = nombre;
+        await guardar('categorias', categoria);
+
+        cancelarEdicionCategoriaAuth();
+        await renderizarListaCategoriasAuth();
+        await poblarCategoriasAutorizacion();
+        mostrarToast(`Categoría actualizada a "${nombre}".`);
+        return;
+    }
+
+    // ---------- MODO ALTA ----------
+    if (categorias.some(c => norm(c.nombre) === norm(nombre))) {
+        mostrarToast('Esa categoría ya existe.', 'error');
+        return;
+    }
+    await guardar('categorias', { nombre, activo: true });
+    input.value = '';
+    await renderizarListaCategoriasAuth();
+    await poblarCategoriasAutorizacion();
+    mostrarToast(`Categoría "${nombre}" agregada.`);
+}
+
+/** Elimina una categoría del catálogo (con el modal de confirmación de la app). */
+async function eliminarCategoriaAuth(id, label) {
+    if (!puedeEditar()) return;
+    if (typeof id === 'undefined' || id === null) return;
+
+    // mostrarConfirmacion() asigna el mensaje con textContent: no hace falta escapar.
+    const confirmado = await mostrarConfirmacion(
+        'Eliminar categoría',
+        `¿Eliminar la categoría "${label}"? Es la misma que usan Competencias, Pilotos y Penalidades; los registros ya guardados conservan su texto.`,
+        'warning'
+    );
+    if (!confirmado) return;
+
+    await eliminar('categorias', id);
+    // Si la categoría eliminada era la que estaba en edición, volver al modo alta.
+    if (categoriaAuthEditandoId !== null && Number(categoriaAuthEditandoId) === Number(id)) {
+        cancelarEdicionCategoriaAuth();
+    }
+    await renderizarListaCategoriasAuth();
+    await poblarCategoriasAutorizacion();
+    mostrarToast('Categoría eliminada.');
+}
+
 // ==================== CONFIGURACIÓN: CATEGORÍAS & CIRCUITOS ====================
 
 async function listarConfiguraciones() {
@@ -2736,6 +5245,21 @@ async function listarConfiguraciones() {
 // persisten ajustes globales de la aplicación (ej: enlace CSV de Google Sheets).
 
 async function cargarConfiguracionGlobal() {
+    // 1) Nube primero: lee el documento único `configuracionGlobal/1` de Firestore
+    //    (corte anti-cuota de 1.5 s). Así la API key de Serper y los ajustes
+    //    globales se leen desde cualquier navegador con sesión Firebase.
+    const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+    if (rt && rt.dbFirebase && typeof rt.getDoc === 'function' && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser) {
+        try {
+            const snap = await conCorteDeSeguridad(rt.getDoc(rt.doc(rt.dbFirebase, 'configuracionGlobal', '1')), 1500, null);
+            if (snap && typeof snap.exists === 'function' && snap.exists()) {
+                return snap.data() || {};
+            }
+        } catch (e) {
+            console.warn('No se pudo leer la configuración global desde Firestore:', e);
+        }
+    }
+    // 2) Fallback: espejo local en IndexedDB.
     try {
         const todos = await getTodos('configuracionGlobal');
         return (todos || []).find(c => Number(c.id) === 1) || {};
@@ -2747,26 +5271,58 @@ async function cargarConfiguracionGlobal() {
 
 async function precargarEnlaceSheets() {
     const input = document.getElementById('config-url-sheets');
-    if (!input) return;
+    const inputKey = document.getElementById('config-serper-key');
     const cfg = await cargarConfiguracionGlobal();
-    input.value = cfg.urlGoogleSheets || '';
+    if (input) input.value = cfg.urlGoogleSheets || '';
+    if (inputKey) {
+        // Prioridad al espejo local (misma clave que lee la auditoría ACTC).
+        let local = '';
+        try { local = String(localStorage.getItem('serper_api_key') || ''); } catch (e) { /* sin localStorage */ }
+        inputKey.value = local || (cfg.serperApiKey || '');
+    }
 }
 
 async function guardarConfiguracion() {
     const input = document.getElementById('config-url-sheets');
-    const msg = document.getElementById('config-sheets-save-msg');
-    if (!input) return;
+    const inputKey = document.getElementById('config-serper-key');
+    if (!input && !inputKey) return;
 
-    const urlGoogleSheets = input.value.trim();
+    // El doc es único (id 1) y `put` reemplaza el registro completo: se parten
+    // de los valores previos para que un input ausente no borre el otro ajuste.
+    const cfgPrevia = await cargarConfiguracionGlobal();
+    const urlGoogleSheets = input ? input.value.trim() : (cfgPrevia.urlGoogleSheets || '');
+    const serperApiKey = inputKey ? inputKey.value.trim() : (cfgPrevia.serperApiKey || '');
     try {
-        await guardar('configuracionGlobal', { id: 1, urlGoogleSheets });
+        await guardar('configuracionGlobal', { id: 1, urlGoogleSheets, serperApiKey });
+        // Escritura a la nube (Firebase): documento único `configuracionGlobal/1`
+        // para que la key de Serper y los ajustes se lean desde cualquier
+        // navegador con sesión. Corte anti-cuota de 1.5 s.
+        const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+        if (rt && rt.dbFirebase && typeof rt.setDoc === 'function' && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser) {
+            await conCorteDeSeguridad(
+                rt.setDoc(rt.doc(rt.dbFirebase, 'configuracionGlobal', '1'), { id: 1, urlGoogleSheets, serperApiKey }),
+                1500
+            );
+        }
+        // Espejo local: la auditoría ACTC recupera la key desde
+        // `localStorage['serper_api_key']` cuando no hay nube disponible.
+        try {
+            if (serperApiKey) localStorage.setItem('serper_api_key', serperApiKey);
+            else localStorage.removeItem('serper_api_key');
+        } catch (e) { /* localStorage no disponible: no bloquea */ }
         if (typeof invalidarCache === 'function') invalidarCache('configuracionGlobal');
         mostrarToast('Configuración guardada correctamente.');
-        if (msg) { msg.textContent = '✓ Guardado'; msg.style.color = 'var(--accent)'; }
+        document.querySelectorAll('.config-save-msg').forEach(msg => {
+            msg.textContent = '✓ Guardado';
+            msg.style.color = 'var(--accent)';
+        });
     } catch (e) {
         console.error('Error al guardar configuración global:', e);
         mostrarToast('No se pudo guardar la configuración.', 'error');
-        if (msg) { msg.textContent = '✗ Error al guardar'; msg.style.color = '#ff6b6b'; }
+        document.querySelectorAll('.config-save-msg').forEach(msg => {
+            msg.textContent = '✗ Error al guardar';
+            msg.style.color = '#ff6b6b';
+        });
     }
 }
 
@@ -3785,14 +6341,49 @@ async function guardarUsuarioFormInterno() {
     // El id puede venir como string (usuarios de la nube, donde el id es el
     // username). `Number(...)` lo convertía en NaN y rompía toda la edición.
     const idNum = id ? String(id) : null;
-    const todos = await getTodos('usuarios');
-    const choque = todos.find(u =>
+    // Verificación NUBE-PRIMERO (mismo criterio que listarUsuarios): la nube es
+    // la fuente de verdad. Se distingue "nube leída y el nombre está libre"
+    // (sinNube/sinSesion = false) de "la nube no respondió": perfilesNube queda
+    // null y la verificación cae a SOLO local (conservadora).
+    const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
+    let perfilesNube = null;
+    if (directorio && typeof directorio.listarPerfilesConEstado === 'function') {
+        const resNube = await directorio.listarPerfilesConEstado();
+        if (resNube && resNube.ok && !resNube.sinNube && !resNube.sinSesion) {
+            perfilesNube = Array.isArray(resNube.perfiles) ? resNube.perfiles : [];
+        }
+    } else if (directorio && typeof directorio.listarPerfiles === 'function') {
+        perfilesNube = await directorio.listarPerfiles();
+    }
+    if (Array.isArray(perfilesNube)) {
+        const choqueNube = perfilesNube.find(u =>
+            String(u.username || '').toLowerCase() === username.toLowerCase() &&
+            String(u.id) !== idNum);
+        if (choqueNube) {
+            mostrarToast(`El nombre "${username}" ya lo usa ${choqueNube.nombre || choqueNube.username}. ` +
+                'Elegí otro nombre o eliminá ese usuario primero.', 'error');
+            return;
+        }
+    }
+    // Copias locales con el mismo username pero distinto id. En ALTA son
+    // "fantasmas": sobraron de borrados hechos con la sync apagada y bloqueaban
+    // reutilizar el nombre. Con la nube verificada se purgan; sin nube
+    // verificada se corta el alta (no se puede distinguir de un duplicado).
+    const localesMismoNombre = (await getTodos('usuarios', { soloLocal: true })).filter(u =>
         String(u.username || '').toLowerCase() === username.toLowerCase() &&
         String(u.id) !== idNum);
-    if (choque) {
-        mostrarToast(`El nombre "${username}" ya lo usa ${choque.nombre || choque.username}. ` +
-            'Elegí otro nombre o eliminá ese usuario primero.', 'error');
-        return;
+    if (!id && localesMismoNombre.length) {
+        if (Array.isArray(perfilesNube)) {
+            for (const fantasma of localesMismoNombre) {
+                await eliminar('usuarios', fantasma.id);
+            }
+            console.info('[usuarios] Se purgaron ' + localesMismoNombre.length +
+                ' copia(s) local(es) fantasma de "' + username + '".');
+        } else {
+            mostrarToast(`El nombre "${username}" ya lo usa ${localesMismoNombre[0].nombre || localesMismoNombre[0].username}. ` +
+                'Elegí otro nombre o eliminá ese usuario primero.', 'error');
+            return;
+        }
     }
     if (!username) {
         mostrarToast('El nombre de usuario es obligatorio.', 'error');
@@ -3830,7 +6421,7 @@ async function guardarUsuarioFormInterno() {
     // ===== INTEGRACION FIREBASE (identidad en Auth + perfil en Firestore) =====
     // El servicio de directorio es la UNICA via que escribe en la nube.
     // Nunca escribe `passwordHash`: ese campo queda solo en IndexedDB.
-    const directorio = (typeof window !== 'undefined' && window.__CDA_MODULES__ && window.__CDA_MODULES__.usuarios) || null;
+    // (`directorio` se declaró arriba, junto a la verificación de choque.)
     if (!directorio) {
         console.warn('[usuarios] Directorio en la nube no disponible; se guarda solo en local.');
     } else if (!id) {
@@ -3840,10 +6431,11 @@ async function guardarUsuarioFormInterno() {
             mostrarToast(res.mensaje, 'error');
             return;
         }
-        // Sincronizacion a la nube desactivada: el alta quedo solo en este
-        // dispositivo. Se avisa para que el admin no asuma que es multi-dispositivo.
+        // La nube no respondió (sin SDK o sin sesión): el alta quedo solo en
+        // este dispositivo. Se avisa para que el admin no asuma que es
+        // multi-dispositivo.
         if (res.nube === false) {
-            mostrarToast('Usuario guardado solo en este dispositivo (sincronizacion a la nube desactivada).', 'warning');
+            mostrarToast('Usuario guardado solo en este dispositivo (sin conexión o sin sesión de Firebase).', 'warning');
         }
     } else {
         // ---- EDICION: solo el perfil. La contrasena NO se toca en Auth ----
@@ -3860,15 +6452,27 @@ async function guardarUsuarioFormInterno() {
             return;
         }
 
-        // Un usuario que vive en la nube NO se duplica en IndexedDB: su perfil
-        // ya quedó escrito en Firestore. Escribirlo local creaba un registro
-        // fantasma con el mismo username y el listado lo duplicaba.
-        // `mostrarToast` renderiza con `textContent`: no necesita `escapeHtml`
-        // (de hecho, escaparlo aqui produciria doble escapado visible).
-        mostrarToast(`Usuario actualizado correctamente. Usuario: ${usuario.username}${password ? ' | Contraseña actualizada' : ' | Contraseña sin cambios'}`, 'success');
-        closeModal('modal-usuario');
-        await listarUsuarios();
-        return;
+        if (res.nube === false) {
+            // La nube no respondió: la edición se persiste SOLO en IndexedDB
+            // (se continúa con el `guardar` de mas abajo). Antes se informaba
+            // "actualizado correctamente" sin guardar en NINGÚN lado.
+            // El store `usuarios` usa clave numérica: un id de nube (string)
+            // daría NaN y el validador rechazaría el registro. Se libera el id
+            // y `guardar()` genera uno nuevo (copia local colapsada por
+            // username en el listado y purgada en el próximo borrado del alias).
+            if (!/^\d+$/.test(String(usuario.id))) delete usuario.id;
+            console.info('[usuarios] Edición sin nube: se persiste el cambio en IndexedDB.');
+        } else {
+            // Un usuario que vive en la nube NO se duplica en IndexedDB: su perfil
+            // ya quedó escrito en Firestore. Escribirlo local creaba un registro
+            // fantasma con el mismo username y el listado lo duplicaba.
+            // `mostrarToast` renderiza con `textContent`: no necesita `escapeHtml`
+            // (de hecho, escaparlo aqui produciria doble escapado visible).
+            mostrarToast(`Usuario actualizado correctamente. Usuario: ${usuario.username}${password ? ' | Contraseña actualizada' : ' | Contraseña sin cambios'}`, 'success');
+            closeModal('modal-usuario');
+            await listarUsuarios();
+            return;
+        }
     }
 
     // `guardar()` devuelve null cuando el validador rechaza el registro.
@@ -4047,6 +6651,19 @@ async function eliminarUsuario(id) {
     // 2) Después el registro local (si existía en este dispositivo).
     try {
         if (/^\d+$/.test(clave)) await eliminar('usuarios', Number(clave));
+        // Un usuario de la nube tiene id = username (string), asi que el borrado
+        // por id numérico de arriba se saltaba cualquier copia local duplicada
+        // (mismo username, id numérico) y quedaba como fantasma en IndexedDB.
+        const usernameObjetivo = String(objetivo.username || '').toLowerCase();
+        if (usernameObjetivo) {
+            const locales = await getTodos('usuarios', { soloLocal: true });
+            for (const u of locales) {
+                if (String(u.username || '').toLowerCase() === usernameObjetivo &&
+                    /^\d+$/.test(String(u.id))) {
+                    await eliminar('usuarios', Number(u.id));
+                }
+            }
+        }
     } catch (e) {
         console.warn('[usuarios] No se pudo borrar el registro local:', e);
     }
@@ -4141,7 +6758,10 @@ async function exportarDatos() {
         detalleEntregas: await getTodos('detalleEntregas'),
         imagenesArticulo: await getTodos('imagenesArticulo'),
         personalCompetencia: await getTodos('personalCompetencia'),
-        ubicacionesInventario: await getTodos('ubicacionesInventario')
+        ubicacionesInventario: await getTodos('ubicacionesInventario'),
+        penalidades: await getTodos('penalidades'),
+        tiposSancion: await getTodos('tiposSancion'),
+        autorizaciones: await getTodos('autorizaciones')
     };
     const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(backup, null, 2))}`;
     const a = document.createElement('a');
@@ -6142,6 +8762,13 @@ async function closeModalDetalleGasto(guardado = false) {
     _fotoModalDetalleGasto = null;
 }
 
+function marcarDetallesModificados() {
+    detallesModificados = true;
+    document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
+    renderizarDetalleGastos();
+}
+
+
 async function eliminarFilaGasto(index) {
     const confirmado = await mostrarConfirmacion(
         'Eliminar gasto',
@@ -6162,9 +8789,7 @@ async function eliminarFilaGasto(index) {
         }
     }
     adjuntosTemporales = { modal: [], ...newAdj };
-    detallesModificados = true;
-    document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
-    renderizarDetalleGastos();
+    marcarDetallesModificados();
 }
 
 function duplicarFilaGasto(index) {
@@ -6174,9 +8799,7 @@ function duplicarFilaGasto(index) {
     delete copia.id;
     detallesActuales.splice(index + 1, 0, copia);
     adjuntosTemporales['modal'] = [];
-    detallesModificados = true;
-    document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
-    renderizarDetalleGastos();
+    marcarDetallesModificados();
 }
 
 function moverFilaArriba(index) {
@@ -6185,9 +8808,7 @@ function moverFilaArriba(index) {
     adjuntosTemporales['modal'] = [];
     adjuntosTemporales['modal'] = [];
     adjuntosTemporales['modal'] = [];
-    detallesModificados = true;
-    document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
-    renderizarDetalleGastos();
+    marcarDetallesModificados();
 }
 
 function moverFilaAbajo(index) {
@@ -6196,9 +8817,7 @@ function moverFilaAbajo(index) {
     adjuntosTemporales['modal'] = [];
     adjuntosTemporales['modal'] = [];
     adjuntosTemporales['modal'] = [];
-    detallesModificados = true;
-    document.getElementById('cambios-sin-guardar').style.display = 'inline-flex';
-    renderizarDetalleGastos();
+    marcarDetallesModificados();
 }
 
 function agregarAdjuntoADetalle() {
@@ -6856,7 +9475,7 @@ async function renderDashboardInventario() {
                 // el mismo orden azul -> verde -> ambar -> violeta -> turquesa.
                 backgroundColor: paletaGraficos(invCatLabels.length),
                 borderWidth: 2,
-                borderColor: '#1f2a40',
+                borderColor: cssVar('--bg-card'),
                 hoverOffset: 6
             }]
         },
@@ -6866,7 +9485,7 @@ async function renderDashboardInventario() {
             cutout: '62%',
             plugins: {
                 // Punto circular con el color del sector: se cruza sin releer.
-                legend: { position: 'right', labels: { color: '#94a3b8', usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 12, font: { size: 11, family: 'Outfit' } } }
+                legend: { position: 'right', labels: { color: cssVar('--text-secondary'), usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 12, font: { size: 11, family: 'Outfit' } } }
             }
         }
     });
@@ -6883,7 +9502,7 @@ async function renderDashboardInventario() {
                 // Un color por categoría, en el mismo orden que la torta: ambas
                 // vistas del inventario se leen como una sola.
                 backgroundColor: paletaGraficos(invStockLabels.length),
-                hoverBackgroundColor: '#ffffff',
+                hoverBackgroundColor: cssVar('--text-primary'),
                 borderRadius: 6,
                 borderSkipped: false
             }]
@@ -6893,8 +9512,8 @@ async function renderDashboardInventario() {
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-                y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
-                x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
+                y: { grid: { color: cssVar('--chart-grid') }, ticks: { color: cssVar('--text-secondary') } },
+                x: { grid: { display: false }, ticks: { color: cssVar('--text-secondary') } }
             }
         }
     });
@@ -6935,16 +9554,19 @@ function calcularStockTotal(articulos, articuloTalles) {
     }, 0);
 }
 
+function calcularStockArticulo(art, articuloTalles) {
+    if (art.controlaTalles) {
+        const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
+        return tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
+    }
+    return Number(art.stockUnico || 0);
+}
+
+
 function contarArticulosSinStock(articulos, articuloTalles) {
     return articulos.filter(art => {
         if (art.activo === false) return false;
-        let stock = 0;
-        if (art.controlaTalles) {
-            const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
-            stock = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
-        } else {
-            stock = Number(art.stockUnico || 0);
-        }
+        const stock = calcularStockArticulo(art, articuloTalles);
         return stock === 0;
     }).length;
 }
@@ -6952,13 +9574,7 @@ function contarArticulosSinStock(articulos, articuloTalles) {
 function contarArticulosBajoStock(articulos, articuloTalles) {
     return articulos.filter(art => {
         if (art.activo === false) return false;
-        let stock = 0;
-        if (art.controlaTalles) {
-            const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
-            stock = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
-        } else {
-            stock = Number(art.stockUnico || 0);
-        }
+        const stock = calcularStockArticulo(art, articuloTalles);
         return stock > 0 && stock <= (art.stockMinimo || 0);
     }).length;
 }
@@ -8161,13 +10777,7 @@ async function exportarArticulosExcel() {
     for (const art of articulos) {
         const cat = categorias.find(c => c.id === Number(art.categoriaId));
         const catName = cat ? cat.nombre : '-';
-        let stock = 0;
-        if (art.controlaTalles) {
-            const tallesArt = articuloTalles.filter(at => Number(at.articuloId) === Number(art.id));
-            stock = tallesArt.reduce((s, t) => s + Number(t.stock || 0), 0);
-        } else {
-            stock = Number(art.stockUnico || 0);
-        }
+        const stock = calcularStockArticulo(art, articuloTalles);
         const estado = art.activo !== false ? 'Activo' : 'Inactivo';
         const linea = [
             sanitizarCSVExport(art.codigo), sanitizarCSVExport(art.nombre), sanitizarCSVExport(art.descripcion || ''),
@@ -8272,7 +10882,7 @@ async function listarMovimientosInventario() {
         item.innerHTML = `
             <div class="mov-icon"><i class="fa-solid ${c.icono}"></i></div>
             <div class="mov-info">
-                <div class="mov-title">${escapeHtml(artName)}${talleText}</div>
+                <div class="mov-title">${escapeHtml(artName)}${escapeHtml(talleText)}</div>
                 <div class="mov-meta">${c.label} • ${escapeHtml(mov.motivo || '')} • ${fecha}</div>
                 <div class="mov-meta">👤 ${escapeHtml(personaLabel)}</div>
                 ${mostrarObservacion && mov.observaciones ? `<div class="mov-meta">📝 ${escapeHtml(mov.observaciones)}</div>` : ''}
@@ -9046,10 +11656,28 @@ function claveCatalogoInventario(nombre) {
     return String(nombre || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').toLowerCase();
 }
 
+let consolidacionCatalogosInventarioEnCurso = null;
+let catalogosInventarioConsolidados = false;
+
 // Consolida registros duplicados creados por importaciones o sincronizaciones antiguas.
 // Conserva el primer registro (el catálogo original) y repara sus referencias antes de
 // eliminar los duplicados, para que los artículos no queden apuntando a IDs inexistentes.
 async function consolidarCatalogosInventario() {
+    if (catalogosInventarioConsolidados) return false;
+    if (consolidacionCatalogosInventarioEnCurso) return consolidacionCatalogosInventarioEnCurso;
+
+    const tarea = ejecutarConsolidacionCatalogosInventario();
+    consolidacionCatalogosInventarioEnCurso = tarea;
+    try {
+        return await tarea;
+    } finally {
+        if (consolidacionCatalogosInventarioEnCurso === tarea) {
+            consolidacionCatalogosInventarioEnCurso = null;
+        }
+    }
+}
+
+async function ejecutarConsolidacionCatalogosInventario() {
     const [categorias, talles, subcategorias, articulos, articuloTalles] = await Promise.all([
         getTodos('categoriasInventario'),
         getTodos('talles'),
@@ -9100,10 +11728,11 @@ async function consolidarCatalogosInventario() {
         ['categoriasInventario', 'talles', 'subcategoriasInventario', 'articulos', 'articuloTalles']
             .forEach(invalidarCache);
     }
+    catalogosInventarioConsolidados = true;
+    return cambio;
 }
 
 async function listarCategoriasInventario() {
-    await consolidarCatalogosInventario();
     const [categorias, subcategorias, talles] = await Promise.all([
         getTodos('categoriasInventario'),
         getTodos('subcategoriasInventario'),
@@ -9111,8 +11740,7 @@ async function listarCategoriasInventario() {
     ]);
 
     const catBody = document.getElementById('categorias-inventario-body');
-    catBody.innerHTML = '';
-    categorias.forEach(c => {
+    catBody.innerHTML = categorias.map(c => {
         const acciones = puedeEditar() ? `
             <td style="text-align:right;">
                 <button class="action-btn" onclick="editarCategoriaInventario(${c.id})"><i class="fa-solid fa-pen-to-square"></i></button>
@@ -9122,35 +11750,34 @@ async function listarCategoriasInventario() {
         const tallesBadge = c.controlaTalles ? '<span class="badge badge-info">Sí</span>' : '<span class="badge badge-secondary">No</span>';
         const tipoBienBadge = c.tipoBien === 'bien_uso' ? '<span class="badge badge-active">Bien de Uso</span>' : '<span class="badge badge-secondary">Consumible</span>';
         const estadoBadge = c.activo !== false ? '<span class="badge badge-active">Activo</span>' : '<span class="badge badge-inactive">Inactivo</span>';
-        catBody.innerHTML += `<tr>
+        return `<tr>
             <td style="font-weight:600;">${escapeHtml(c.nombre)}</td>
             <td>${tallesBadge}</td>
             <td>${tipoBienBadge}</td>
             <td>${estadoBadge}</td>
             ${acciones}
         </tr>`;
-    });
+    }).join('');
 
     const talleBody = document.getElementById('talles-body');
-    talleBody.innerHTML = '';
-    talles.forEach(t => {
+    talleBody.innerHTML = talles.map(t => {
         const acciones = puedeEditar() ? `
             <td style="text-align:right;">
                 <button class="action-btn" onclick="editarTalle(${t.id})"><i class="fa-solid fa-pen-to-square"></i></button>
                 <button class="action-btn delete" onclick="eliminarTalle(${t.id})"><i class="fa-solid fa-trash"></i></button>
             </td>
         ` : '';
-        talleBody.innerHTML += `<tr>
+        return `<tr>
             <td style="font-weight:600;">${escapeHtml(t.nombre)}</td>
             <td>${escapeHtml(t.descripcion || '-')}</td>
             ${acciones}
         </tr>`;
-    });
+    }).join('');
 
     const subBody = document.getElementById('subcategorias-inventario-body');
-    subBody.innerHTML = '';
-    subcategorias.forEach(s => {
-        const cat = categorias.find(c => c.id === Number(s.categoriaId));
+    const categoriasPorId = new Map(categorias.map(c => [Number(c.id), c]));
+    subBody.innerHTML = subcategorias.map(s => {
+        const cat = categoriasPorId.get(Number(s.categoriaId));
         const catName = cat ? cat.nombre : '-';
         const acciones = puedeEditar() ? `
             <td style="text-align:right;">
@@ -9158,12 +11785,22 @@ async function listarCategoriasInventario() {
                 <button class="action-btn delete" onclick="eliminarSubcategoria(${s.id})"><i class="fa-solid fa-trash"></i></button>
             </td>
         ` : '';
-        subBody.innerHTML += `<tr>
+        return `<tr>
             <td style="font-weight:600;">${escapeHtml(s.nombre)}</td>
             <td>${escapeHtml(catName)}</td>
             ${acciones}
         </tr>`;
-    });
+    }).join('');
+
+    if (!catalogosInventarioConsolidados && !consolidacionCatalogosInventarioEnCurso) {
+        consolidarCatalogosInventario()
+            .then(cambio => {
+                if (cambio && document.getElementById('view-categorias-inventario')?.classList.contains('active')) {
+                    return listarCategoriasInventario();
+                }
+            })
+            .catch(err => console.error('Error al consolidar los catálogos de inventario:', err));
+    }
 }
 
 function openModalCategoriaInventario() {
@@ -9806,7 +12443,6 @@ const PERSONAL_COMPETENCIA_DEFAULT = [
 
 // Porcentajes de cálculo
 const TASA_PARTICIPACION_ACA = 0.1375;   // 13.75%
-const TASA_SAC_MENSUALIZADO = 1/12;      // 1/12
 const TASA_CONT_PATRONALES = 0.273;      // 27.3%
 
 // Store para persistir personal por competencia
@@ -10243,7 +12879,6 @@ async function actualizarGastoTotalCompetencia(compId) {
 // Estado del módulo
 let alojamientosCache = [];
 let alojamientosCargados = false;
-let alojamientosFiltrosInicializados = false;
 
 // ====================================================================
 // OPTIMIZACIÓN CLAVE: COMPRESIÓN DE IMAGEN EN EL CLIENTE (Canvas API)
@@ -10863,4 +13498,366 @@ async function eliminarAlojamiento(id) {
         renderizarAlojamientos(alojamientosCache);
         actualizarFiltrosAlojamientos();
     }
+}
+
+// ==================== INSCIPCIONES DE KARTING ====================
+// Módulo Inscripciones - Fase 1 completada
+// ====================
+
+// Estado temporal para listado/paginación
+let inscripcionesCache = [];
+let inscripcionesPaginaActual = 1;
+const inscripcionesPorPagina = 20;
+
+async function obtenerCompetencias() {
+    try { return await getTodos('competencias'); }
+    catch (e) { console.warn('[inscripciones] no se pudo leer las competencias:', e?.message || e); return []; }
+}
+
+async function obtenerCategorias() {
+    try { return await getTodos('categorias'); }
+    catch (e) { console.warn('[inscripciones] no se pudo leer las categorías:', e?.message || e); return []; }
+}
+
+function categoriasParaCompetencia(competenciaId, todasLasCategorias) {
+    const competencia = todasLasCategorias.find(c => c.id === competenciaId);
+    if (!competencia || !competencia.categoriasPermitidas) return [];
+    const ids = Array.isArray(competencia.categoriasPermitidas)
+        ? competencia.categoriasPermitidas.map(String)
+        : [String(competencia.categoriasPermitidas)];
+    return todasLasCategorias.filter(c => ids.includes(String(c.id)));
+}
+
+async function obtenerListaPilotos() {
+    try {
+        const pilotos = await getTodos('pilotos');
+        return pilotos.map(p => ({ dni: String(p.dni || ''), nombre: `${p.nombre || ''} ${p.apellido || ''}`.trim() }));
+    } catch (e) {
+        console.warn('[inscripciones] no se pudo leer el padrón:', e?.message || e);
+        return [];
+    }
+}
+
+async function listarInscripciones() {
+    const tbody = document.getElementById('inscripciones-tbody');
+    if (!tbody) return;
+    const competenciaSel = document.getElementById('filtro-competencia');
+    const categoriaSel = document.getElementById('filtro-categoria');
+    const busquedaInput = document.getElementById('buscar-inscripcion');
+    const competenciaIdFiltro = competenciaSel ? competenciaSel.value : '';
+    const categoriaIdFiltro = categoriaSel ? categoriaSel.value : '';
+    const busqueda = busquedaInput ? busquedaInput.value.trim().toLowerCase() : '';
+
+    let todos = [];
+    try {
+        todos = await getTodos('inscripciones');
+        todos = todos.filter(i => i.estadoInscripcion !== 'cancelada');
+    } catch (e) {
+        console.warn('[inscripciones] no se pudo leer el store local:', e?.message || e);
+        todos = [];
+    }
+
+    const { competencias, categorias } = await sincronizarSelectoresFormulario();
+    const competenciaMap = new Map(competencias.map(c => [String(c.id), c]));
+    const categoriaMap = new Map(categorias.map(c => [String(c.id), c]));
+
+    const filtrados = todos.filter(i => {
+        if (competenciaIdFiltro && i.competenciaId !== competenciaIdFiltro) return false;
+        if (categoriaIdFiltro && i.categoriaId !== categoriaIdFiltro) return false;
+        if (!busqueda) return true;
+        const linea = `${i.pilotoDni || ''} ${i.pilotoNombre || ''} ${i.pilotoApellido || ''} ${i.numeroKart || ''} ${i.concurrente || ''}`.toLowerCase();
+        return linea.includes(busqueda);
+    });
+
+
+function renderInscripcionPagina() {
+    const tbody = document.getElementById('inscripciones-tbody');
+    if (!tbody) return;
+    const corte = inscripcionesCache.slice((inscripcionesPaginaActual - 1) * inscripcionesPorPagina, inscripcionesPaginaActual * inscripcionesPorPagina);
+
+    if (corte.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:2rem;">No hay inscripciones coincidentes.</td></tr>';
+        document.getElementById('inscripciones-contador').textContent = '';
+        return;
+    }
+
+    tbody.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    corte.forEach(p => {
+        const piloto = p.pilotoNombre || p.pilotoApellido
+            ? `${p.pilotoNombre || ''} ${p.pilotoApellido || ''}`.trim()
+            : 'Piloto sin nombre';
+        const competencia = 'Cargando...';
+        const categoria = 'Cargando...';
+        const numeroKart = p.numeroKart || '-';
+        const estado = p.estadoInscripcion || 'pendiente';
+        const estadoClase = estado === 'cancelada' ? 'badge badge-danger' : 'badge badge-warning';
+        const dniEsc = escapeHtml(String(p.pilotoDni || ''));
+        const acciones = `<td class="editor-only" style="text-align:right;white-space:nowrap;"><button type="button" class="btn btn-secondary btn-sm" onclick="editarInscripcion('${escapeHtml(p.id)}')" title="Editar inscripción"><i class="fa-solid fa-pen-to-square"></i></button> <button type="button" class="btn btn-secondary btn-sm" onclick="eliminarInscripcion('${escapeHtml(p.id)}')" title="Cancelar inscripción"><i class="fa-solid fa-trash"></i></button></td>`;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${escapeHtml(piloto)}</td><td>${dniEsc}</td><td>${escapeHtml(categoria)}</td><td>${escapeHtml(numeroKart)}</td><td>${escapeHtml(competencia)}</td><td class="text-center"><span class="${estadoClase}">${escapeHtml(estado)}</span></td>${acciones}`;
+        fragment.appendChild(tr);
+    });
+    tbody.appendChild(fragment);
+    document.getElementById('inscripciones-contador').textContent = `Mostrando ${Math.min(inscripcionesPaginaActual * inscripcionesPorPagina, inscripcionesCache.length)} de ${inscripcionesCache.length} inscripciones`;
+}
+
+function renderInscripcionPaginador(total, totalPaginas) {
+    const cont = document.getElementById('inscripciones-pagination');
+    if (!cont) return;
+    const yaPaginado = Number.isInteger(totalPaginas) && totalPaginas > 0;
+    const paginas = yaPaginado ? totalPaginas : Math.max(1, Math.ceil(total / inscripcionesPorPagina));
+    cont.innerHTML = `
+        <span id="inscripciones-contador" style="color:var(--text-secondary);">Mostrando ${Math.min(inscripcionesPaginaActual * inscripcionesPorPagina, inscripcionesCache.length)} de ${inscripcionesCache.length} inscripciones</span>
+        <div style="display:flex;gap:0.5rem;">
+            <button type="button" class="btn btn-secondary" id="inscripciones-anterior" onclick="cambiarPaginaInscripciones(-1)" ${inscripcionesPaginaActual <= 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i> Anterior</button>
+            <button type="button" class="btn btn-secondary" id="inscripciones-siguiente" onclick="cambiarPaginaInscripciones(1)" ${inscripcionesPaginaActual >= paginas ? 'disabled' : ''}>Siguiente <i class="fa-solid fa-chevron-right"></i></button>
+        </div>
+    `;
+}
+
+function cambiarPaginaInscripciones(direccion) {
+    const totalPaginas = Math.max(1, Math.ceil(inscripcionesCache.length / inscripcionesPorPagina));
+    const nueva = inscripcionesPaginaActual + direccion;
+    if (nueva < 1 || nueva > totalPaginas) return;
+    inscripcionesPaginaActual = nueva;
+    renderInscripcionPagina();
+    renderInscripcionPaginador(inscripcionesCache.length, totalPaginas);
+}
+    const totalPaginas = Math.max(1, Math.ceil(filtrados.length / inscripcionesPorPagina));
+    if (inscripcionesPaginaActual > totalPaginas) inscripcionesPaginaActual = totalPaginas;
+    inscripcionesCache = filtrados;
+
+    renderInscripcionPagina();
+
+function openModalInscripcion() {
+    if (!verificarPermiso(currentUser, 'inscripciones', 'crear')) return;
+    document.getElementById('inscripcion-btn-guardar').textContent = '<i class="fa-solid fa-save"></i> Guardar';
+    document.getElementById('form-inscripcion').reset();
+    document.getElementById('inscripcion-dni').value = '';
+    document.getElementById('inscripcion-competencia').value = '';
+    document.getElementById('inscripcion-categoria').value = '';
+    document.getElementById('inscripcion-numero-kart').value = '';
+    document.getElementById('inscripcion-concurrente').value = '';
+    document.getElementById('inscripcion-observaciones').value = '';
+    document.getElementById('inscripcion-btn-guardar').textContent = '<i class="fa-solid fa-save"></i> Guardar';
+    const modal = document.getElementById('modal-inscripcion');
+    if (modal) {
+        modal.style.display = 'block';
+        poblarSelectoresInscripcion();
+        poblarDatalistPilotos();
+    }
+}
+
+async function poblarSelectoresInscripcion() {
+    const { competencias, categorias } = await sincronizarSelectoresFormulario();
+    const categoriaSel = document.getElementById('inscripcion-categoria');
+    const competenciaSel = document.getElementById('inscripcion-competencia');
+    if (competenciaSel) {
+        competenciaSel.addEventListener('change', async () => {
+            const id = competenciaSel.value;
+            const filtradas = categorias.filter(c => {
+                if (!id) return true;
+                const competencia = competencias.find(c2 => String(c2.id) === String(id));
+                if (!competencia || !competencia.categoriasPermitidas) return true;
+                return String(competencia.categoriasPermitidas).includes(String(c.id));
+            });
+            categoriaSel.innerHTML = '<option value="">Seleccionar categoría</option>' +
+                filtradas.map(c => `<option value="${escapeHtml(String(c.id))}">${escapeHtml(c.nombre || 'Sin nombre')}</option>`).join('');
+        });
+    }
+}
+
+async function poblarDatalistPilotos() {
+    const datalist = document.getElementById('datalist-pilotos');
+    if (!datalist) return;
+    const pilotos = await obtenerListaPilotos();
+    datalist.innerHTML = pilotos.map(p =>
+        `<option value="${escapeHtml(p.dni)} - ${escapeHtml(p.nombre)}"></option>`
+    ).join('');
+}
+
+function limpiarFormularioInscripcion() {
+    document.getElementById('form-inscripcion').reset();
+
+async function editarInscripcion(id) {
+    if (!verificarPermiso(currentUser, 'inscripciones', 'editar')) return;
+    const inscripcion = await obtenerPorId('inscripciones', id);
+    if (!inscripcion) {
+        mostrarToast('Inscripción no encontrada.', 'error');
+        return;
+    }
+    document.getElementById('inscripcion-dni').value = inscripcion.pilotoDni || '';
+    document.getElementById('inscripcion-numero-kart').value = inscripcion.numeroKart || '';
+    document.getElementById('inscripcion-concurrente').value = inscripcion.concurrente || '';
+    document.getElementById('inscripcion-observaciones').value = inscripcion.observaciones || '';
+    const competenciaSel = document.getElementById('inscripcion-competencia');
+    const categoriaSel = document.getElementById('inscripcion-categoria');
+    if (competenciaSel) competenciaSel.value = inscripcion.competenciaId || '';
+    if (categoriaSel) categoriaSel.value = inscripcion.categoriaId || '';
+    const titulo = document.querySelector('.form-title');
+    if (titulo) titulo.innerHTML = '<i class="fa-solid fa-id-card"></i> Editando Inscripción';
+    document.getElementById('inscripcion-btn-guardar').textContent = '<i class="fa-solid fa-check"></i> Actualizar';
+    const modal = document.getElementById('modal-inscripcion');
+    if (modal) {
+        modal.dataset.inscripcionId = id;
+        modal.style.display = 'block';
+        poblarSelectoresInscripcion();
+        poblarDatalistPilotos();
+    }
+}
+
+function nuevoFecha() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+    document.getElementById('inscripcion-dni').value = '';
+    document.getElementById('inscripcion-competencia').value = '';
+    document.getElementById('inscripcion-categoria').value = '';
+    document.getElementById('inscripcion-numero-kart').value = '';
+    document.getElementById('inscripcion-concurrente').value = '';
+    document.getElementById('inscripcion-observaciones').value = '';
+    document.getElementById('inscripcion-btn-guardar').textContent = '<i class="fa-solid fa-save"></i> Guardar';
+    limpiarModalInscripcion();
+}
+
+function cerrarModalInscripcion() {
+    const modal = document.getElementById('modal-inscripcion');
+
+async function guardarInscripcion(e) {
+    e.preventDefault();
+    if (!verificarPermiso(currentUser, 'inscripciones', 'crear') && !verificarPermiso(currentUser, 'inscripciones', 'editar')) return;
+
+    const competenciaSel = document.getElementById('inscripcion-competencia');
+    const categoriaSel = document.getElementById('inscripcion-categoria');
+    const dniInput = document.getElementById('inscripcion-dni');
+    const numeroKartInput = document.getElementById('inscripcion-numero-kart');
+    const concurrenteInput = document.getElementById('inscripcion-concurrente');
+    const observacionesInput = document.getElementById('inscripcion-observaciones');
+
+    const competenciaId = competenciaSel ? competenciaSel.value : '';
+    const categoriaId = categoriaSel ? categoriaSel.value : '';
+    const pilotoDni = dniInput ? dniInput.value.trim() : '';
+    const numeroKart = numeroKartInput ? numeroKartInput.value.trim() : '';
+    const concurrente = concurrenteInput ? concurrenteInput.value.trim() : '';
+    const observaciones = observacionesInput ? observacionesInput.value.trim() : '';
+
+    if (!competenciaId) { mostrarToast('Seleccione una competencia.', 'error'); return; }
+    if (!categoriaId) { mostrarToast('Seleccione una categoría.', 'error'); return; }
+    if (!pilotoDni) { mostrarToast('Ingrese el DNI del piloto.', 'error'); return; }
+
+    const { competencias, categorias } = await sincronizarSelectoresFormulario();
+    const competenciaExiste = competencias.some(c => String(c.id) === String(competenciaId));
+    const categoriaExiste = categorias.some(c => String(c.id) === String(categoriaId));
+    if (!competenciaExiste) { mostrarToast('La competencia seleccionada no existe.', 'error'); return; }
+    if (!categoriaExiste) { mostrarToast('La categoría seleccionada no existe.', 'error'); return; }
+
+    const pilotos = await obtenerListaPilotos();
+    const pilotoExiste = pilotos.some(p => String(p.dni) === String(pilotoDni));
+    if (!pilotoExiste) { mostrarToast('El DNI ingresado no pertenece a ningún piloto registrado en el padrón.', 'error'); return; }
+
+    const modal = document.getElementById('modal-inscripcion');
+    const esEdicion = modal && modal.dataset.inscripcionId;
+    const id = esEdicion ? modal.dataset.inscripcionId : undefined;
+
+    const inscripcion = {
+        id,
+        competenciaId,
+        categoriaId,
+        pilotoDni,
+        numeroKart: numeroKart || null,
+        concurrente,
+        observaciones,
+        pilotoNombre: '',
+        pilotoApellido: '',
+        estadoInscripcion: esEdicion ? (await obtenerPorId('inscripciones', id))?.estadoInscripcion || 'pendiente' : 'pendiente',
+        fechaInscripcion: esEdicion ? (await obtenerPorId('inscripciones', id))?.fechaInscripcion || nuevoFecha() : nuevoFecha(),
+        createdAt: esEdicion ? (await obtenerPorId('inscripciones', id))?.createdAt || nuevoFecha() : nuevoFecha(),
+        updatedAt: nuevoFecha(),
+    };
+
+    const piloto = pilotos.find(p => String(p.dni) === String(pilotoDni));
+    if (piloto) {
+        inscripcion.pilotoNombre = piloto.nombre || '';
+        inscripcion.pilotoApellido = piloto.apellido || '';
+    }
+
+    if (numeroKart) {
+        const duplicados = inscripcionesCache.filter(i =>
+            i.numeroKart &&
+            String(i.numeroKart) === String(numeroKart) &&
+            String(i.competenciaId) === String(competenciaId) &&
+            String(i.categoriaId) === String(categoriaId) &&
+            (!esEdicion || String(i.id) !== String(id))
+        );
+        if (duplicados.length > 0) {
+            if (confirm('Este número de kart ya está asignado a otra inscripción en esta categoría. ¿Continuar?')) {
+                mostrarToast('ADVERTENCIA: ' + escapeHtml(numeroKart) + ' ya está registrado en esta categoría.', 'warning');
+            }
+        }
+    }
+
+    try {
+        const result = await guardar('inscripciones', inscripcion);
+        if (!result || !result.ok) {
+            mostrarToast('Error al guardar la inscripción: ' + (result.motivo || 'Error desconocido'), 'error');
+            return;
+        }
+        mostrarToast('Inscripción guardada correctamente.', 'success');
+        cerrarModalInscripcion();
+        await listarInscripciones();
+    } catch (err) {
+        mostrarToast('Error inesperado al guardar: ' + (err?.message || err), 'error');
+
+async function eliminarInscripcion(id) {
+    if (!verificarPermiso(currentUser, 'inscripciones', 'eliminar')) return;
+    const inscripcion = await obtenerPorId('inscripciones', id);
+    if (!inscripcion) { mostrarToast('Inscripción no encontrada.', 'error'); return; }
+    const confirmado = confirm('¿Cancelar inscripción de ' + (inscripcion.pilotoApellido || '') + ' ' + (inscripcion.pilotoNombre || '') + '? Se marcará como "cancelada".');
+    if (!confirmado) return;
+    await guardar('inscripciones', { ...inscripcion, estadoInscripcion: 'cancelada', updatedAt: nuevoFecha() })
+        .then(() => { mostrarToast('Inscripción cancelada.', 'success'); listarInscripciones(); })
+        .catch(() => mostrarToast('Error al cancelar.', 'error'));
+}
+
+if (typeof window !== 'undefined') {
+    window.listarInscripciones = listarInscripciones;
+    window.renderInscripcionPagina = renderInscripcionPagina;
+    window.renderInscripcionPaginador = renderInscripcionPaginador;
+    window.cambiarPaginaInscripciones = cambiarPaginaInscripciones;
+    window.openModalInscripcion = openModalInscripcion;
+    window.poblarSelectoresInscripcion = poblarSelectoresInscripcion;
+    window.poblarDatalistPilotos = poblarDatalistPilotos;
+    window.limpiarFormularioInscripcion = limpiarFormularioInscripcion;
+    window.cerrarModalInscripcion = cerrarModalInscripcion;
+    window.editarInscripcion = editarInscripcion;
+    window.guardarInscripcion = guardarInscripcion;
+    window.eliminarInscripcion = eliminarInscripcion;
+}
+// ==================== FIN INSCIPCIONES ====================
+    }
+}
+    if (modal) modal.style.display = 'none';
+}
+    renderInscripcionPaginador(filtrados.length, totalPaginas);
+}
+
+async function sincronizarSelectoresFormulario() {
+    const competencias = await obtenerCompetencias();
+    const categorias = await obtenerCategorias();
+    const competenciaSel = document.getElementById('inscripcion-competencia');
+    const categoriaSel = document.getElementById('inscripcion-categoria');
+    const busca = document.getElementById('buscar-inscripcion');
+    if (competenciaSel) {
+        competenciaSel.innerHTML = '<option value="">Seleccionar competencia</option>' +
+            competencias.map(c =>
+                '<option value="' + escapeHtml(String(c.id)) + '">' + escapeHtml(c.nombre || 'Sin nombre') + '</option>'
+            ).join('');
+    }
+    if (busca) {
+        busca.value = '';
+        inscripcionesPaginaActual = 1;
+    }
+    return { competencias, categorias };
 }
