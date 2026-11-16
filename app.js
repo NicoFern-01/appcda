@@ -3037,12 +3037,12 @@ async function eliminarPiloto(dni) {
 //
 // Los 4 ítems del tablero se pintan con clases YA existentes (.stat-card,
 // .chart-card, .badge-*, .tag): lo único propio son las barras .cat-bar-*,
-// el shimmer .cat-bar-skeleton y la variante de alerta .stat-card-alerta.
+// el shimmer .cat-bar-skeleton y el layout de auditoría .stat-card-auditoria.
 // SIN librerías de gráficos: las barras son <div> con width en %.
 
 // Paleta de tonos para las barras: se cicla en el orden del proyecto
 // (cyan → verde → ámbar) para que las categorías se distingan sin salir de
-// la identidad visual del dashboard. La variante de alerta se aplica aparte.
+// la identidad visual del dashboard.
 const TONOS_CATEGORIA = [
     'linear-gradient(90deg, var(--accent-blue), var(--accent-green))',
     'linear-gradient(90deg, #00d2d3, #0097f6)',
@@ -3182,19 +3182,8 @@ function renderKpiPilotos(pilotos, penalidades) {
             : `${cumplidas.length} cumplida${cumplidas.length === 1 ? '' : 's'}`;
     }
 
-    // Tarjeta CONSULTA PILOTOS ACTC: el número gigante y la nota "N categoría sin
-    // fiscalizar" se eliminaron del DOM (no pertenecen al módulo). Solo queda la
-    // reacción de peligro cuando hay auto-sanciones vigentes emitidas por la
-    // auditoría (campo autoActc).
-    const autoActc = vigentes.filter(p => p && p.autoActc).length;
-
-    // Reacción visual de peligro: badge rojo "PELIGRO" + icono/tarjeta en rojo.
-    const tarjetaActc = document.getElementById('pilotos-kpi-actc-card');
-    const badgeActc = document.getElementById('pilotos-kpi-actc-badge');
-    const iconoActc = document.getElementById('pilotos-kpi-actc-icono');
-    if (badgeActc) badgeActc.hidden = autoActc === 0;
-    if (tarjetaActc) tarjetaActc.classList.toggle('is-peligro', autoActc > 0);
-    if (iconoActc) iconoActc.classList.toggle('is-peligro', autoActc > 0);
+    // La tarjeta de consulta ACTC permanece neutral; las sanciones vigentes
+    // siguen mostrándose en la tabla de abajo.
 }
 
 // ---------------- Importación masiva del padrón CDA (HTML/XLS) ----------------

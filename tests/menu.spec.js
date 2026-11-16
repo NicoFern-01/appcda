@@ -141,10 +141,10 @@ test.describe('Menú lateral — submenús desplegables', () => {
     await expect(page.locator('#view-pilotos .charts-grid')).toHaveCount(2);
     await expect(page.locator('#pilotos-categorias-card')).toHaveCount(1);
 
-    // Ítem 1 (total de pilotos) e Ítem 4 (alerta ACTC, con borde de alerta).
+    // Ítem 1 (total de pilotos) e Ítem 4 (consulta ACTC).
     await expect(page.locator('#pilotos-kpi-total')).toHaveText(/^[\d.]+$/);
     await expect(page.locator('#pilotos-kpi-actc')).toHaveCount(0);
-    await expect(page.locator('#view-pilotos .stat-card-alerta')).toHaveCount(1);
+    await expect(page.locator('#view-pilotos .stat-card-auditoria')).toHaveCount(1);
 
     // Ítem 2 (distribución por categoría): sin datos muestra el placeholder
     // elegante, nunca un cuadro vacío.
@@ -713,10 +713,10 @@ test.describe('Menú lateral — submenús desplegables', () => {
     expect(sanciones[0].estado).toBe('VIGENTE');
     expect(sanciones[0].fechaFin).toBe('2026-12-31');
 
-    // 5) Banner rojo flotante con el nuevo texto + badge y borde de peligro.
+    // 5) No hay banner ni señalización de peligro en la tarjeta después de registrar la sanción.
     await expect(page.locator('#auditoria-banner')).toBeHidden();
-    await expect(page.locator('#pilotos-kpi-actc-badge')).toBeVisible();
-    await expect(page.locator('#view-pilotos .stat-card-alerta')).toHaveClass(/is-peligro/);
+    await expect(page.locator('#view-pilotos .stat-card-auditoria')).not.toContainText('PELIGRO');
+    await expect(page.locator('#view-pilotos .stat-card-auditoria')).not.toHaveClass(/is-peligro/);
 
     // 6) La mini-tabla de sancionados refleja la inyección.
     await expect(page.locator('#pilotos-sancionados-body')).toContainText('JUAN PÉREZ');

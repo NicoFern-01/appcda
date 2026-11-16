@@ -1061,19 +1061,17 @@
                          SIN spinner ni búsquedas automáticas: input + botón "Auditar"
                          viven dentro de la propia tarjeta. 100% client-side (GitHub
                          Pages): el fetch a Serper sale desde el navegador. -->
-                    <div class="stat-card stat-card-alerta" id="pilotos-kpi-actc-card">
+                    <div class="stat-card stat-card-auditoria" id="pilotos-kpi-actc-card">
                         <div class="stat-fila-actc">
                             <div class="stat-info">
                                 <h3>CONSULTA PILOTOS ACTC
-                                    <!-- Badge que se enciende en rojo cuando hay auto-sanciones ACTC vigentes -->
-                                    <span id="pilotos-kpi-actc-badge" class="alerta-badge" hidden>PELIGRO</span>
                                 </h3>
                                 <!-- Placeholders "26" (número gigante) y "N categoría sin
                                      fiscalizar" ELIMINADOS: no pertenecen a este módulo.
-                                     El encabezado solo conserva título + badge + ícono. -->
+                                     El encabezado solo conserva título e ícono. -->
                             </div>
-                            <div class="stat-icon stat-icon-alerta" id="pilotos-kpi-actc-icono">
-                                <i class="fa-solid fa-triangle-exclamation"></i>
+                            <div class="stat-icon stat-icon-blue">
+                                <i class="fa-solid fa-magnifying-glass"></i>
                             </div>
                         </div>
                         <!-- Auditoría ON DEMAND: solo se ejecuta al clickear "Auditar" (o Enter) -->
