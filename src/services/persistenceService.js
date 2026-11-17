@@ -49,6 +49,71 @@ function limpiarObjetoParaFirebase(value) {
   return value;
 }
 
+function pilotosDesdeSnapshot(snapshot) {
+  const pilotos = [];
+  snapshot.forEach((docSnap) => {
+    const data = docSnap.data();
+    if (Array.isArray(data.items)) {
+      data.items.forEach((item) => {
+        if (item && typeof item === 'object' && !Array.isArray(item)) pilotos.push(item);
+      });
+      return;
+    }
+
+    const piloto = { ...data };
+    if (piloto.id === undefined || piloto.id === null) piloto.id = docSnap.id;
+    if (!piloto.dni) piloto.dni = String(piloto.documento || docSnap.id);
+    pilotos.push(piloto);
+  });
+  return pilotos;
+}
+
+async function sincronizarPilotosConFirestore(pilotos, opciones = {}) {
+  const rt = runtime();
+  if (!rt.useFirebase || !rt.dbFirebase || !rt.auth?.currentUser ||
+      typeof rt.getDocs !== 'function' || typeof rt.collection !== 'function' ||
+      typeof rt.writeBatch !== 'function' || typeof rt.doc !== 'function') {
+    return false;
+  }
+
+  const data = Array.isArray(pilotos) ? pilotos : await getTodos('pilotos', { soloLocal: true });
+  const snapshot = await rt.getDocs(rt.collection(rt.dbFirebase, 'pilotos'));
+  if (opciones.conservarNubeSiLocalVacio && data.length === 0 && !snapshot.empty) {
+    return false;
+  }
+  const idsDeseados = new Set();
+  const operaciones = [];
+
+  for (let i = 0; i < data.length; i += 200) {
+    const loteId = `lote_${i / 200}`;
+    idsDeseados.add(loteId);
+    operaciones.push({
+      tipo: 'set',
+      id: loteId,
+      data: {
+        items: data.slice(i, i + 200).map(limpiarObjetoParaFirebase),
+        total: Math.min(200, data.length - i),
+        updatedAt: Date.now()
+      }
+    });
+  }
+
+  snapshot.forEach((docSnap) => {
+    if (!idsDeseados.has(docSnap.id)) operaciones.push({ tipo: 'delete', id: docSnap.id });
+  });
+
+  for (let i = 0; i < operaciones.length; i += 500) {
+    const batch = rt.writeBatch(rt.dbFirebase);
+    operaciones.slice(i, i + 500).forEach((operacion) => {
+      const ref = rt.doc(rt.dbFirebase, 'pilotos', operacion.id);
+      if (operacion.tipo === 'set') batch.set(ref, operacion.data);
+      else batch.delete(ref);
+    });
+    await batch.commit();
+  }
+  return true;
+}
+
 function invalidarCache(storeName) {
   const st = estado();
   delete st._cache[storeName];
@@ -158,8 +223,16 @@ export async function guardar(storeName, item) {
       .catch(reject);
   });
 
+  if (storeName === 'pilotos') {
+    try {
+      await sincronizarPilotosConFirestore();
+    } catch (e) {
+      console.warn('Firebase sync warning [pilotos]:', e);
+    }
+    return result;
+  }
+
   // Clave del documento en Firestore: todos los stores usan el 'id'.
-  // Para 'pilotos' el doc vive en `/pilotos/{id}`.
   const claveDoc = String(item.id);
 
   // Sync cloud: solo si Firebase activo Y store sincronizable (A-4). No bloqueante.
@@ -213,12 +286,16 @@ export async function getTodos(storeName, opciones = {}) {
     try {
       console.log(`Colección '${storeName}' vacía en IndexedDB. Forzando lectura directa desde Firestore...`);
       const querySnapshot = await rt.getDocs(rt.collection(rt.dbFirebase, storeName));
-      const dataNube = [];
-      querySnapshot.forEach((docSnap) => {
-        const item = docSnap.data();
-        item.id = Number(docSnap.id) || docSnap.id;
-        dataNube.push(item);
-      });
+      const dataNube = storeName === 'pilotos'
+        ? pilotosDesdeSnapshot(querySnapshot)
+        : [];
+      if (storeName !== 'pilotos') {
+        querySnapshot.forEach((docSnap) => {
+          const item = docSnap.data();
+          item.id = Number(docSnap.id) || docSnap.id;
+          dataNube.push(item);
+        });
+      }
       cache()[storeName] = dataNube;
       if (dataNube.length > 0) {
         try {
@@ -263,8 +340,16 @@ export async function eliminar(storeName, id) {
       .catch(reject);
   });
 
-  // Sync cloud (no bloqueante) y respetando lista negra (A-4).
+  // Sync cloud respetando lista negra (A-4).
   const rt = runtime();
+  if (storeName === 'pilotos') {
+    try {
+      await sincronizarPilotosConFirestore();
+    } catch (e) {
+      console.warn('Firebase delete sync warning [pilotos]:', e);
+    }
+    return;
+  }
   if (rt.useFirebase && esStoreSincronizable(storeName)) {
     try {
       await rt.deleteDoc(rt.doc(rt.dbFirebase, storeName, String(id)));
@@ -322,19 +407,24 @@ export async function sincronizarFirebaseALocal(stores) {
       const porId = new Map(locales.map((item) => [claveNativa(item), item]));
       const desdeNube = [];
 
-      snapNube.forEach((docSnap) => {
-        const item = docSnap.data();
-        if (storeName === 'pilotos') {
-          // Doc ID de Firestore = DNI (string), sin coerción numérica.
-          item.dni = String(docSnap.id);
-          item.id = String(docSnap.id);
-        } else {
+      const registrosNube = storeName === 'pilotos'
+        ? pilotosDesdeSnapshot(snapNube)
+        : null;
+      if (storeName === 'pilotos') {
+        registrosNube.forEach((item) => {
+          const local = porId.get(claveNativa(item));
+          if (local && esMasReciente(local, item)) return;
+          desdeNube.push(item);
+        });
+      } else {
+        snapNube.forEach((docSnap) => {
+          const item = docSnap.data();
           item.id = Number(docSnap.id) || docSnap.id;
-        }
-        const local = porId.get(claveNativa(item));
-        if (local && esMasReciente(local, item)) return;
-        desdeNube.push(item);
-      });
+          const local = porId.get(claveNativa(item));
+          if (local && esMasReciente(local, item)) return;
+          desdeNube.push(item);
+        });
+      }
 
       if (desdeNube.length === 0) continue;
 
@@ -399,6 +489,28 @@ export async function sincronizarLocalAFirebase() {
     }
 
     let snapshot = null;
+    if (storeName === 'pilotos') {
+      invalidarCache(storeName);
+      const dataLocal = await getTodos(storeName, { soloLocal: true });
+      try {
+        const sincronizado = await sincronizarPilotosConFirestore(dataLocal, {
+          conservarNubeSiLocalVacio: true
+        });
+        if (!sincronizado) {
+          detalle.push(dataLocal.length === 0
+            ? 'pilotos: IndexedDB vacío; se conservó la colección de Firestore'
+            : 'pilotos: no se pudo sincronizar');
+          continue;
+        }
+        const cantidadLotes = Math.ceil(dataLocal.length / 200);
+        total += dataLocal.length;
+        detalle.push(`pilotos: ${dataLocal.length} registros empaquetados en ${cantidadLotes} documento(s)`);
+      } catch (e) {
+        console.warn("No se pudo sincronizar la colección 'pilotos' empaquetada:", e);
+        detalle.push('pilotos: error al sincronizar los lotes');
+      }
+      continue;
+    }
     try {
       snapshot = await rt.getDocs(rt.collection(rt.dbFirebase, storeName));
     } catch (e) {
@@ -509,6 +621,7 @@ export const persistenceService = {
   sincronizarFirebaseALocal,
   suscribirColeccion,
   cancelarSuscripcion,
+  sincronizarPilotosConFirestore,
   limpiarObjetoParaFirebase,
 };
 

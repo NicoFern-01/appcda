@@ -176,14 +176,25 @@ service cloud.firestore {
       allow write: if esAdmin();
     }
 
+    // ---------- pilotos (padrón empaquetado) ----------
+    // IndexedDB conserva un piloto por registro; Firestore usa documentos
+    // lote_N con hasta 200 elementos para reducir lecturas y escrituras.
+    match /pilotos/{docId} {
+      allow read: if signedIn();
+      allow create, update: if puedeEscribirOperativo()
+                            && request.resource.data.items is list
+                            && request.resource.data.items.size() <= 200;
+      allow delete: if puedeEscribirOperativo();
+    }
+
     // ---------- resto de colecciones ----------
     // NOTA CRITICA DE PRECEDENCIA: en las reglas de Firestore NO existe la
     // "herencia" entre `match`. Cada `match` se evalua por separado y un comodin
     // como este SIEMPRE concede tambien sobre las colecciones nombradas arriba
     // (los comodines tienen la misma prioridad y el acceso se autoriza si
     // CUALQUIER regla coincide). Por eso este comodin NO incluye `usuarios`,
-    // `configuracionGlobal`, `gastos`, `rendiciones` ni `inventario`: si los
-    // incluyera, dejaria sin efecto el endurecimiento aplicado mas arriba.
+    // `configuracionGlobal`, `gastos`, `rendiciones`, `inventario` ni `pilotos`:
+    // si los incluyera, dejaria sin efecto las reglas especificas.
     //
     // LECTURA: cualquier usuario autenticado.
     // ESCRITURA: solo roles operativos (admin/editor/supervisor activos).
@@ -195,12 +206,14 @@ service cloud.firestore {
                   && collection != 'gastos'
                   && collection != 'rendiciones'
                   && collection != 'inventario'
+                  && collection != 'pilotos'
                   && signedIn();
       allow write: if collection != 'usuarios'
                    && collection != 'configuracionGlobal'
                    && collection != 'gastos'
                    && collection != 'rendiciones'
                    && collection != 'inventario'
+                   && collection != 'pilotos'
                    && puedeEscribirDatos();
     }
   }

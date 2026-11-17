@@ -2800,8 +2800,8 @@ function exportarPDFListadoPersonal() {
 }
 
 // ==================== PILOTOS: LISTADO DE PILOTOS ====================
-// Alta manual + tabla reactiva. El DNI sanitizado es la clave primaria
-// (keyPath 'dni' en IndexedDB y doc ID `/pilotos/{dni}` en Firestore).
+// Alta manual + tabla reactiva. IndexedDB conserva un registro por piloto;
+// Firestore sincroniza el listado completo en documentos lote_N.
 
 /** Activa el listener en tiempo real (onSnapshot) de `pilotos`. */
 function suscribirPilotosTiempoReal() {
@@ -2962,7 +2962,7 @@ function claveDuplicadoPiloto(p) {
 async function deduplicarPilotos() {
     let todos = [];
     try {
-        todos = await getTodos('pilotos');
+        todos = await getTodos('pilotos', { soloLocal: true });
     } catch (e) {
         console.warn('[pilotos] no se pudo leer para deduplicar:', e?.message || e);
         return 0;
@@ -3000,8 +3000,8 @@ async function deduplicarPilotos() {
 }
 
 /**
- * Elimina TODOS los registros de pilotos de IndexedDB y Firestore.
- * Se usa para el reemplazo total al importar un nuevo padrón .xls.
+ * Elimina TODOS los registros de pilotos de IndexedDB.
+ * La importación sincroniza el padrón reemplazado en Firestore al finalizar.
  */
 async function eliminarTodosPilotos() {
     let todos = [];
@@ -3009,32 +3009,10 @@ async function eliminarTodosPilotos() {
         todos = await getTodos('pilotos');
     } catch (e) {
         console.warn('[pilotos] no se pudo leer para limpieza total:', e?.message || e);
-        return;
     }
-    if (todos.length === 0) return;
-
-    const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
-    const haySesion = !!(rt && rt.dbFirebase && typeof rt.writeBatch === 'function'
-        && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser);
-
-    // Firestore: batch delete de todos los documentos existentes (chunks de 500)
-    if (haySesion && todos.length > 0) {
-        try {
-            for (let i = 0; i < todos.length; i += 500) {
-                const chunk = todos.slice(i, i + 500);
-                const batch = rt.writeBatch(rt.dbFirebase);
-                let count = 0;
-                for (const p of chunk) {
-                    if (p.id) {
-                        batch.delete(rt.doc(rt.dbFirebase, 'pilotos', String(p.id)));
-                        count++;
-                    }
-                }
-                if (count > 0) await batch.commit();
-            }
-        } catch (e) {
-            console.warn('[pilotos] Error eliminando de Firestore:', e);
-        }
+    if (todos.length === 0) {
+        invalidarCache('pilotos');
+        return;
     }
 
     // IndexedDB: clear del store (más rápido que eliminar uno por uno)
@@ -3051,7 +3029,7 @@ async function eliminarTodosPilotos() {
     }
 
     invalidarCache('pilotos');
-    console.info(`[pilotos] Limpieza total: ${todos.length} registro(s) eliminado(s) de IndexedDB y Firestore.`);
+    console.info('[pilotos] Store local limpiado para reemplazar el padrón.');
 }
 
 async function listarPilotos() {
@@ -4148,10 +4126,8 @@ async function auditarPiloto() {
 // Parser 100% nativo (FileReader + DOMParser, sin librerías): el padrón de la
 // CDA es un HTML con tablas. Columnas: Apellido = celda 1, Nombre = celda 2,
 // DNI = celda 3, Categoría = celda 16. La escritura por lotes vive en
-// importarPadronLotes() (más abajo): IndexedDB local + `writeBatch` a
-// Firestore con el DNI como doc ID (`/pilotos/{dni}`, set = upsert).
-
-const PILOTOS_BATCH_MAX = 400;
+// importarPadronLotes() (más abajo): IndexedDB local + sincronización empaquetada
+// en documentos lote_N de Firestore.
 // Padrón inicial publicado por la CDA (HTML): vive en public/ y Vite lo copia a
 // dist/ en el build. Se lee por fetch() en segundo plano (Task 2) en lugar de
 // exigir que el admin suba el archivo a mano.
@@ -4381,7 +4357,7 @@ async function conFeedbackDeImportacion(input, accion) {
     }
 }
 
-/** Guarda los registros en IndexedDB + Firestore en lotes (sin congelar la UI). */
+/** Guarda los registros individualmente en IndexedDB y los empaqueta en Firestore. */
 async function importarPadronLotes(registros, btn) {
     invalidarCache('pilotos');
     // Reemplazo total: eliminar todos los registros previos antes de guardar los nuevos.
@@ -4408,25 +4384,16 @@ async function importarPadronLotes(registros, btn) {
         tx.onabort = () => reject(tx.error || new Error('Importación local cancelada.'));
     });
 
-    const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
-    const haySesion = !!(rt && rt.dbFirebase && typeof rt.writeBatch === 'function'
-        && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser);
-    if (!haySesion) return false;
-
-    // El commit ocurre EN CADA iteración: el último lote (slice parcial < 400
-    // filas) también se commitea dentro del bucle, por lo que NINGÚN registro
-    // queda atrapado en memoria al salir de él (no hace falta un flush posterior).
-    for (let i = 0; i < registros.length; i += PILOTOS_BATCH_MAX) {
-        const lote = rt.writeBatch(rt.dbFirebase);
-        registros.slice(i, i + PILOTOS_BATCH_MAX).forEach(item => {
-            lote.set(rt.doc(rt.dbFirebase, 'pilotos', item.id), item, { merge: true });
-        });
-        await lote.commit();
-        const subidos = Math.min(i + PILOTOS_BATCH_MAX, registros.length);
-        if (btn) btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Subiendo ${subidos}/${registros.length}...`;
-        await new Promise(r => setTimeout(r, 0)); // cede el hilo: no congela el navegador
+    const persistencia = typeof window !== 'undefined'
+        ? window.__CDA_MODULES__?.persistencia
+        : null;
+    if (!persistencia || typeof persistencia.sincronizarPilotosConFirestore !== 'function') {
+        return false;
     }
-    return true;
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Subiendo padrón...';
+    const sincronizado = await persistencia.sincronizarPilotosConFirestore(registros);
+    if (sincronizado) await new Promise(resolve => setTimeout(resolve, 0));
+    return sincronizado;
 }
 // Planilla de sanciones a pilotos con documentación adjunta vía ENLACE EXTERNO.
 // Persistencia: los registros viven en el store 'penalidades' (DB_VERSION 13) y
