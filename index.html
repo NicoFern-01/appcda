@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script type="module" crossorigin src="./assets/index-l3cb7JFR.js"></script>
+  <script type="module" crossorigin src="./assets/index-CC0nq9va.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/index-4q405MV6.css">
 </head>
 <body>
@@ -1147,8 +1147,9 @@
                         <p class="page-subtitle">Listado general de pilotos participantes</p>
                     </div>
                 </header>
-                <!-- Formulario de alta manual (DNI = clave primaria /pilotos/{dni}) -->
-                <form id="form-piloto" class="form-card editor-only" onsubmit="guardarPilotoForm(event)">
+                <!-- Formulario de alta/edición manual (id = clave primaria /pilotos/{id}) -->
+                <form id="form-piloto" class="form-card editor-only" onsubmit="guardarPilotoOEdicion(event)">
+                    <input type="hidden" id="piloto-id">
                     <div class="form-title"><i class="fa-solid fa-id-card"></i> Nuevo Piloto</div>
                     <div class="form-grid">
                         <div class="form-group">
@@ -1168,6 +1169,10 @@
                             <input type="text" id="piloto-categoria" placeholder="Ej: TC2000" autocomplete="off" required list="categorias-piloto">
                             <datalist id="categorias-piloto"></datalist>
                         </div>
+                        <div class="form-group">
+                            <label for="piloto-importe">Importe</label>
+                            <input type="text" id="piloto-importe" placeholder="Ej: 85300,00" autocomplete="off">
+                        </div>
                     </div>
                     <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
                         <button type="submit" class="btn" id="piloto-btn-guardar"><i class="fa-solid fa-plus"></i> Agregar Piloto</button>
@@ -1178,7 +1183,7 @@
                 <div class="table-card">
                     <div class="table-header-tools">
                         <h3>Pilotos Registrados</h3>
-                        <input type="text" id="buscar-piloto" class="search-input" placeholder="Buscar por nombre, DNI o categoría..." oninput="pilotoBuscarDebounced()">
+                        <input type="text" id="buscar-piloto" class="search-input" placeholder="Buscar por nombre, DNI, categoría o importe..." oninput="pilotoBuscarDebounced()">
                     </div>
                     <div class="table-responsive">
                         <table>
@@ -1186,7 +1191,9 @@
                                 <tr>
                                     <th>Nombre y Apellido</th>
                                     <th>Documento</th>
+                                    <th>DNI</th>
                                     <th>Categoría</th>
+                                    <th>Importe</th>
                                     <th class="editor-only" style="text-align: right;">Acciones</th>
                                 </tr>
                             </thead>
@@ -3196,7 +3203,7 @@
     -->
     <!-- SheetJS (CDN): lectura nativa de archivos .xlsx/.xls sin convertir a HTML -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="db.js?v=mwikmw8y"></script>
-    <script src="app.js?v=mwikmw8y"></script>
+    <script src="db.js?v=mwjzbqyj"></script>
+    <script src="app.js?v=mwjzbqyj"></script>
 </body>
 </html>
