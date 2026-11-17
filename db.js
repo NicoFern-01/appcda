@@ -32,7 +32,7 @@ const DB_NAME = 'ControlAutomovilismoDB';
 // IndexedDB". Al subir a V18 el navegador ejecuta OBLIGATORIAMENTE esta
 // actualización (oldVersion 17 < 18) y el guard con .contains() garantiza la
 // creación física del store /autorizaciones/{id}.
-const DB_VERSION = 19;
+const DB_VERSION = 20;
 
 let dbInstance = null;
 
@@ -707,14 +707,14 @@ function openDB() {
             }
 
             // ============ NUEVO EN DB_VERSION 15/16: LISTADO DE PILOTOS ============
-            // keyPath 'dni' (string, SIN autoIncrement): el DNI es la clave
-            // primaria y el doc ID `/pilotos/{dni}` en Firestore. El keyPath
-            // rechaza duplicados en IndexedDB a nivel de motor (ConstraintError),
-            // como segunda barrera además del getDoc previo en el formulario.
-            // El bloque V16 (más abajo) re-crea el store si una build previa lo
-            // dejó sin materializar (bug: "El store local 'pilotos' no está disponible").
+            // keyPath 'id' (numérico, autoIncrement): cada licencia de piloto es un
+            // registro independiente. NO se usa DNI como clave primaria porque una
+            // misma persona puede tener múltiples licencias (diferentes categorías/
+            // importes) que deben conservarse como filas separadas sin deduplicar.
+            // El doc ID en Firestore es el 'id' numérico del registro.
+            // El bloque V20 (más abajo) migra bases previas de keyPath 'dni' a 'id'.
             if (!db.objectStoreNames.contains('pilotos')) {
-                db.createObjectStore('pilotos', { keyPath: 'dni' });
+                db.createObjectStore('pilotos', { keyPath: 'id', autoIncrement: true });
             }
 
             // ============ DB_VERSION 11: REPARACIÓN DEFINITIVA DE ESQUEMAS INCONSISTENTES ============
@@ -766,6 +766,29 @@ function openDB() {
                         db.createObjectStore('autorizaciones', { keyPath: 'id', autoIncrement: true });
                     } catch (storeErrV18) {
                         console.warn('[db] V18: no se pudo crear el store autorizaciones:', storeErrV18?.message || storeErrV18);
+                    }
+                }
+            }
+
+            // ============ DB_VERSION 20: MIGRACIÓN DE 'pilotos' DE keyPath 'dni' A 'id' ============
+            // MOTIVO DEL BUMP: el store 'pilotos' se creó en V15/16 con keyPath 'dni',
+            // lo que impedía registros duplicados por DNI. Se migra a keyPath 'id'
+            // con autoIncrement para permitir múltiples licencias por piloto.
+            // Se ELIMINA el store viejo (pierden datos locales previos, reimportables
+            // desde el padrón XLS) y se recrea con el nuevo esquema.
+            if (event.oldVersion < 20) {
+                if (db.objectStoreNames.contains('pilotos')) {
+                    try {
+                        db.deleteObjectStore('pilotos');
+                    } catch (delErrV20) {
+                        console.warn('[db] V20: no se pudo eliminar el store pilotos viejo:', delErrV20?.message || delErrV20);
+                    }
+                }
+                if (!db.objectStoreNames.contains('pilotos')) {
+                    try {
+                        db.createObjectStore('pilotos', { keyPath: 'id', autoIncrement: true });
+                    } catch (storeErrV20) {
+                        console.warn('[db] V20: no se pudo crear el store pilotos con keyPath id:', storeErrV20?.message || storeErrV20);
                     }
                 }
             }

@@ -12,9 +12,9 @@
 // esquema. 'pilotos' usa 'dni' (string) como clave; el resto usa 'id' numérico.
 // ============================================================
 
-/** Clave primaria por store ('pilotos' → 'dni', el resto → 'id'). */
+/** Clave primaria por store (todos usan 'id' con autoIncrement). */
 export function clavePrimariaStore(storeName) {
-  return storeName === 'pilotos' ? 'dni' : 'id';
+  return 'id';
 }
 
 /**

@@ -600,12 +600,22 @@ Commiteado y pusheado en `df84126` "pilotos: dashboard de la vista padre
 | Lógica | `app.js` | `guardarPilotoForm()` (sanitiza: `toUpperCase()` + DNI solo dígitos; **escudo 3 barreras**: `getDoc` en caliente → `obtenerPorId` local → `ConstraintError` del keyPath; mensaje exacto `"Error: El DNI ingresado ya pertenece a un piloto registrado"` vía `mostrarToast`), `listarPilotos()` (buscador, orden `es-AR` por apellido+nombre, `escapeHtml()`, confirmación con `mostrarConfirmacion()` y baja vía `eliminar()`), `suscribirPilotosTiempoReal()` + `poblarCategoriasPiloto()`. `cargarDatosVista('listado-pilotos')` en `viewManager.js` **ya invocaba `listarPilotos()`**: sin cambios. |
 | Test | `tests/menu.spec.js` | El test existente de "Pilotos" ahora verifica formulario (4 inputs + botón), columnas de la tabla y `tbody`. **Sin stubs**: `listarPilotos` corre real (IndexedDB limpia ⇒ estado vacío ⇒ render OK). |
 
+### Cambios de esta sesión — Listado de Pilotos: columnas DNI e Importe, importación sin dedup, edición solo Admin
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| Store `pilotos` | `db.js` | **`DB_VERSION` 19 → 20**: keyPath cambiado de `'dni'` a `'id'` con `autoIncrement: true`. Bloque V20 migra bases previas: elimina store viejo (keyPath 'dni') y recrea con keyPath 'id'. Los datos locales previos se pierden (reimportables desde XLS). |
+| Claves nativas | `src/services/schemaValidator.js` | `clavePrimariaStore()` ahora devuelve siempre `'id'` (antes 'pilotos' → 'dni', resto → 'id'). |
+| Persistencia | `src/services/persistenceService.js` | `guardar()`: 'pilotos' ya genera `id` UUID (igual que el resto). `claveDoc`, `getTodos`, `eliminar`, `obtenerPorId`, `sincronizarFirebaseALocal`: eliminado tratamiento especial de 'pilotos' (usaba `item.dni`, ahora usa `item.id`). |
+| Vista | `index.html` | Formulario: agregado campo `Importe` (input texto, vacío = 0), campo oculto `piloto-id`, `onsubmit` → `guardarPilotoOEdicion`. Tabla: columnas `Nombre y Apellido` / `Documento` / `DNI` / `Categoría` / `Importe` / `Acciones`. Buscador: placeholder incluye "importe". Comentario del form: dni → id. |
+| Lógica | `app.js` | `guardarPilotoForm()`: agregado `importe` (parseo ARS), removido escudo anti-duplicados por DNI (3 barreras). `parsearImporteARS()` / `formatearImporteARS()`: nuevas funciones para formato monetario ARS. `guardarPilotoOEdicion()`: wrapper que decide entre alta y edición según `piloto-id`. `listarPilotos()`: filtro también por `importe`. `renderPilotoPagina()`: columnas DNI + IMPORTE, botón Editar solo si `esAdminUsuario()`, botón Eliminar si `puedeEditar()`. `eliminarPiloto()`: usa `id`. `editarPiloto(id)` / `guardarEdicionPiloto(id)` / `cancelarEdicionPiloto()` / `esAdminUsuario()`: nuevas funciones. `extraerRegistrosPadron()` / `extraerRegistrosPadronXLSX()`: removida deduplicación por DNI (cada fila = licencia independiente). `parsearFilaPadron()`: agregado `importe` desde celda 15 (columna 16 del XLS), parseo ARS. `importarPadronLotes()`: genera `id` UUID por registro, usa `item.id` como doc ID en Firestore. `importarPadronPilotos()`: toast actualizado (sin referencia a duplicados consolidados). Removida variable global `duplicadosDni`. |
+| Test | `tests/menu.spec.js` | Test de columnas actualizado: espera `['Nombre y Apellido', 'Documento', 'DNI', 'Categoría', 'Importe', 'Acciones']`. |
+
 ### Validaciones
 
-- `npx vite build` → exit 0 (422 ms).
-- `npx playwright test --workers=1` (suite completa) → **5 passed / 2 skipped**
-  (los 2 de `app.spec.js` requieren credenciales; el test de Pilotos corre
-  `listarPilotos()` real contra IndexedDB limpia).
+- `node --check app.js` / `db.js` / `src/services/schemaValidator.js` / `src/services/persistenceService.js` → exit 0.
+- `npx vite build` → exit 0.
+- `npx playwright test tests/menu.spec.js --workers=1` → **8 passed / 2 failed** (los 2 fallos son preexistentes por cuota Firebase `resource-exhausted` en tests de Penalidades y Autorizaciones, documentados previamente).
 
 ### Sesión anterior — Catálogo de sanciones editable + menú en una fila
 

@@ -78,9 +78,9 @@ export async function guardar(storeName, item) {
   // `/pilotos/{dni}`): NO se genera id numérico, el DNI llega ya sanitizado
   // desde el formulario y actúa como clave.
   const clave = clavePrimariaStore(storeName);
-  if (storeName === 'pilotos') {
-    item.dni = String(item.dni ?? '').trim();
-  } else if (!item.id) {
+  // Todos los stores (incluido 'pilotos') usan 'id' como clave primaria.
+  // Para 'pilotos' se genera un id numérico/UUID igual que el resto.
+  if (!item.id) {
     // UUID string (compatibilidad Firestore). No convertir a number.
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
       item.id = crypto.randomUUID();
@@ -158,11 +158,9 @@ export async function guardar(storeName, item) {
       .catch(reject);
   });
 
-  // Clave del documento en Firestore: para 'pilotos' es el DNI (string);
-  // para el resto, el id numérico. Así el doc vive en `/pilotos/{dni}`.
-  const claveDoc = storeName === 'pilotos'
-    ? String(item.dni ?? '').trim()
-    : String(item.id);
+  // Clave del documento en Firestore: todos los stores usan el 'id'.
+  // Para 'pilotos' el doc vive en `/pilotos/{id}`.
+  const claveDoc = String(item.id);
 
   // Sync cloud: solo si Firebase activo Y store sincronizable (A-4). No bloqueante.
   const rt = runtime();
@@ -218,13 +216,7 @@ export async function getTodos(storeName, opciones = {}) {
       const dataNube = [];
       querySnapshot.forEach((docSnap) => {
         const item = docSnap.data();
-        if (storeName === 'pilotos') {
-          // Doc ID de Firestore = DNI (string), sin coerción numérica.
-          item.dni = String(docSnap.id);
-          item.id = String(docSnap.id);
-        } else {
-          item.id = Number(docSnap.id) || docSnap.id;
-        }
+        item.id = Number(docSnap.id) || docSnap.id;
         dataNube.push(item);
       });
       cache()[storeName] = dataNube;
@@ -251,8 +243,8 @@ export async function getTodos(storeName, opciones = {}) {
 // ---------------- ELIMINAR ----------------
 export async function eliminar(storeName, id) {
   const cache = () => estado()._cache;
-  // Clave nativa del store: 'pilotos' usa el DNI (string), el resto el UUID string.
-  const claveBorrado = storeName === 'pilotos' ? String(id ?? '').trim() : String(id ?? '');
+  // Clave nativa del store: todos usan el 'id' (UUID string).
+  const claveBorrado = String(id ?? '');
   await new Promise((resolve, reject) => {
     (typeof globalThis !== 'undefined' ? globalThis.openDB() : Promise.reject('no openDB'))
       .then((db) => {
@@ -285,8 +277,8 @@ export async function eliminar(storeName, id) {
 // ---------------- OBTENER POR ID ----------------
 export async function obtenerPorId(storeName, id) {
   const cache = () => estado()._cache;
-  // Comparación por clave nativa: string para 'pilotos', UUID string para el resto.
-  const claveBuscada = storeName === 'pilotos' ? String(id ?? '').trim() : String(id ?? '');
+  // Comparación por clave nativa: todos usan el 'id' (UUID string).
+  const claveBuscada = String(id ?? '');
   if (cache()[storeName]) {
     const found = cache()[storeName].find((x) => String(x[clavePrimariaStore(storeName)]) === String(claveBuscada));
     if (found) return found;
@@ -415,15 +407,10 @@ export async function sincronizarLocalAFirebase() {
     }
 
     const nubePorId = new Map();
-    // Doc ID nativo por store ('pilotos' → DNI string, resto → id).
+    // Doc ID nativo por store: todos usan 'id'.
     const claveDocNube = (item) => String(item[clavePrimariaStore(storeName)] ?? '');
     const claveIdNube = (docSnap, docItem) => {
-      if (storeName === 'pilotos') {
-        docItem.dni = String(docSnap.id);
-        docItem.id = String(docSnap.id);
-      } else {
-        docItem.id = Number(docSnap.id) || docSnap.id;
-      }
+      docItem.id = Number(docSnap.id) || docSnap.id;
       return claveDocNube(docItem);
     };
     snapshot.forEach((docSnap) => {

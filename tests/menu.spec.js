@@ -167,9 +167,9 @@ test.describe('Menú lateral — submenús desplegables', () => {
       await expect(page.locator(`#${id}`), `Falta el campo #${id}`).toHaveCount(1);
     }
     await expect(page.locator('#piloto-btn-guardar')).toContainText('Agregar Piloto');
-    // Tabla inferior: columnas Nombre y Apellido / Documento / Categoría / Acciones.
+    // Tabla inferior: columnas Nombre y Apellido / Documento / DNI / Categoría / Importe / Acciones.
     const columnas = await page.locator('#view-listado-pilotos thead th').allTextContents();
-    expect(columnas.map((t) => t.trim())).toEqual(['Nombre y Apellido', 'Documento', 'Categoría', 'Acciones']);
+    expect(columnas.map((t) => t.trim())).toEqual(['Nombre y Apellido', 'Documento', 'DNI', 'Categoría', 'Importe', 'Acciones']);
     await expect(page.locator('#pilotos-table-body')).toHaveCount(1);
 
     // 5) El grupo también se puede contraer (misma regla que los demás).
