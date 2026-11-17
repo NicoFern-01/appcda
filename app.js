@@ -2942,21 +2942,28 @@ const registrosPorPaginaAutorizaciones = 20;
  * @returns {string} Clave normalizada
  */
 function claveDuplicadoPiloto(p) {
+    const normalizar = (valor) => {
+        if (valor === undefined || valor === null) return '-';
+        const texto = String(valor).trim();
+        return texto === '' || texto === '-' ? '-' : texto;
+    };
+    const importeNormalizado = normalizar(p.importe);
+    const importe = importeNormalizado === '-' ? 0 : Number(importeNormalizado);
     return (
-        String(p.nombre || '').trim().toLowerCase() + '|' +
-        String(p.apellido || '').trim().toLowerCase() + '|' +
-        String(p.dni || p.documento || '') + '|' +
-        String(p.categoria || '') + '|' +
-        String(p.tipoLicencia || '-').trim() + '|' +
-        String(p.licencia || '-').trim() + '|' +
-        Number(p.importe || 0)
+        normalizar(p.nombre).toLowerCase() + '|' +
+        normalizar(p.apellido).toLowerCase() + '|' +
+        normalizar(p.dni || p.documento).toLowerCase() + '|' +
+        normalizar(p.categoria).toLowerCase() + '|' +
+        normalizar(p.tipoLicencia) + '|' +
+        normalizar(p.licencia) + '|' +
+        (Number.isNaN(importe) ? importeNormalizado : importe)
     );
 }
 
 /**
- * Deduplica la lista en memoria y persiste el padrón limpio en una sola operación masiva.
+ * Deduplica la lista en memoria para renderizarla sin escrituras automáticas.
  */
-async function deduplicarPilotos(pilotosLista) {
+function deduplicarPilotos(pilotosLista) {
     if (!Array.isArray(pilotosLista) || pilotosLista.length === 0) return pilotosLista || [];
     const clavesVistas = new Set();
     const unicos = [];
@@ -2966,58 +2973,46 @@ async function deduplicarPilotos(pilotosLista) {
         clavesVistas.add(clave);
         unicos.push(p);
     }
-    if (unicos.length === pilotosLista.length) return pilotosLista;
-
-    for (const piloto of unicos) {
-        if (!piloto.id) piloto.id = String(Date.now() + Math.random());
-    }
-
-    if (!deduplicarPilotos.persistenciaEnCurso) {
-        deduplicarPilotos.persistenciaEnCurso = importarPadronLotes(unicos)
-            .then(() => {
-                console.info(`[Pilotos] Deduplicación masiva: ${pilotosLista.length - unicos.length} duplicado(s) eliminado(s).`);
-            })
-            .catch((err) => {
-                console.error('[Pilotos] Error al persistir la deduplicación:', err);
-            })
-            .finally(() => {
-                deduplicarPilotos.persistenciaEnCurso = null;
-            });
-    }
-    return unicos;
+    return unicos.length === pilotosLista.length ? pilotosLista : unicos;
 }
 
 /**
- * Elimina TODOS los registros de pilotos de IndexedDB.
- * La importación sincroniza el padrón reemplazado en Firestore al finalizar.
+ * Limpia IndexedDB y elimina los documentos actuales de Firestore al reemplazar el padrón.
  */
 async function eliminarTodosPilotos() {
-    let todos = [];
-    try {
-        todos = await getTodos('pilotos');
-    } catch (e) {
-        console.warn('[pilotos] no se pudo leer para limpieza total:', e?.message || e);
-    }
-    if (todos.length === 0) {
-        invalidarCache('pilotos');
-        return;
-    }
-
-    // IndexedDB: clear del store (más rápido que eliminar uno por uno)
-    const dbLocal = await openDB();
-    const tx = abrirTransaccionDefensiva(dbLocal, 'pilotos', 'readwrite');
-    if (tx) {
-        const store = tx.objectStore('pilotos');
-        store.clear();
+    const locales = await getTodos('pilotos', { soloLocal: true });
+    if (locales.length > 0) {
+        const dbLocal = await openDB();
+        const tx = abrirTransaccionDefensiva(dbLocal, 'pilotos', 'readwrite');
+        if (!tx) throw new Error("El store local 'pilotos' no está disponible.");
+        tx.objectStore('pilotos').clear();
         await new Promise((resolve, reject) => {
             tx.oncomplete = resolve;
             tx.onerror = () => reject(tx.error || new Error('Error al limpiar IndexedDB.'));
             tx.onabort = () => reject(tx.error || new Error('Limpieza de IndexedDB cancelada.'));
         });
     }
-
     invalidarCache('pilotos');
-    console.info('[pilotos] Store local limpiado para reemplazar el padrón.');
+
+    const rt = typeof window !== 'undefined' ? window.__CDA_FIREBASE_RUNTIME__ : null;
+    if (!rt || !rt.useFirebase || !rt.dbFirebase || !(rt.auth && rt.auth.currentUser)) return false;
+    if (typeof rt.getDocs !== 'function' || typeof rt.collection !== 'function' ||
+        typeof rt.writeBatch !== 'function' || typeof rt.doc !== 'function') {
+        throw new Error('El runtime de Firestore no ofrece las operaciones necesarias para limpiar pilotos.');
+    }
+
+    const snapshot = await rt.getDocs(rt.collection(rt.dbFirebase, 'pilotos'));
+    const referencias = [];
+    snapshot.forEach((docSnap) => {
+        referencias.push(rt.doc(rt.dbFirebase, 'pilotos', docSnap.id));
+    });
+    for (let i = 0; i < referencias.length; i += 500) {
+        const batch = rt.writeBatch(rt.dbFirebase);
+        referencias.slice(i, i + 500).forEach((referencia) => batch.delete(referencia));
+        await batch.commit();
+    }
+    console.info(`[pilotos] Limpieza total: ${referencias.length} documento(s) eliminados de Firestore.`);
+    return true;
 }
 
 async function listarPilotos() {
@@ -3046,7 +3041,7 @@ async function listarPilotos() {
             }
         }
 
-        if (pilotos.length > 0) pilotos = await deduplicarPilotos(pilotos);
+        if (pilotos.length > 0) pilotos = deduplicarPilotos(pilotos);
 
         // Filtro sobre el array ORIGINAL (al tocar la busqueda se resetea la pagina).
         const busqueda = (document.getElementById('buscar-piloto')?.value || '').trim().toLowerCase();
@@ -3077,7 +3072,7 @@ async function listarPilotos() {
             if (busqueda) {
                 contadorEl.textContent = `Mostrando ${formato(mostrando)} de ${formato(total)} registros`;
             } else {
-                contadorEl.textContent = `Total: ${formato(total)} registros`;
+                contadorEl.textContent = `TOTAL: ${formato(total)} REGISTROS`;
             }
         }
 
@@ -4362,16 +4357,23 @@ async function conFeedbackDeImportacion(input, accion) {
 
 /** Guarda los registros individualmente en IndexedDB y los empaqueta en Firestore. */
 async function importarPadronLotes(registros, btn) {
+    const clavesVistas = new Set();
+    const nuevosPilotos = [];
+    for (const piloto of registros) {
+        const clave = claveDuplicadoPiloto(piloto);
+        if (clavesVistas.has(clave)) continue;
+        clavesVistas.add(clave);
+        nuevosPilotos.push(piloto);
+    }
+    if (nuevosPilotos.length === 0) return false;
+
     invalidarCache('pilotos');
-    // Reemplazo total: eliminar todos los registros previos antes de guardar los nuevos.
-    await eliminarTodosPilotos();
+    const nubeLimpia = await eliminarTodosPilotos();
     const dbLocal = await openDB();
     const tx = abrirTransaccionDefensiva(dbLocal, 'pilotos', 'readwrite');
     if (!tx) throw new Error("El store local 'pilotos' no está disponible.");
     const storeLocal = tx.objectStore('pilotos');
-    // Generar un id UUID para cada registro (clave primaria en IndexedDB y doc ID en Firestore).
-    // Como el keyPath es 'id' con autoIncrement, si el objeto ya trae 'id' se usa ese valor.
-    for (const item of registros) {
+    for (const item of nuevosPilotos) {
         if (!item.id) {
             if (typeof crypto !== 'undefined' && crypto.randomUUID) {
                 item.id = crypto.randomUUID();
@@ -4379,7 +4381,7 @@ async function importarPadronLotes(registros, btn) {
                 item.id = 'piloto_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
             }
         }
-        try { storeLocal.put(item); } catch (e) { /* registro inválido, se salta */ }
+        storeLocal.put(item);
     }
     await new Promise((resolve, reject) => {
         tx.oncomplete = resolve;
@@ -4387,16 +4389,35 @@ async function importarPadronLotes(registros, btn) {
         tx.onabort = () => reject(tx.error || new Error('Importación local cancelada.'));
     });
 
-    const persistencia = typeof window !== 'undefined'
-        ? window.__CDA_MODULES__?.persistencia
-        : null;
-    if (!persistencia || typeof persistencia.sincronizarPilotosConFirestore !== 'function') {
-        return false;
+    const rt = typeof window !== 'undefined' ? window.__CDA_FIREBASE_RUNTIME__ : null;
+    if (!nubeLimpia || !rt || !rt.useFirebase || !rt.dbFirebase ||
+        !(rt.auth && rt.auth.currentUser)) return false;
+    if (typeof rt.writeBatch !== 'function' || typeof rt.doc !== 'function') {
+        throw new Error('El runtime de Firestore no ofrece las operaciones necesarias para guardar pilotos.');
     }
+
     if (btn) btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Subiendo padrón...';
-    const sincronizado = await persistencia.sincronizarPilotosConFirestore(registros);
-    if (sincronizado) await new Promise(resolve => setTimeout(resolve, 0));
-    return sincronizado;
+    const lotes = [];
+    for (let i = 0; i < nuevosPilotos.length; i += 200) {
+        lotes.push({
+            id: `lote_${i / 200}`,
+            data: {
+                items: nuevosPilotos.slice(i, i + 200),
+                total: Math.min(200, nuevosPilotos.length - i),
+                updatedAt: Date.now()
+            }
+        });
+    }
+    for (let i = 0; i < lotes.length; i += 500) {
+        const batch = rt.writeBatch(rt.dbFirebase);
+        lotes.slice(i, i + 500).forEach((lote) => {
+            batch.set(rt.doc(rt.dbFirebase, 'pilotos', lote.id), lote.data);
+        });
+        await batch.commit();
+        if (btn) btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Subiendo ${Math.min(i + 500, lotes.length)}/${lotes.length} lotes...`;
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    return true;
 }
 // Planilla de sanciones a pilotos con documentación adjunta vía ENLACE EXTERNO.
 // Persistencia: los registros viven en el store 'penalidades' (DB_VERSION 13) y
