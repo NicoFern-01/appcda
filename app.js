@@ -3047,6 +3047,23 @@ async function listarPilotos() {
     } catch (e) {
         console.warn('[pilotos] no se pudo leer el store local:', e?.message || e);
     }
+    const firebaseRuntime = typeof window !== 'undefined'
+        ? window.__CDA_FIREBASE_RUNTIME__
+        : null;
+    if (todos.length === 0 && firebaseRuntime?.auth?.currentUser) {
+        const persistencia = window.__CDA_MODULES__?.persistencia;
+        if (persistencia && typeof persistencia.sincronizarPilotosDesdeFirestore === 'function') {
+            try {
+                const pilotosPlanos = await persistencia.sincronizarPilotosDesdeFirestore();
+                if (Array.isArray(pilotosPlanos)) {
+                    todos = pilotosPlanos;
+                    console.log('[Pilotos] Sincronizados desde lotes Firestore:', pilotosPlanos.length);
+                }
+            } catch (e) {
+                console.warn('[Pilotos] No se pudieron sincronizar los lotes de Firestore:', e?.message || e);
+            }
+        }
+    }
 
     // Filtro sobre el array ORIGINAL (al tocar la busqueda se resetea la pagina).
     const busqueda = (document.getElementById('buscar-piloto')?.value || '').trim().toLowerCase();
