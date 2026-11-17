@@ -2841,6 +2841,10 @@ async function guardarPilotoForm(e) {
     const apellido = (document.getElementById('piloto-apellido')?.value || '').trim().toUpperCase();
     const dni = String(document.getElementById('piloto-dni')?.value || '').replace(/\D/g, '');
     const categoria = (document.getElementById('piloto-categoria')?.value || '').trim().toUpperCase();
+    const tipoLicencia = (document.getElementById('piloto-tipo-licencia')?.value || 'Nacional').trim();
+    const licencias = Array.from(document.querySelectorAll('#piloto-licencia-grupo input[type="checkbox"]:checked'))
+        .map(checkbox => checkbox.value.trim()).filter(v => v);
+    const licencia = licencias.length > 0 ? licencias.join(' / ') : '-';
     const importeTexto = (document.getElementById('piloto-importe')?.value || '').trim();
     const importe = importeTexto ? parsearImporteARS(importeTexto) : 0;
     if (!nombre || !apellido || !dni || !categoria) {
@@ -2855,9 +2859,12 @@ async function guardarPilotoForm(e) {
     try {
         const clave = await guardar('pilotos', {
             dni,
+            documento: dni,
             nombre,
             apellido,
             categoria,
+            tipoLicencia,
+            licencia,
             importe,
             usuarioCreacion: currentUser ? currentUser.id : null,
             fechaCreacion: new Date().toISOString()
@@ -2868,6 +2875,9 @@ async function guardarPilotoForm(e) {
         }
         mostrarToast(`Piloto ${nombre} ${apellido} registrado correctamente.`);
         document.getElementById('form-piloto')?.reset();
+        document.querySelectorAll('#piloto-licencia-grupo input[type="checkbox"]').forEach(checkbox => {
+            checkbox.checked = false;
+        });
         await listarPilotos();
     } catch (err) {
         console.error(err);
@@ -2924,11 +2934,134 @@ let autorizacionesCache = [];
 let paginaActualAutorizaciones = 1;
 const registrosPorPaginaAutorizaciones = 20;
 
+/**
+ * Normaliza una clave de comparación para detectar duplicados de piloto.
+ * Dos registros son duplicados si coinciden en: nombre + apellido + dni + categoria + importe.
+ * Un mismo piloto con distinto importe o categoría NO es duplicado (licencias distintas).
+ * @param {object} p Registro de piloto
+ * @returns {string} Clave normalizada
+ */
+function claveDuplicadoPiloto(p) {
+    return (
+        String(p.nombre || '').trim().toLowerCase() + '|' +
+        String(p.apellido || '').trim().toLowerCase() + '|' +
+        String(p.dni || p.documento || '') + '|' +
+        String(p.categoria || '') + '|' +
+        String(p.tipoLicencia || '-').trim() + '|' +
+        String(p.licencia || '-').trim() + '|' +
+        Number(p.importe || 0)
+    );
+}
+
+/**
+ * Elimina registros duplicados existentes de pilotos en IndexedDB y Firestore.
+ * Conserva una única copia por grupo de duplicados.
+ * Se ejecuta automáticamente al cargar la vista Listado de Pilotos.
+ * @returns {number} Cantidad de registros duplicados eliminados.
+ */
+async function deduplicarPilotos() {
+    let todos = [];
+    try {
+        todos = await getTodos('pilotos');
+    } catch (e) {
+        console.warn('[pilotos] no se pudo leer para deduplicar:', e?.message || e);
+        return 0;
+    }
+    if (todos.length === 0) return 0;
+
+    const grupos = new Map();
+    for (const p of todos) {
+        const clave = claveDuplicadoPiloto(p);
+        if (!grupos.has(clave)) grupos.set(clave, []);
+        grupos.get(clave).push(p);
+    }
+
+    let eliminados = 0;
+    for (const [, registros] of grupos) {
+        if (registros.length <= 1) continue;
+        // Conservar el primero, eliminar el resto (duplicados exactos)
+        for (let i = 1; i < registros.length; i++) {
+            const id = registros[i].id;
+            if (!id) continue;
+            try {
+                await eliminar('pilotos', id);
+                eliminados++;
+            } catch (e) {
+                console.warn('[pilotos] no se pudo eliminar duplicado:', id, e?.message || e);
+            }
+        }
+    }
+
+    if (eliminados > 0) {
+        console.info(`[pilotos] Deduplicación: ${eliminados} registro(s) duplicado(s) eliminado(s).`);
+        invalidarCache('pilotos');
+    }
+    return eliminados;
+}
+
+/**
+ * Elimina TODOS los registros de pilotos de IndexedDB y Firestore.
+ * Se usa para el reemplazo total al importar un nuevo padrón .xls.
+ */
+async function eliminarTodosPilotos() {
+    let todos = [];
+    try {
+        todos = await getTodos('pilotos');
+    } catch (e) {
+        console.warn('[pilotos] no se pudo leer para limpieza total:', e?.message || e);
+        return;
+    }
+    if (todos.length === 0) return;
+
+    const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+    const haySesion = !!(rt && rt.dbFirebase && typeof rt.writeBatch === 'function'
+        && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser);
+
+    // Firestore: batch delete de todos los documentos existentes (chunks de 500)
+    if (haySesion && todos.length > 0) {
+        try {
+            for (let i = 0; i < todos.length; i += 500) {
+                const chunk = todos.slice(i, i + 500);
+                const batch = rt.writeBatch(rt.dbFirebase);
+                let count = 0;
+                for (const p of chunk) {
+                    if (p.id) {
+                        batch.delete(rt.doc(rt.dbFirebase, 'pilotos', String(p.id)));
+                        count++;
+                    }
+                }
+                if (count > 0) await batch.commit();
+            }
+        } catch (e) {
+            console.warn('[pilotos] Error eliminando de Firestore:', e);
+        }
+    }
+
+    // IndexedDB: clear del store (más rápido que eliminar uno por uno)
+    const dbLocal = await openDB();
+    const tx = abrirTransaccionDefensiva(dbLocal, 'pilotos', 'readwrite');
+    if (tx) {
+        const store = tx.objectStore('pilotos');
+        store.clear();
+        await new Promise((resolve, reject) => {
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error || new Error('Error al limpiar IndexedDB.'));
+            tx.onabort = () => reject(tx.error || new Error('Limpieza de IndexedDB cancelada.'));
+        });
+    }
+
+    invalidarCache('pilotos');
+    console.info(`[pilotos] Limpieza total: ${todos.length} registro(s) eliminado(s) de IndexedDB y Firestore.`);
+}
+
 async function listarPilotos() {
     const tbody = document.getElementById('pilotos-table-body');
     if (!tbody) return;
     await poblarCategoriasPiloto();
     suscribirPilotosTiempoReal();
+
+    // Sanear duplicados existentes antes de renderizar
+    await deduplicarPilotos();
 
     let todos = [];
     try {
@@ -2944,13 +3077,31 @@ async function listarPilotos() {
         .filter(p => {
             if (!busqueda) return true;
             const importeTxt = formatearImporteARS(p.importe).toLowerCase();
-            const linea = `${p.nombre || ''} ${p.apellido || ''} ${p.dni || ''} ${p.categoria || ''} ${importeTxt}`.toLowerCase();
+            const linea = `${p.nombre || ''} ${p.apellido || ''} ${p.dni || p.documento || ''} ${p.categoria || ''} ${String(p.tipoLicencia || '-')} ${String(p.licencia || '-')} ${importeTxt}`.toLowerCase();
             return linea.includes(busqueda);
         })
-        .sort((a, b) => collator.compare(
-            `${a.apellido || ''} ${a.nombre || ''}`.trim(),
-            `${b.apellido || ''} ${b.nombre || ''}`.trim()
-        ));
+        .sort((a, b) => {
+            // Orden alfabético A-Z por el texto mostrado en la primera columna (Nombre y Apellido).
+            const nombreA = `${a.nombre || ''} ${a.apellido || ''}`.trim();
+            const nombreB = `${b.nombre || ''} ${b.apellido || ''}`.trim();
+            const cmp = collator.compare(nombreA, nombreB);
+            if (cmp !== 0) return cmp;
+            // Desempate: importe descendente (mayor importe primero) para orden consistente.
+            return Number(b.importe || 0) - Number(a.importe || 0);
+        });
+
+    // Actualizar contador de registros (Total o Mostrando X de N).
+    const contadorEl = document.getElementById('pilotos-contador');
+    if (contadorEl) {
+        const total = todos.length;
+        const mostrando = pilotosCache.length;
+        const formato = (n) => Number(n || 0).toLocaleString('es-AR');
+        if (busqueda) {
+            contadorEl.textContent = `Mostrando ${formato(mostrando)} de ${formato(total)} registros`;
+        } else {
+            contadorEl.textContent = `Total: ${formato(total)} registros`;
+        }
+    }
 
     // Corrige la pagina si quedo fuera de rango tras filtrar/eliminar.
     const totalPaginas = Math.max(1, Math.ceil(pilotosCache.length / registrosPorPagina));
@@ -2966,7 +3117,7 @@ function renderPilotoPagina() {
     if (!tbody) return;
     const esAdmin = currentUser && currentUser.rol === 'admin';
     const puedeEditarVista = puedeEditar();
-    const cols = puedeEditarVista ? 6 : 5;
+    const cols = puedeEditarVista ? 7 : 6;
     const corte = pilotosCache.slice((paginaActual - 1) * registrosPorPagina, paginaActual * registrosPorPagina);
 
     if (corte.length === 0) {
@@ -2979,7 +3130,7 @@ function renderPilotoPagina() {
     const fragment = document.createDocumentFragment();
     corte.forEach(p => {
         const idTxt = String(p.id || '');
-        const dniTxt = escapeHtml(String(p.dni || ''));
+        const dniTxt = escapeHtml(String(p.dni || p.documento || '-'));
         const nombreTxt = escapeHtml(`${p.nombre || ''} ${p.apellido || ''}`.trim());
         const catTxt = escapeHtml(p.categoria || '-');
         const importeTxt = formatearImporteARS(p.importe);
@@ -2996,8 +3147,12 @@ function renderPilotoPagina() {
             ? `<td style="text-align:right;white-space:nowrap;">${btnEditar}${btnEliminar}</td>`
             : '';
 
+        // Variables para la fila: tipoLicencia (badge secondary) y licencia (badge success)
+        const tipoLicenciaTxt = escapeHtml(String(p.tipoLicencia || '-'));
+        const licenciaTxt = escapeHtml(String(p.licencia || '-'));
+
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td style="font-weight:600;">${nombreTxt}</td><td>${dniTxt}</td><td>${dniTxt}</td><td><span class="badge badge-info">${catTxt}</span></td><td>${importeTxt}</td>${accionesHtml}`;
+        tr.innerHTML = `<td style="font-weight:600;">${nombreTxt}</td><td>${dniTxt}</td><td><span class="badge badge-info">${catTxt}</span></td><td><span class="badge badge-secondary">${tipoLicenciaTxt}</span></td><td><span class="badge badge-success">${licenciaTxt}</span></td><td>${importeTxt}</td>${accionesHtml}`;
         fragment.appendChild(tr);
     });
     tbody.appendChild(fragment);
@@ -3071,9 +3226,14 @@ async function editarPiloto(id) {
     document.getElementById('piloto-id').value = piloto.id || '';
     document.getElementById('piloto-nombre').value = piloto.nombre || '';
     document.getElementById('piloto-apellido').value = piloto.apellido || '';
-    document.getElementById('piloto-dni').value = piloto.dni || '';
+    document.getElementById('piloto-dni').value = piloto.dni || piloto.documento || '';
     document.getElementById('piloto-categoria').value = piloto.categoria || '';
     document.getElementById('piloto-importe').value = piloto.importe !== undefined && piloto.importe !== null ? piloto.importe : '';
+    document.getElementById('piloto-tipo-licencia').value = piloto.tipoLicencia || 'Nacional';
+    const licenciasSeleccionadas = String(piloto.licencia || '').split(/\s*\/\s*/);
+    document.querySelectorAll('#piloto-licencia-grupo input[type="checkbox"]').forEach(checkbox => {
+        checkbox.checked = licenciasSeleccionadas.includes(checkbox.value);
+    });
     document.getElementById('piloto-btn-guardar').textContent = '💾 Guardar Cambios';
     document.getElementById('piloto-btn-guardar').onclick = null;
     document.getElementById('piloto-btn-guardar').addEventListener('click', () => guardarEdicionPiloto(id));
@@ -3089,6 +3249,10 @@ async function guardarEdicionPiloto(id) {
     const apellido = (document.getElementById('piloto-apellido')?.value || '').trim().toUpperCase();
     const dni = String(document.getElementById('piloto-dni')?.value || '').replace(/\D/g, '');
     const categoria = (document.getElementById('piloto-categoria')?.value || '').trim().toUpperCase();
+    const tipoLicencia = (document.getElementById('piloto-tipo-licencia')?.value || 'Nacional').trim();
+    const licencias = Array.from(document.querySelectorAll('#piloto-licencia-grupo input[type="checkbox"]:checked'))
+        .map(checkbox => checkbox.value.trim()).filter(v => v);
+    const licencia = licencias.length > 0 ? licencias.join(' / ') : '-';
     const importeTexto = (document.getElementById('piloto-importe')?.value || '').trim();
     const importe = importeTexto ? parsearImporteARS(importeTexto) : 0;
     if (!nombre || !apellido || !dni || !categoria) {
@@ -3104,9 +3268,12 @@ async function guardarEdicionPiloto(id) {
         const actualizado = {
             id,
             dni,
+            documento: dni,
             nombre,
             apellido,
             categoria,
+            tipoLicencia,
+            licencia,
             importe,
             usuarioModificacion: currentUser ? currentUser.id : null,
             fechaModificacion: new Date().toISOString()
@@ -3132,6 +3299,9 @@ async function guardarEdicionPiloto(id) {
 /** Cancela edición y vuelve al modo alta. */
 function cancelarEdicionPiloto() {
     document.getElementById('form-piloto')?.reset();
+    document.querySelectorAll('#piloto-licencia-grupo input[type="checkbox"]').forEach(checkbox => {
+        checkbox.checked = false;
+    });
     document.getElementById('piloto-id').value = '';
     document.getElementById('piloto-btn-guardar').textContent = 'Agregar Piloto';
     document.getElementById('piloto-btn-guardar').onclick = null;
@@ -4100,7 +4270,7 @@ function extraerRegistrosPadronXLSX(workbook) {
 }
 
 /** Parsea una fila del padrón y devuelve un registro de piloto (SIN dedup: cada fila es una licencia independiente).
- * Columnas XLS: Tipo(0), Apellido(1), Nombre(2), Documento/DNI(3), ..., Categoría(16), ..., Importe(16).
+ * Columnas XLS: Tipo(0), Apellido(1), Nombre(2), Documento/DNI(3), ..., Piloto(5), Navegante(6), Concurrente(7), ..., Categoría(16), ..., Importe(16).
  * El campo 'importe' viene de la columna 16 (índice 15 en 0-based) del XLS. */
 function parsearFilaPadron(celdas) {
     if (!celdas || celdas.length < 17) return null;
@@ -4112,12 +4282,29 @@ function parsearFilaPadron(celdas) {
     const categoria = (celdas[16] || '').trim().toUpperCase();
     const importeTexto = (celdas[15] || '').trim();
     const importe = importeTexto ? parsearImporteARS(importeTexto) : 0;
+
+    // Tipo de licencia: columna Tipo (índice 0)
+    const tipoLicencia = (celdas[0] || '').trim() || '-';
+
+    // Licencia: evaluar columnas Piloto(5), Navegante(6), Concurrente(7)
+    const roles = [];
+    const pilotoVal = String(celdas[5] || '').trim().toLowerCase();
+    const naveganteVal = String(celdas[6] || '').trim().toLowerCase();
+    const concurrenteVal = String(celdas[7] || '').trim().toLowerCase();
+    if (pilotoVal === 'true') roles.push('Piloto');
+    if (naveganteVal === 'true') roles.push('Navegante');
+    if (concurrenteVal === 'true') roles.push('Concurrente');
+    const licencia = roles.length > 0 ? roles.join(' / ') : '-';
+
     if (!dni || !nombre) return null; // fila corrupta: se salta
     return {
         dni,
+        documento: dni,
         nombre,
         apellido,
         categoria: categoria || 'SIN CATEGORÍA',
+        tipoLicencia,
+        licencia,
         importe,
         usuarioCreacion: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null,
         fechaCreacion: new Date().toISOString()
@@ -4130,6 +4317,13 @@ async function importarPadronPilotos(event) {
     const input = (event && event.target) || document.getElementById('piloto-import-file');
     const archivo = input && input.files ? input.files[0] : null;
     if (!archivo) return;
+
+    const confirmado = await mostrarConfirmacion(
+        'Reemplazar padrón de pilotos',
+        `¿Reemplazar TODOS los registros actuales de pilotos por los del archivo "${escapeHtml(archivo.name)}"?\n\nEsta acción eliminará definitivamente todos los pilotos existentes en IndexedDB y Firestore, y guardará únicamente los registros del archivo seleccionado.`,
+        'warning'
+    );
+    if (!confirmado) return;
 
     await conFeedbackDeImportacion(input, async () => {
         const nombre = (archivo.name || '').toLowerCase();
@@ -4190,6 +4384,8 @@ async function conFeedbackDeImportacion(input, accion) {
 /** Guarda los registros en IndexedDB + Firestore en lotes (sin congelar la UI). */
 async function importarPadronLotes(registros, btn) {
     invalidarCache('pilotos');
+    // Reemplazo total: eliminar todos los registros previos antes de guardar los nuevos.
+    await eliminarTodosPilotos();
     const dbLocal = await openDB();
     const tx = abrirTransaccionDefensiva(dbLocal, 'pilotos', 'readwrite');
     if (!tx) throw new Error("El store local 'pilotos' no está disponible.");
