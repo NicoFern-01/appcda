@@ -2924,11 +2924,132 @@ let autorizacionesCache = [];
 let paginaActualAutorizaciones = 1;
 const registrosPorPaginaAutorizaciones = 20;
 
+/**
+ * Normaliza una clave de comparación para detectar duplicados de piloto.
+ * Dos registros son duplicados si coinciden en: nombre + apellido + dni + categoria + importe.
+ * Un mismo piloto con distinto importe o categoría NO es duplicado (licencias distintas).
+ * @param {object} p Registro de piloto
+ * @returns {string} Clave normalizada
+ */
+function claveDuplicadoPiloto(p) {
+    return (
+        String(p.nombre || '').trim().toLowerCase() + '|' +
+        String(p.apellido || '').trim().toLowerCase() + '|' +
+        String(p.dni || '') + '|' +
+        String(p.categoria || '') + '|' +
+        Number(p.importe || 0)
+    );
+}
+
+/**
+ * Elimina registros duplicados existentes de pilotos en IndexedDB y Firestore.
+ * Conserva una única copia por grupo de duplicados.
+ * Se ejecuta automáticamente al cargar la vista Listado de Pilotos.
+ * @returns {number} Cantidad de registros duplicados eliminados.
+ */
+async function deduplicarPilotos() {
+    let todos = [];
+    try {
+        todos = await getTodos('pilotos');
+    } catch (e) {
+        console.warn('[pilotos] no se pudo leer para deduplicar:', e?.message || e);
+        return 0;
+    }
+    if (todos.length === 0) return 0;
+
+    const grupos = new Map();
+    for (const p of todos) {
+        const clave = claveDuplicadoPiloto(p);
+        if (!grupos.has(clave)) grupos.set(clave, []);
+        grupos.get(clave).push(p);
+    }
+
+    let eliminados = 0;
+    for (const [, registros] of grupos) {
+        if (registros.length <= 1) continue;
+        // Conservar el primero, eliminar el resto (duplicados exactos)
+        for (let i = 1; i < registros.length; i++) {
+            const id = registros[i].id;
+            if (!id) continue;
+            try {
+                await eliminar('pilotos', id);
+                eliminados++;
+            } catch (e) {
+                console.warn('[pilotos] no se pudo eliminar duplicado:', id, e?.message || e);
+            }
+        }
+    }
+
+    if (eliminados > 0) {
+        console.info(`[pilotos] Deduplicación: ${eliminados} registro(s) duplicado(s) eliminado(s).`);
+        invalidarCache('pilotos');
+    }
+    return eliminados;
+}
+
+/**
+ * Elimina TODOS los registros de pilotos de IndexedDB y Firestore.
+ * Se usa para el reemplazo total al importar un nuevo padrón .xls.
+ */
+async function eliminarTodosPilotos() {
+    let todos = [];
+    try {
+        todos = await getTodos('pilotos');
+    } catch (e) {
+        console.warn('[pilotos] no se pudo leer para limpieza total:', e?.message || e);
+        return;
+    }
+    if (todos.length === 0) return;
+
+    const rt = (typeof window !== 'undefined' && window.__CDA_FIREBASE_RUNTIME__) || null;
+    const haySesion = !!(rt && rt.dbFirebase && typeof rt.writeBatch === 'function'
+        && typeof rt.doc === 'function' && rt.auth && rt.auth.currentUser);
+
+    // Firestore: batch delete de todos los documentos existentes (chunks de 500)
+    if (haySesion && todos.length > 0) {
+        try {
+            for (let i = 0; i < todos.length; i += 500) {
+                const chunk = todos.slice(i, i + 500);
+                const batch = rt.writeBatch(rt.dbFirebase);
+                let count = 0;
+                for (const p of chunk) {
+                    if (p.id) {
+                        batch.delete(rt.doc(rt.dbFirebase, 'pilotos', String(p.id)));
+                        count++;
+                    }
+                }
+                if (count > 0) await batch.commit();
+            }
+        } catch (e) {
+            console.warn('[pilotos] Error eliminando de Firestore:', e);
+        }
+    }
+
+    // IndexedDB: clear del store (más rápido que eliminar uno por uno)
+    const dbLocal = await openDB();
+    const tx = abrirTransaccionDefensiva(dbLocal, 'pilotos', 'readwrite');
+    if (tx) {
+        const store = tx.objectStore('pilotos');
+        store.clear();
+        await new Promise((resolve, reject) => {
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error || new Error('Error al limpiar IndexedDB.'));
+            tx.onabort = () => reject(tx.error || new Error('Limpieza de IndexedDB cancelada.'));
+        });
+    }
+
+    invalidarCache('pilotos');
+    console.info(`[pilotos] Limpieza total: ${todos.length} registro(s) eliminado(s) de IndexedDB y Firestore.`);
+}
+
 async function listarPilotos() {
     const tbody = document.getElementById('pilotos-table-body');
     if (!tbody) return;
     await poblarCategoriasPiloto();
     suscribirPilotosTiempoReal();
+
+    // Sanear duplicados existentes antes de renderizar
+    await deduplicarPilotos();
 
     let todos = [];
     try {
@@ -2947,10 +3068,28 @@ async function listarPilotos() {
             const linea = `${p.nombre || ''} ${p.apellido || ''} ${p.dni || ''} ${p.categoria || ''} ${importeTxt}`.toLowerCase();
             return linea.includes(busqueda);
         })
-        .sort((a, b) => collator.compare(
-            `${a.apellido || ''} ${a.nombre || ''}`.trim(),
-            `${b.apellido || ''} ${b.nombre || ''}`.trim()
-        ));
+        .sort((a, b) => {
+            // Orden alfabético A-Z por el texto mostrado en la primera columna (Nombre y Apellido).
+            const nombreA = `${a.nombre || ''} ${a.apellido || ''}`.trim();
+            const nombreB = `${b.nombre || ''} ${b.apellido || ''}`.trim();
+            const cmp = collator.compare(nombreA, nombreB);
+            if (cmp !== 0) return cmp;
+            // Desempate: importe descendente (mayor importe primero) para orden consistente.
+            return Number(b.importe || 0) - Number(a.importe || 0);
+        });
+
+    // Actualizar contador de registros (Total o Mostrando X de N).
+    const contadorEl = document.getElementById('pilotos-contador');
+    if (contadorEl) {
+        const total = todos.length;
+        const mostrando = pilotosCache.length;
+        const formato = (n) => Number(n || 0).toLocaleString('es-AR');
+        if (busqueda) {
+            contadorEl.textContent = `Mostrando ${formato(mostrando)} de ${formato(total)} registros`;
+        } else {
+            contadorEl.textContent = `Total: ${formato(total)} registros`;
+        }
+    }
 
     // Corrige la pagina si quedo fuera de rango tras filtrar/eliminar.
     const totalPaginas = Math.max(1, Math.ceil(pilotosCache.length / registrosPorPagina));
@@ -4131,6 +4270,13 @@ async function importarPadronPilotos(event) {
     const archivo = input && input.files ? input.files[0] : null;
     if (!archivo) return;
 
+    const confirmado = await mostrarConfirmacion(
+        'Reemplazar padrón de pilotos',
+        `¿Reemplazar TODOS los registros actuales de pilotos por los del archivo "${escapeHtml(archivo.name)}"?\n\nEsta acción eliminará definitivamente todos los pilotos existentes en IndexedDB y Firestore, y guardará únicamente los registros del archivo seleccionado.`,
+        'warning'
+    );
+    if (!confirmado) return;
+
     await conFeedbackDeImportacion(input, async () => {
         const nombre = (archivo.name || '').toLowerCase();
         const esExcel = nombre.endsWith('.xlsx');
@@ -4190,6 +4336,8 @@ async function conFeedbackDeImportacion(input, accion) {
 /** Guarda los registros en IndexedDB + Firestore en lotes (sin congelar la UI). */
 async function importarPadronLotes(registros, btn) {
     invalidarCache('pilotos');
+    // Reemplazo total: eliminar todos los registros previos antes de guardar los nuevos.
+    await eliminarTodosPilotos();
     const dbLocal = await openDB();
     const tx = abrirTransaccionDefensiva(dbLocal, 'pilotos', 'readwrite');
     if (!tx) throw new Error("El store local 'pilotos' no está disponible.");

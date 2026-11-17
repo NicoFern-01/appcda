@@ -582,6 +582,10 @@ test.describe('Menú lateral — submenús desplegables', () => {
       buffer: Buffer.from(htmlPadron, 'utf-8'),
     });
 
+    // Aceptar la confirmación de reemplazo de padrón (modal mostrado por importarPadronPilotos).
+    await page.waitForSelector('#modal-alerta.active', { state: 'visible', timeout: 5000 });
+    await page.click('#alerta-btn-confirmar');
+
     // Toast final con la cantidad + 2 puts en el store 'pilotos' + filas en la tabla.
     // (El stub de puts es global: se filtra por store, que también recibe seeds.)
     await expect.poll(async () => page.evaluate(() => window.__CDA_TOASTS__.join(' | '))).toContain('2 pilotos');

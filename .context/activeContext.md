@@ -611,9 +611,35 @@ Commiteado y pusheado en `df84126` "pilotos: dashboard de la vista padre
 | Lógica | `app.js` | `guardarPilotoForm()`: agregado `importe` (parseo ARS), removido escudo anti-duplicados por DNI (3 barreras). `parsearImporteARS()` / `formatearImporteARS()`: nuevas funciones para formato monetario ARS. `guardarPilotoOEdicion()`: wrapper que decide entre alta y edición según `piloto-id`. `listarPilotos()`: filtro también por `importe`. `renderPilotoPagina()`: columnas DNI + IMPORTE, botón Editar solo si `esAdminUsuario()`, botón Eliminar si `puedeEditar()`. `eliminarPiloto()`: usa `id`. `editarPiloto(id)` / `guardarEdicionPiloto(id)` / `cancelarEdicionPiloto()` / `esAdminUsuario()`: nuevas funciones. `extraerRegistrosPadron()` / `extraerRegistrosPadronXLSX()`: removida deduplicación por DNI (cada fila = licencia independiente). `parsearFilaPadron()`: agregado `importe` desde celda 15 (columna 16 del XLS), parseo ARS. `importarPadronLotes()`: genera `id` UUID por registro, usa `item.id` como doc ID en Firestore. `importarPadronPilotos()`: toast actualizado (sin referencia a duplicados consolidados). Removida variable global `duplicadosDni`. |
 | Test | `tests/menu.spec.js` | Test de columnas actualizado: espera `['Nombre y Apellido', 'Documento', 'DNI', 'Categoría', 'Importe', 'Acciones']`. |
 
+### Cambios de esta sesión — Orden alfabético A-Z en tabla Pilotos Registrados
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| Ordenamiento | `app.js` | `listarPilotos()`: el `.sort()` ahora ordena por `Nombre Apellido` (texto mostrado en primera columna) ascendente con `Intl.Collator('es', { sensitivity: 'base' })` (maneja acentos y Ñ). Desempate por `importe` descendente (mayor primero) para orden consistente cuando un piloto tiene múltiples licencias. No se modifica IndexedDB ni Firestore; el orden se aplica en la capa de presentación antes de guardar en `pilotosCache` y renderizar. |
+
+### Cambios de esta sesión — Eliminar duplicados existentes + Reemplazo total al importar
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| `claveDuplicadoPiloto()` | `app.js` | Nueva función que genera una clave normalizada: `nombre(trim/lowercase) + '|' + apellido(trim/lowercase) + '|' + dni + '|' + categoria + '|' + importe`. Un mismo piloto con distinto importe o categoría NO es duplicado. |
+| `deduplicarPilotos()` | `app.js` | Nueva función: lee todos los pilotos, agrupa por clave duplicada, elimina todos excepto el primero de cada grupo (IndexedDB + Firestore vía `eliminar()`). Se ejecuta automáticamente al inicio de `listarPilotos()`. |
+| `eliminarTodosPilotos()` | `app.js` | Nueva función: lee todos los existentes, hace batch delete en Firestore (chunks de 500), hace `store.clear()` en IndexedDB, invalida caché. Se usa para el reemplazo total al importar. |
+| `listarPilotos()` | `app.js` | Llama `await deduplicarPilotos()` al inicio, antes de filtrar/ordenar/renderizar. Saneará duplicados existentes en cada carga de la vista. |
+| `importarPadronLotes()` | `app.js` | Llama `await eliminarTodosPilotos()` antes de guardar los nuevos registros. Reemplazo total: IndexedDB y Firestore quedan limpios antes de insertar el nuevo padrón. |
+| `importarPadronPilotos()` | `app.js` | Agrega `mostrarConfirmacion()` antes de procesar el archivo. Si el usuario cancela, se aborta la importación. |
+| Test | `tests/menu.spec.js` | Se agregó clic en `#alerta-btn-confirmar` tras `setInputFiles` para aceptar el modal de reemplazo de padrón. |
+
+### Cambios de esta sesión — Contador de registros en Listado de Pilotos
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| UI | `index.html` | Agregado `<span id="pilotos-contador" class="badge badge-info">` en el `table-header-tools` de `#view-listado-pilotos`, junto al título "Pilotos Registrados". |
+| Lógica | `app.js` | En `listarPilotos()`, después de calcular `pilotosCache`, se actualiza `#pilotos-contador`:<br>• Sin búsqueda: `Total: [N] registros` (usando `todos.length`).<br>• Con búsqueda: `Mostrando [M] de [N] registros` (usando `pilotosCache.length` y `todos.length`).<br>Números formateados con `toLocaleString('es-AR')`. |
+| Validación | — | `node --check app.js` → exit 0. `npx vite build` → exit 0. Playwright → 8 passed / 2 failed (preexistentes). |
+
 ### Validaciones
 
-- `node --check app.js` / `db.js` / `src/services/schemaValidator.js` / `src/services/persistenceService.js` → exit 0.
+- `node --check app.js` → exit 0.
 - `npx vite build` → exit 0.
 - `npx playwright test tests/menu.spec.js --workers=1` → **8 passed / 2 failed** (los 2 fallos son preexistentes por cuota Firebase `resource-exhausted` en tests de Penalidades y Autorizaciones, documentados previamente).
 
