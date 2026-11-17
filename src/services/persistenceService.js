@@ -55,7 +55,13 @@ function pilotosDesdeSnapshot(snapshot) {
     const data = docSnap.data();
     if (Array.isArray(data.items)) {
       data.items.forEach((item) => {
-        if (item && typeof item === 'object' && !Array.isArray(item)) pilotos.push(item);
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return;
+        const piloto = { ...item };
+        if (piloto.id === undefined || piloto.id === null) {
+          piloto.id = String(piloto.dni || piloto.documento || '');
+        }
+        if (!piloto.dni) piloto.dni = String(piloto.documento || piloto.id || '');
+        pilotos.push(piloto);
       });
       return;
     }
@@ -65,6 +71,37 @@ function pilotosDesdeSnapshot(snapshot) {
     if (!piloto.dni) piloto.dni = String(piloto.documento || docSnap.id);
     pilotos.push(piloto);
   });
+  return pilotos;
+}
+
+async function guardarPilotosLocales(pilotos) {
+  const db = await globalThis.openDB();
+  const transaction = (globalThis.abrirTransaccionDefensiva || (() => null))(db, 'pilotos', 'readwrite');
+  if (!transaction) throw new Error("Object store 'pilotos' no disponible en IndexedDB.");
+  const store = transaction.objectStore('pilotos');
+  store.clear();
+  for (const piloto of pilotos) store.put(piloto);
+
+  await new Promise((resolve, reject) => {
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error || new Error('Error al guardar pilotos en IndexedDB.'));
+    transaction.onabort = () => reject(transaction.error || new Error('Carga de pilotos en IndexedDB cancelada.'));
+  });
+
+  invalidarCache('pilotos');
+  estado()._cache.pilotos = pilotos.map((piloto) => ({ ...piloto }));
+}
+
+export async function sincronizarPilotosDesdeFirestore() {
+  const rt = runtime();
+  if (!rt.useFirebase || !rt.dbFirebase || !(rt.auth && rt.auth.currentUser) ||
+      typeof rt.getDocs !== 'function' || typeof rt.collection !== 'function') {
+    return null;
+  }
+
+  const snapshot = await rt.getDocs(rt.collection(rt.dbFirebase, 'pilotos'));
+  const pilotos = pilotosDesdeSnapshot(snapshot);
+  await guardarPilotosLocales(pilotos);
   return pilotos;
 }
 
@@ -296,8 +333,12 @@ export async function getTodos(storeName, opciones = {}) {
           dataNube.push(item);
         });
       }
-      cache()[storeName] = dataNube;
-      if (dataNube.length > 0) {
+      if (storeName === 'pilotos') {
+        await guardarPilotosLocales(dataNube);
+      } else {
+        cache()[storeName] = dataNube;
+      }
+      if (dataNube.length > 0 && storeName !== 'pilotos') {
         try {
           const db = await globalThis.openDB();
           const transaction = abrirTransaccion(db, storeName, 'readwrite');
@@ -428,21 +469,27 @@ export async function sincronizarFirebaseALocal(stores) {
 
       if (desdeNube.length === 0) continue;
 
-      const db = await globalThis.openDB();
-      const transaction = (globalThis.abrirTransaccionDefensiva || (() => null))(db, storeName, 'readwrite');
-      if (!transaction) continue;
-      const store = transaction.objectStore(storeName);
-      for (const item of desdeNube) store.put(item);
+      if (storeName === 'pilotos') {
+        const fusion = new Map(porId);
+        desdeNube.forEach((item) => fusion.set(claveNativa(item), item));
+        await guardarPilotosLocales(Array.from(fusion.values()));
+      } else {
+        const db = await globalThis.openDB();
+        const transaction = (globalThis.abrirTransaccionDefensiva || (() => null))(db, storeName, 'readwrite');
+        if (!transaction) continue;
+        const store = transaction.objectStore(storeName);
+        for (const item of desdeNube) store.put(item);
 
-      await new Promise((resolve, reject) => {
-        transaction.oncomplete = resolve;
-        transaction.onerror = () => reject(transaction.error);
-        transaction.onabort = () => reject(transaction.error || new Error('Transacción cancelada'));
-      });
+        await new Promise((resolve, reject) => {
+          transaction.oncomplete = resolve;
+          transaction.onerror = () => reject(transaction.error);
+          transaction.onabort = () => reject(transaction.error || new Error('Transacción cancelada'));
+        });
 
-      const fusion = new Map(porId);
-      desdeNube.forEach((item) => fusion.set(claveNativa(item), item));
-      estado()._cache[storeName] = Array.from(fusion.values());
+        const fusion = new Map(porId);
+        desdeNube.forEach((item) => fusion.set(claveNativa(item), item));
+        estado()._cache[storeName] = Array.from(fusion.values());
+      }
       total += desdeNube.length;
       console.log(`Colección '${storeName}': ${desdeNube.length} registros descargados desde Firestore (resolución A-3).`);
     } catch (e) {
@@ -591,10 +638,14 @@ export function suscribirColeccion(storeName, coleccion = storeName) {
   try {
     const ref = rt.collection(rt.dbFirebase, coleccion);
     _suscripciones[storeName] = rt.onSnapshot(ref, (snap) => {
-      invalidarCache(storeName);
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('firebase-sync-complete', { detail: { total: snap.size, store: storeName } }));
-      }
+      const actualizar = storeName === 'pilotos'
+        ? guardarPilotosLocales(pilotosDesdeSnapshot(snap))
+        : Promise.resolve().then(() => invalidarCache(storeName));
+      actualizar.then(() => {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('firebase-sync-complete', { detail: { total: snap.size, store: storeName } }));
+        }
+      }).catch((e) => console.warn(`No se pudo actualizar '${storeName}' desde Firestore:`, e));
     });
     return _suscripciones[storeName];
   } catch (e) {
@@ -622,6 +673,7 @@ export const persistenceService = {
   suscribirColeccion,
   cancelarSuscripcion,
   sincronizarPilotosConFirestore,
+  sincronizarPilotosDesdeFirestore,
   limpiarObjetoParaFirebase,
 };
 
