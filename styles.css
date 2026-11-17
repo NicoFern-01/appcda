@@ -850,6 +850,15 @@ input:focus, select:focus, textarea:focus {
     accent-color: var(--accent);
 }
 
+.licencia-checks {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+    min-height: 38px;
+}
+
 /* Lists and Tables */
 .table-card {
     background-color: var(--bg-card);

@@ -1172,6 +1172,27 @@
                             <label for="piloto-importe">Importe</label>
                             <input type="text" id="piloto-importe" placeholder="Ej: 85300,00" autocomplete="off">
                         </div>
+                        <div class="form-group">
+                            <label for="piloto-tipo-licencia">Tipo de Licencia</label>
+                            <select id="piloto-tipo-licencia" autocomplete="off">
+                                <option value="Nacional">Nacional</option>
+                                <option value="Internacional">Internacional</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Licencia</label>
+                            <div id="piloto-licencia-grupo" class="licencia-checks">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" value="Piloto"> <span>Piloto</span>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" value="Navegante"> <span>Navegante</span>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" value="Concurrente"> <span>Concurrente</span>
+                                </label>
+                            </div>
+                        </div>
                     </div>
                     <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
                         <button type="submit" class="btn" id="piloto-btn-guardar"><i class="fa-solid fa-plus"></i> Agregar Piloto</button>
@@ -1190,9 +1211,10 @@
                             <thead>
                                 <tr>
                                     <th>Nombre y Apellido</th>
-                                    <th>Documento</th>
                                     <th>DNI</th>
                                     <th>Categoría</th>
+                                    <th>Tipo de Licencia</th>
+                                    <th>Licencia</th>
                                     <th>Importe</th>
                                     <th class="editor-only" style="text-align: right;">Acciones</th>
                                 </tr>

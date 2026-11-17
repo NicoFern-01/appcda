@@ -166,10 +166,18 @@ test.describe('Menú lateral — submenús desplegables', () => {
     for (const id of ['piloto-nombre', 'piloto-apellido', 'piloto-dni', 'piloto-categoria']) {
       await expect(page.locator(`#${id}`), `Falta el campo #${id}`).toHaveCount(1);
     }
+    const licenciaGrupo = page.locator('#piloto-licencia-grupo');
+    await expect(licenciaGrupo).toHaveCount(1);
+    await expect(page.locator('#piloto-licencia')).toHaveCount(0);
+    await expect(licenciaGrupo.locator('input[type="checkbox"]')).toHaveCount(3);
+    await expect(licenciaGrupo.locator('input[type="checkbox"]').nth(0)).toHaveAttribute('value', 'Piloto');
+    await expect(licenciaGrupo.locator('input[type="checkbox"]').nth(1)).toHaveAttribute('value', 'Navegante');
+    await expect(licenciaGrupo.locator('input[type="checkbox"]').nth(2)).toHaveAttribute('value', 'Concurrente');
+    await expect(licenciaGrupo.locator('xpath=..').locator(':scope > label')).toHaveText('Licencia');
     await expect(page.locator('#piloto-btn-guardar')).toContainText('Agregar Piloto');
-    // Tabla inferior: columnas Nombre y Apellido / Documento / DNI / Categoría / Importe / Acciones.
+    // Tabla inferior: columnas Nombre y Apellido / DNI / Categoría / Tipo de Licencia / Licencia / Importe / Acciones.
     const columnas = await page.locator('#view-listado-pilotos thead th').allTextContents();
-    expect(columnas.map((t) => t.trim())).toEqual(['Nombre y Apellido', 'Documento', 'DNI', 'Categoría', 'Importe', 'Acciones']);
+    expect(columnas.map((t) => t.trim())).toEqual(['Nombre y Apellido', 'DNI', 'Categoría', 'Tipo de Licencia', 'Licencia', 'Importe', 'Acciones']);
     await expect(page.locator('#pilotos-table-body')).toHaveCount(1);
 
     // 5) El grupo también se puede contraer (misma regla que los demás).
@@ -564,6 +572,7 @@ test.describe('Menú lateral — submenús desplegables', () => {
     expect(parseo.cabecera).toBeNull();
     expect(parseo.sinDni).toBeNull();
     expect(parseo.ok.dni).toBe('30123456');
+    expect(parseo.ok.documento).toBe(parseo.ok.dni);
     expect(parseo.ok.nombre).toBe('JUAN');
     expect(parseo.ok.apellido).toBe('PÉREZ');
     expect(parseo.ok.categoria).toBe('TC2000');
@@ -592,8 +601,20 @@ test.describe('Menú lateral — submenús desplegables', () => {
     await expect.poll(async () => page.evaluate(() => window.__CDA_PUTS__.filter((p) => p.store === 'pilotos').length)).toBe(2);
     const dnis = await page.evaluate(() => window.__CDA_PUTS__.filter((p) => p.store === 'pilotos').map((p) => p.item.dni).sort());
     expect(dnis).toEqual(['27654321', '30123456']);
+    const documentos = await page.evaluate(() => window.__CDA_PUTS__.filter((p) => p.store === 'pilotos').map((p) => p.item.documento).sort());
+    expect(documentos).toEqual(dnis);
     await expect(page.locator('#pilotos-table-body')).toContainText('JUAN PÉREZ');
     await expect(page.locator('#pilotos-table-body')).toContainText('ANA GÓMEZ');
+    await expect(page.locator('#pilotos-table-body tr').first().locator('td')).toHaveCount(7);
+
+    await page.fill('#piloto-nombre', 'Prueba');
+    await page.fill('#piloto-apellido', 'Compatibilidad');
+    await page.fill('#piloto-dni', '12.345.678');
+    await page.fill('#piloto-categoria', 'TC2000');
+    await page.locator('#piloto-btn-guardar').click();
+    await expect.poll(async () => page.evaluate(() => window.__CDA_PUTS__.filter((p) => p.store === 'pilotos').length)).toBe(3);
+    const pilotoManual = await page.evaluate(() => window.__CDA_PUTS__.find((p) => p.store === 'pilotos' && p.item.dni === '12345678').item);
+    expect(pilotoManual.documento).toBe(pilotoManual.dni);
 
     expect(erroresPagina, `Excepciones JS:\n${erroresPagina.join('\n')}`).toEqual([]);
   });

@@ -1000,3 +1000,22 @@ Sin commitear aún.
 - Persistencia con IndexedDB y UUID strings compatibles con Firestore.
 - Validaciones: node --check OK, vite build OK, pruebas Playwright funcionando.
 - Estado: operativo localmente; pruebas previas presentan fallas pre-existentes en stubs CARGADORES que no afectan el módulo Inscripciones.
+
+### Nuevas Columnas Tipo de Licencia / Licencia - Fase 1
+
+| Aspecto | Archivo | Detalle |
+|---|---|---|
+| Parseo XLS | `app.js` | `parsearFilaPadron()` extrae `tipoLicencia` desde columna A (índice 0) y `licencia` desde columnas Piloto(5), Navegante(6), Concurrente(7). El rol se concatena con ' / '. Sin roles: `'-'`. |
+| Clave duplicados | `app.js` | `claveDuplicadoPiloto()` ahora incluye `tipoLicencia` y `licencia`: `nombre\|apellido\|dni\|categoria\|tipoLicencia\|licencia\|importe`. Distinto importe o categoría sigue siendo NO duplicado. |
+| Tabla | `index.html` | 8 columnas: Nombre y Apellido / Documento / DNI / Categoría / Tipo de Licencia / Licencia / Importe / Acciones. Badges sutiles para `tipoLicencia` (`.badge-secondary`) y `licencia` (`.badge-success`). |
+| Buscador | `index.html` → `app.js` | `listarPilotos()` filtra ahora por `tipoLicencia` y `licencia` además de los campos existentes. |
+| Formulario | `index.html` + `app.js` | Nuevo `select` `piloto-tipo-licencia` (Nacional/Internacional) y `select` múltiple `piloto-licencia` (Piloto/Navegante/Concurrente). `guardarPilotoForm()` y `guardarEdicionPiloto()` guardan los nuevos campos. `editarPiloto()` precarga los campos. |
+| Validación | `schemaValidator.js` | `camposOpcionalesStrings.pilotos = ['tipoLicencia', 'licencia']`: valida string, default `-` para compatibilidad con registros previos. |
+| Test | `tests/menu.spec.js` | Columnas esperadas actualizadas a 8: `['Nombre y Apellido', 'Documento', 'DNI', 'Categoría', 'Tipo de Licencia', 'Licencia', 'Importe', 'Acciones']`. |
+| Validación | — | `node --check app.js` → exit 0. `npx vite build` → exit 0 (fixtures de prueba no afectan por el stub de IndexedDB incompleto). |
+
+
+### Fix Puntual: ReferenceError: tipoLicenciaTxt is not defined
+
+- `app.js` línea ~3148: Se añadieron `const tipoLicenciaTxt` y `const licenciaTxt = escapeHtml(String(p.tipoLicencia || '-'))` antes de usarse en el template literal de `tr.innerHTML`.
+- Validación: `node --check app.js` → CORRECTO. `npx vite build` → exit 0.

@@ -18,6 +18,15 @@ export function clavePrimariaStore(storeName) {
 }
 
 /**
+ * Nombres de campos opcionales por store que se validan solo como strings,
+ * con default para compatibilidad con registros previos.
+ * 'pilotos': tipoLicencia y licencia (cadena o '-', no vacíos).
+ */
+const camposOpcionalesStrings = {
+  pilotos: ['tipoLicencia', 'licencia']
+};
+
+/**
  * Valida un registro antes de escribirlo.
  * @param {string} storeName Nombre de la colección/object store.
  * @param {*} item Objeto a validar.
@@ -33,6 +42,18 @@ export function validarRegistro(storeName, item) {
   const clave = clavePrimariaStore(storeName);
   if (typeof item[clave] === 'undefined') {
     return fail(resultado, storeName, `falta el campo '${clave}'`);
+  }
+
+  // Campos opcionales: valida que sean strings, asegura compatibilidad
+  // con registros previos que no los portaron.
+  const opcionales = camposOpcionalesStrings[storeName] || [];
+  for (const campo of opcionales) {
+    const valor = item[campo];
+    if (valor === undefined || valor === null || valor === '') {
+      item[campo] = '-';
+    } else if (typeof valor !== 'string') {
+      return fail(resultado, storeName, `el campo '${campo}' debe ser una cadena de texto`);
+    }
   }
 
   const prohibidos = Object.values(item).some(
