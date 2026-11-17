@@ -2954,49 +2954,37 @@ function claveDuplicadoPiloto(p) {
 }
 
 /**
- * Elimina registros duplicados existentes de pilotos en IndexedDB y Firestore.
- * Conserva una única copia por grupo de duplicados.
- * Se ejecuta automáticamente al cargar la vista Listado de Pilotos.
- * @returns {number} Cantidad de registros duplicados eliminados.
+ * Deduplica la lista en memoria y persiste el padrón limpio en una sola operación masiva.
  */
-async function deduplicarPilotos() {
-    let todos = [];
-    try {
-        todos = await getTodos('pilotos', { soloLocal: true });
-    } catch (e) {
-        console.warn('[pilotos] no se pudo leer para deduplicar:', e?.message || e);
-        return 0;
-    }
-    if (todos.length === 0) return 0;
-
-    const grupos = new Map();
-    for (const p of todos) {
+async function deduplicarPilotos(pilotosLista) {
+    if (!Array.isArray(pilotosLista) || pilotosLista.length === 0) return pilotosLista || [];
+    const clavesVistas = new Set();
+    const unicos = [];
+    for (const p of pilotosLista) {
         const clave = claveDuplicadoPiloto(p);
-        if (!grupos.has(clave)) grupos.set(clave, []);
-        grupos.get(clave).push(p);
+        if (clavesVistas.has(clave)) continue;
+        clavesVistas.add(clave);
+        unicos.push(p);
+    }
+    if (unicos.length === pilotosLista.length) return pilotosLista;
+
+    for (const piloto of unicos) {
+        if (!piloto.id) piloto.id = String(Date.now() + Math.random());
     }
 
-    let eliminados = 0;
-    for (const [, registros] of grupos) {
-        if (registros.length <= 1) continue;
-        // Conservar el primero, eliminar el resto (duplicados exactos)
-        for (let i = 1; i < registros.length; i++) {
-            const id = registros[i].id;
-            if (!id) continue;
-            try {
-                await eliminar('pilotos', id);
-                eliminados++;
-            } catch (e) {
-                console.warn('[pilotos] no se pudo eliminar duplicado:', id, e?.message || e);
-            }
-        }
+    if (!deduplicarPilotos.persistenciaEnCurso) {
+        deduplicarPilotos.persistenciaEnCurso = importarPadronLotes(unicos)
+            .then(() => {
+                console.info(`[Pilotos] Deduplicación masiva: ${pilotosLista.length - unicos.length} duplicado(s) eliminado(s).`);
+            })
+            .catch((err) => {
+                console.error('[Pilotos] Error al persistir la deduplicación:', err);
+            })
+            .finally(() => {
+                deduplicarPilotos.persistenciaEnCurso = null;
+            });
     }
-
-    if (eliminados > 0) {
-        console.info(`[pilotos] Deduplicación: ${eliminados} registro(s) duplicado(s) eliminado(s).`);
-        invalidarCache('pilotos');
-    }
-    return eliminados;
+    return unicos;
 }
 
 /**
@@ -3033,77 +3021,75 @@ async function eliminarTodosPilotos() {
 }
 
 async function listarPilotos() {
-    const tbody = document.getElementById('pilotos-table-body');
-    if (!tbody) return;
-    await poblarCategoriasPiloto();
-    suscribirPilotosTiempoReal();
-
-    // Sanear duplicados existentes antes de renderizar
-    await deduplicarPilotos();
-
-    let todos = [];
     try {
-        todos = await getTodos('pilotos');
-    } catch (e) {
-        console.warn('[pilotos] no se pudo leer el store local:', e?.message || e);
-    }
-    const firebaseRuntime = typeof window !== 'undefined'
-        ? window.__CDA_FIREBASE_RUNTIME__
-        : null;
-    if (todos.length === 0 && firebaseRuntime?.auth?.currentUser) {
-        const persistencia = window.__CDA_MODULES__?.persistencia;
-        if (persistencia && typeof persistencia.sincronizarPilotosDesdeFirestore === 'function') {
-            try {
-                const pilotosPlanos = await persistencia.sincronizarPilotosDesdeFirestore();
-                if (Array.isArray(pilotosPlanos)) {
-                    todos = pilotosPlanos;
-                    console.log('[Pilotos] Sincronizados desde lotes Firestore:', pilotosPlanos.length);
+        const tbody = document.getElementById('pilotos-table-body');
+        if (!tbody) return;
+        await poblarCategoriasPiloto();
+        suscribirPilotosTiempoReal();
+
+        let pilotos = await getTodos('pilotos');
+        const firebaseRuntime = typeof window !== 'undefined'
+            ? window.__CDA_FIREBASE_RUNTIME__
+            : null;
+        if (pilotos.length === 0 && firebaseRuntime?.auth?.currentUser) {
+            const persistencia = window.__CDA_MODULES__?.persistencia;
+            if (persistencia && typeof persistencia.sincronizarPilotosDesdeFirestore === 'function') {
+                try {
+                    const pilotosPlanos = await persistencia.sincronizarPilotosDesdeFirestore();
+                    if (Array.isArray(pilotosPlanos)) {
+                        pilotos = pilotosPlanos;
+                        console.log('[Pilotos] Sincronizados desde lotes Firestore:', pilotosPlanos.length);
+                    }
+                } catch (err) {
+                    console.warn('[Pilotos] No se pudieron sincronizar los lotes de Firestore:', err?.message || err);
                 }
-            } catch (e) {
-                console.warn('[Pilotos] No se pudieron sincronizar los lotes de Firestore:', e?.message || e);
             }
         }
-    }
 
-    // Filtro sobre el array ORIGINAL (al tocar la busqueda se resetea la pagina).
-    const busqueda = (document.getElementById('buscar-piloto')?.value || '').trim().toLowerCase();
-    const collator = new Intl.Collator('es', { sensitivity: 'base' });
-    pilotosCache = todos
-        .filter(p => {
-            if (!busqueda) return true;
-            const importeTxt = formatearImporteARS(p.importe).toLowerCase();
-            const linea = `${p.nombre || ''} ${p.apellido || ''} ${p.dni || p.documento || ''} ${p.categoria || ''} ${String(p.tipoLicencia || '-')} ${String(p.licencia || '-')} ${importeTxt}`.toLowerCase();
-            return linea.includes(busqueda);
-        })
-        .sort((a, b) => {
-            // Orden alfabético A-Z por el texto mostrado en la primera columna (Nombre y Apellido).
-            const nombreA = `${a.nombre || ''} ${a.apellido || ''}`.trim();
-            const nombreB = `${b.nombre || ''} ${b.apellido || ''}`.trim();
-            const cmp = collator.compare(nombreA, nombreB);
-            if (cmp !== 0) return cmp;
-            // Desempate: importe descendente (mayor importe primero) para orden consistente.
-            return Number(b.importe || 0) - Number(a.importe || 0);
-        });
+        if (pilotos.length > 0) pilotos = await deduplicarPilotos(pilotos);
 
-    // Actualizar contador de registros (Total o Mostrando X de N).
-    const contadorEl = document.getElementById('pilotos-contador');
-    if (contadorEl) {
-        const total = todos.length;
-        const mostrando = pilotosCache.length;
-        const formato = (n) => Number(n || 0).toLocaleString('es-AR');
-        if (busqueda) {
-            contadorEl.textContent = `Mostrando ${formato(mostrando)} de ${formato(total)} registros`;
-        } else {
-            contadorEl.textContent = `Total: ${formato(total)} registros`;
+        // Filtro sobre el array ORIGINAL (al tocar la busqueda se resetea la pagina).
+        const busqueda = (document.getElementById('buscar-piloto')?.value || '').trim().toLowerCase();
+        const collator = new Intl.Collator('es', { sensitivity: 'base' });
+        pilotosCache = pilotos
+            .filter(p => {
+                if (!busqueda) return true;
+                const importeTxt = formatearImporteARS(p.importe).toLowerCase();
+                const linea = `${p.nombre || ''} ${p.apellido || ''} ${p.dni || p.documento || ''} ${p.categoria || ''} ${String(p.tipoLicencia || '-')} ${String(p.licencia || '-')} ${importeTxt}`.toLowerCase();
+                return linea.includes(busqueda);
+            })
+            .sort((a, b) => {
+                // Orden alfabético A-Z por el texto mostrado en la primera columna (Nombre y Apellido).
+                const nombreA = `${a.nombre || ''} ${a.apellido || ''}`.trim();
+                const nombreB = `${b.nombre || ''} ${b.apellido || ''}`.trim();
+                const cmp = collator.compare(nombreA, nombreB);
+                if (cmp !== 0) return cmp;
+                // Desempate: importe descendente (mayor importe primero) para orden consistente.
+                return Number(b.importe || 0) - Number(a.importe || 0);
+            });
+
+        // Actualizar contador de registros (Total o Mostrando X de N).
+        const contadorEl = document.getElementById('pilotos-contador');
+        if (contadorEl) {
+            const total = pilotos.length;
+            const mostrando = pilotosCache.length;
+            const formato = (n) => Number(n || 0).toLocaleString('es-AR');
+            if (busqueda) {
+                contadorEl.textContent = `Mostrando ${formato(mostrando)} de ${formato(total)} registros`;
+            } else {
+                contadorEl.textContent = `Total: ${formato(total)} registros`;
+            }
         }
+
+        // Corrige la pagina si quedo fuera de rango tras filtrar/eliminar.
+        const totalPaginas = Math.max(1, Math.ceil(pilotosCache.length / registrosPorPagina));
+        if (paginaActual > totalPaginas) paginaActual = totalPaginas;
+
+        renderPilotoPagina();
+        renderPilotoPaginador(pilotosCache.length, busqueda ? null : totalPaginas);
+    } catch (err) {
+        console.error('[Pilotos] Error en listarPilotos:', err);
     }
-
-    // Corrige la pagina si quedo fuera de rango tras filtrar/eliminar.
-    const totalPaginas = Math.max(1, Math.ceil(pilotosCache.length / registrosPorPagina));
-    if (paginaActual > totalPaginas) paginaActual = totalPaginas;
-
-    renderPilotoPagina();
-    renderPilotoPaginador(pilotosCache.length, busqueda ? null : totalPaginas);
 }
 
 /** Dibuja SOLO las filas del corte de la página actual. */
