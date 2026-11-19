@@ -44,6 +44,28 @@ export function validarRegistro(storeName, item) {
     return fail(resultado, storeName, `falta el campo '${clave}'`);
   }
 
+  if (storeName === 'designacionesPersonal') {
+    if (item.competenciaId === undefined || item.competenciaId === null || String(item.competenciaId).trim() === '') {
+      return fail(resultado, storeName, "falta el campo 'competenciaId'");
+    }
+    if (item.staffId === undefined || item.staffId === null || String(item.staffId).trim() === '') {
+      return fail(resultado, storeName, "falta el campo 'staffId'");
+    }
+    if (item.funcion !== undefined && (typeof item.funcion !== 'string' || item.funcion.length > 120)) {
+      return fail(resultado, storeName, "el campo 'funcion' debe ser texto de hasta 120 caracteres");
+    }
+  }
+
+  if (storeName === 'listaCorreosDesignaciones') {
+    const email = typeof item.email === 'string' ? item.email.trim() : '';
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return fail(resultado, storeName, "el campo 'email' no es válido");
+    }
+    if (item.etiqueta !== undefined && (typeof item.etiqueta !== 'string' || item.etiqueta.length > 80)) {
+      return fail(resultado, storeName, "el campo 'etiqueta' debe ser texto de hasta 80 caracteres");
+    }
+  }
+
   // Campos opcionales: valida que sean strings, asegura compatibilidad
   // con registros previos que no los portaron.
   const opcionales = camposOpcionalesStrings[storeName] || [];

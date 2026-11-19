@@ -1,7 +1,7 @@
 // src/views/index.js
 // ============================================================
 // AGREGADOR DE VISTAS (FASE 2).
-// Registro central de las 21 vistas + login. Cada adaptador adopta hoy la
+// Registro central de vistas + login. Cada adaptador adopta hoy la
 // sección DOM existente del index.html (sin duplicar ids ni alterar el CSS).
 // Esto deja listo el desacople: en la próxima fase cada entrada podrá
 // apuntar a un HTML/JS propio sin cambiar un solo id/clase.
@@ -11,6 +11,7 @@ const VIEW_IDS = [
   'login',
   'dashboard',
   'calendario',
+  'designaciones-personal',
   'competencias',
   'gastos',
   'carga-detallada',

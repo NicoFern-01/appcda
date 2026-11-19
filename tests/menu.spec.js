@@ -10,6 +10,7 @@ import { test, expect } from '@playwright/test';
 // No requiere credenciales ni red: el menú se renderiza con un usuario admin
 // de prueba y las cargas de datos de cada vista se neutralizan con stubs.
 const GRUPOS = [
+  { padre: 'menu-calendario', submenu: 'submenu-calendario', vista: 'calendario' },
   { padre: 'menu-gastos',     submenu: 'submenu-gastos',     vista: 'gastos' },
   { padre: 'menu-personal',   submenu: 'submenu-personal',   vista: 'staff' },
   { padre: 'menu-pilotos',    submenu: 'submenu-pilotos',    vista: 'pilotos' },
@@ -22,7 +23,7 @@ const GRUPOS = [
 //   - `renderDashboardPilotos`: valida el render real del dashboard
 //     (KPIs en 0 + placeholder de categorías con IndexedDB vacía).
 const CARGADORES = [
-  'renderDashboard', 'cargarYParsearCalendario', 'listarCompetencias', 'listarGastos',
+  'renderDashboard', 'cargarYParsearCalendario', 'cargarDesignacionesPersonal', 'listarCompetencias', 'listarGastos',
   'listarRendiciones', 'cargarPersonalCompetencia', 'renderDashboardInventario',
   'listarArticulos', 'listarMovimientosInventario', 'listarCategoriasInventario',
   'listarEntregas', 'listarStaff', 'listarEstadisticasPersonal', 'listarPilotos',
@@ -87,6 +88,18 @@ test.describe('Menú lateral — submenús desplegables', () => {
     expect(erroresPagina, `Excepciones JS:\n${erroresPagina.join('\n')}`).toEqual([]);
   });
 
+  test('Designación de Personal se abre desde el submenú de Calendario', async ({ page }) => {
+    await prepararMenu(page);
+
+    await page.locator('#menu-calendario').click();
+    await page.locator('.submenu-item[data-view="designaciones-personal"]').click();
+
+    await expect(page.locator('#submenu-calendario')).not.toHaveClass(/collapsed/);
+    await expect(page.locator('#menu-calendario')).toHaveClass(/expanded/);
+    await expect(page.locator('#view-designaciones-personal')).toHaveClass(/active/);
+    await expect(page.locator('.submenu-item[data-view="designaciones-personal"]')).toHaveClass(/active/);
+  });
+
   test('Navegar a una vista HIJA sí abre su submenú y la marca activa', async ({ page }) => {
     await prepararMenu(page);
 
@@ -115,7 +128,7 @@ test.describe('Menú lateral — submenús desplegables', () => {
       })
     );
     expect(secuencia).toEqual([
-      'view:dashboard', 'view:calendario', 'view:competencias',
+      'view:dashboard', 'menu-calendario', 'view:competencias',
       'menu-gastos', 'menu-inventario', 'menu-personal',
       'menu-pilotos',                      // ← nuevo, justo debajo de Personal
       'view:alojamiento', 'view:categorias-circuitos', 'view:configuracion',

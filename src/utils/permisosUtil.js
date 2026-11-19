@@ -12,6 +12,7 @@
 export const CATALOGO_MODULOS = Object.freeze([
   { id: 'dashboard',              nombre: 'Dashboard',                     icono: 'fa-gauge',           orden: 1,  funciones: ['ver'] },
   { id: 'calendario',             nombre: 'Calendario',                    icono: 'fa-calendar-days',   orden: 2,  funciones: ['ver'] },
+  { id: 'designaciones-personal', nombre: 'Designación de Personal',       icono: 'fa-people-group',    orden: 2.5, funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'competencias',           nombre: 'Competencias',                  icono: 'fa-calendar-days',   orden: 3,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'gastos',                 nombre: 'Gastos',                        icono: 'fa-receipt',         orden: 4,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
   { id: 'carga-detallada',        nombre: 'Carga Detallada (Rendiciones)', icono: 'fa-file-invoice',    orden: 5,  funciones: ['ver', 'crear', 'editar', 'eliminar'] },
@@ -53,10 +54,16 @@ function construirPresetRol(rol) {
   const preset = {};
   for (const modulo of CATALOGO_MODULOS) {
     if (modulo.soloAdmin) continue;
-    preset[modulo.id] =
-      rol === 'viewer' || MODULOS_SOLO_LECTURA.includes(modulo.id)
-        ? { ver: true }
-        : { ver: true, crear: true, editar: true, eliminar: false };
+    if (rol === 'viewer' || MODULOS_SOLO_LECTURA.includes(modulo.id)) {
+      preset[modulo.id] = { ver: true };
+    } else {
+      preset[modulo.id] = {
+        ver: true,
+        crear: true,
+        editar: true,
+        eliminar: modulo.id === 'designaciones-personal'
+      };
+    }
   }
   return preset;
 }
@@ -65,7 +72,14 @@ export const DICCIONARIO_ROLES = Object.freeze({
   admin: { label: 'Administrador (Acceso total)', accesoTotal: true, preset: construirPermisosAdmin() },
   editor: { label: 'Editor (Carga y edición de datos)', accesoTotal: false, preset: construirPresetRol('editor') },
   viewer: { label: 'Visualizador (Solo Lectura)', accesoTotal: false, preset: construirPresetRol('viewer') },
-  supervisor: { label: 'Supervisor (Dashboard Solo)', accesoTotal: false, preset: { dashboard: { ver: true } } }
+  supervisor: {
+    label: 'Supervisor (Dashboard y Designaciones)',
+    accesoTotal: false,
+    preset: {
+      dashboard: { ver: true },
+      'designaciones-personal': { ver: true, crear: true, editar: true, eliminar: true }
+    }
+  }
 });
 export function normalizarPermisos(rol, permisos) {
   const defRol = DICCIONARIO_ROLES[rol];
@@ -76,7 +90,9 @@ export function normalizarPermisos(rol, permisos) {
 
   for (const modulo of CATALOGO_MODULOS) {
     if (modulo.soloAdmin) continue;
-    const permsModulo = origen[modulo.id];
+    const permsModulo = origen[modulo.id] !== undefined
+      ? origen[modulo.id]
+      : (modulo.id === 'designaciones-personal' ? defRol?.preset?.[modulo.id] : undefined);
     const funcionesValidas = {};
     for (const funcion of modulo.funciones) {
       funcionesValidas[funcion] = Boolean(

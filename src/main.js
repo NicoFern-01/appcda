@@ -26,6 +26,7 @@ import userDirectoryService from './services/userDirectoryService.js';
 import { ADMINS_ANCLA } from './services/authCredentials.js';
 import viewManager from './services/viewManager.js';
 import { views } from './views/index.js';
+import designacionesPersonalService from './services/designacionesPersonalService.js';
 
 // Registrar los adaptadores de vistas en el router (idempotente y seguro).
 VIEW_IDS.forEach((id) => {
@@ -47,6 +48,7 @@ if (typeof window !== 'undefined') {
     persistencia: persistenceService,
     vistas: viewManager,
     usuarios: userDirectoryService,
+    designacionesPersonal: designacionesPersonalService,
     // Lista de cuentas administradoras ancla. app.js la usa para la purga de
     // perfiles (siempre debe conservar al admin ancla).
     credenciales: { ADMINS_ANCLA },

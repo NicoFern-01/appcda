@@ -8,6 +8,7 @@ import store from '../core/store.js';
 import { CATALOGO_MODULOS, MODULOS_MAP, verificarPermiso as verificarPermisoES } from '../utils/permisosUtil.js';
 
 export const GRUPOS_MENU = [
+    { padreId: 'menu-calendario', submenuId: 'submenu-calendario', padre: 'calendario', hijos: ['designaciones-personal'] },
     { padreId: 'menu-gastos',     submenuId: 'submenu-gastos',     padre: 'gastos',     hijos: ['carga-detallada', 'personal-competencia'] },
     { padreId: 'menu-personal',   submenuId: 'submenu-personal',   padre: 'staff',      hijos: ['estadisticas-personal'] },
     { padreId: 'menu-pilotos',    submenuId: 'submenu-pilotos',    padre: 'pilotos',    hijos: ['listado-pilotos', 'penalidades', 'autorizaciones', 'inscripciones'] },
@@ -15,7 +16,7 @@ export const GRUPOS_MENU = [
 ];
 
 export const VIEWS = [
-    'dashboard', 'calendario', 'competencias', 'gastos', 'carga-detallada',
+    'dashboard', 'calendario', 'designaciones-personal', 'competencias', 'gastos', 'carga-detallada',
     'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario',
     'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal',
     'pilotos', 'listado-pilotos', 'penalidades', 'autorizaciones', 'inscripciones', 'alojamiento', 'categorias-circuitos', 'configuracion'
@@ -188,7 +189,7 @@ export function abrirSubmenuDeVista(viewId) {
     if (typeof document === 'undefined') return;
     const gruposMenu = (typeof window !== 'undefined' && window.GRUPOS_MENU) || GRUPOS_MENU;
 
-    // Los PADRES del menú (Gastos, Personal, Inventario) ya alternan su submenú
+    // Los PADRES del menú (Calendario, Gastos, Personal, Inventario) ya alternan su submenú
     // con su propio toggle al hacer clic. Forzarles la apertura los dejaba
     // imposibles de contraer: el clic cerraba el submenú y esta función (invocada
     // por switchView -> ejecutarSwitchView con la MISMA vista padre) lo volvía a
@@ -197,6 +198,7 @@ export function abrirSubmenuDeVista(viewId) {
 
     const grupos = {
         'carga-detallada': ['submenu-gastos', 'menu-gastos'],
+        'designaciones-personal': ['submenu-calendario', 'menu-calendario'],
         'personal-competencia': ['submenu-gastos', 'menu-gastos'],
         'estadisticas-personal': ['submenu-personal', 'menu-personal'],
         'listado-pilotos': ['submenu-pilotos', 'menu-pilotos'],
@@ -324,6 +326,9 @@ export async function cargarDatosVista(viewId) {
             break;
         case 'calendario':
             await invocarGlobal('cargarYParsearCalendario');
+            break;
+        case 'designaciones-personal':
+            await invocarGlobal('cargarDesignacionesPersonal');
             break;
         case 'competencias':
             await invocarGlobal('listarCompetencias');

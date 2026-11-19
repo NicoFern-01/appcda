@@ -271,7 +271,14 @@ export function iniciarSesion(usuario) {
   if (aplicarControlDeAcceso) aplicarControlDeAcceso(usuario.rol);
 
   const switchView = lecturaGlobal('switchView');
-  if (switchView) switchView('dashboard');
+  const params = new URLSearchParams(window.location.search);
+  const vistaSolicitada = params.get('vista');
+  const vistaInicial = vistaSolicitada === 'designaciones-personal' &&
+    typeof window.verificarPermiso === 'function' &&
+    window.verificarPermiso(usuario, 'designaciones-personal', 'ver')
+    ? 'designaciones-personal'
+    : 'dashboard';
+  if (switchView) switchView(vistaInicial);
 }
 
 /**

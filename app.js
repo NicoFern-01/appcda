@@ -96,7 +96,7 @@ let dashboardAcumuladoAnio = null;
 // Flag para evitar re-renderizar el dashboard si no cambiaron los datos
 let dashboardDirty = true;
 
-const views = ['dashboard', 'calendario', 'competencias', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal', 'pilotos', 'listado-pilotos', 'penalidades', 'alojamiento', 'categorias-circuitos', 'configuracion'];
+const views = ['dashboard', 'calendario', 'designaciones-personal', 'competencias', 'gastos', 'carga-detallada', 'personal-competencia', 'inventario', 'articulos', 'movimientos-inventario', 'categorias-inventario', 'entregas-inventario', 'staff', 'estadisticas-personal', 'pilotos', 'listado-pilotos', 'penalidades', 'alojamiento', 'categorias-circuitos', 'configuracion'];
 
 // ==================== RENDERIZADO ASÍNCRONO DE LA INTERFAZ ====================
 // Escucha el evento disparado por db.js cuando la sincronización con Firestore
@@ -469,6 +469,11 @@ function abrirSubmenuDeVista(viewId) {
 function switchView(viewId) {
     const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
     if (v && typeof v.switchView === 'function') return v.switchView(viewId);
+}
+
+function cargarDesignacionesPersonal() {
+    const service = window.__CDA_MODULES__?.designacionesPersonal;
+    if (service && typeof service.cargar === 'function') return service.cargar();
 }
 
 function _finalizarSalidaEditorRendicion() {
@@ -7038,6 +7043,8 @@ async function exportarDatos() {
         detalleEntregas: await getTodos('detalleEntregas'),
         imagenesArticulo: await getTodos('imagenesArticulo'),
         personalCompetencia: await getTodos('personalCompetencia'),
+        designacionesPersonal: await getTodos('designacionesPersonal'),
+        listaCorreosDesignaciones: await getTodos('listaCorreosDesignaciones'),
         ubicacionesInventario: await getTodos('ubicacionesInventario'),
         penalidades: await getTodos('penalidades'),
         tiposSancion: await getTodos('tiposSancion'),
@@ -7060,7 +7067,8 @@ async function importarDatos(e) {
     reader.onload = async (event) => {
         try {
             const data = JSON.parse(event.target.result);
-            if (data.categorias || data.circuitos || data.staff || data.competencias || data.gastos) {
+            if (data.categorias || data.circuitos || data.staff || data.competencias || data.gastos ||
+                data.designacionesPersonal || data.listaCorreosDesignaciones) {
                 if (confirm('ATENCIÓN: Se reemplazarán todos los datos actuales de carreras, categorías, circuitos y gastos. Los usuarios no se afectarán. ¿Continuar?')) {
                     await importarTodo(data);
                     alert('Datos importados correctamente.');
@@ -7529,7 +7537,7 @@ async function migrarDatosLocalesAFirebase() {
         btnMigrar.disabled = true;
         btnMigrar.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Migrando...';
 
-        const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'personalCompetencia'];
+        const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'conceptos', 'usuarios', 'personalCompetencia', 'designacionesPersonal', 'listaCorreosDesignaciones'];
         let total = 0;
 
         for (const storeName of stores) {

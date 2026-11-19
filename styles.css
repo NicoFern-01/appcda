@@ -3597,3 +3597,260 @@ input[type="file"]:hover {
     }
 }
 
+/* ==================== DESIGNACIÓN DE PERSONAL ==================== */
+.designaciones-toolbar {
+    display: flex;
+    align-items: end;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin: 0 0 1rem;
+    padding: 1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+}
+
+.designaciones-toolbar .form-group {
+    flex: 1 1 200px;
+    margin: 0;
+}
+
+.designaciones-toolbar input,
+.designaciones-toolbar select,
+.designaciones-email-form input,
+.designaciones-assign-form input,
+.designaciones-assign-form select {
+    min-height: 44px;
+    width: 100%;
+}
+
+.designaciones-month-actions,
+.designacion-card-actions {
+    display: flex;
+    align-items: end;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.designaciones-action-label {
+    align-self: center;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-right: 0.25rem;
+}
+
+.designaciones-mail-panel,
+.designacion-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: var(--card-shadow);
+}
+
+.designaciones-mail-panel {
+    margin-bottom: 1rem;
+}
+
+.designaciones-mail-panel > summary {
+    min-height: 48px;
+    padding: 0.9rem 1rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.designaciones-mail-panel > summary:focus-visible,
+.designacion-card button:focus-visible,
+.designaciones-toolbar button:focus-visible {
+    outline: 3px solid var(--accent-blue);
+    outline-offset: 3px;
+}
+
+.designaciones-mail-content {
+    padding: 0 1rem 1rem;
+}
+
+.designaciones-email-form {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+    align-items: end;
+    gap: 0.75rem;
+}
+
+.designaciones-email-form .form-group {
+    margin: 0;
+}
+
+.designaciones-email-list,
+.designacion-staff-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.designaciones-email-list {
+    display: grid;
+    gap: 0.5rem;
+    margin-top: 0.85rem;
+}
+
+.designaciones-email-item,
+.designacion-staff-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 44px;
+    padding: 0.5rem 0.65rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+}
+
+.designaciones-email-text,
+.designacion-staff-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.designaciones-email-empty,
+.designacion-staff-empty,
+.designaciones-empty {
+    color: var(--text-secondary);
+    padding: 0.75rem 0;
+}
+
+.designaciones-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+    gap: 1rem;
+}
+
+.designacion-card {
+    min-width: 0;
+    padding: 1rem;
+}
+
+.designacion-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.designacion-card-title h2 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 1.15rem;
+}
+
+.designacion-date,
+.designacion-meta {
+    margin: 0.35rem 0 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.designacion-card-actions {
+    align-items: flex-start;
+}
+
+.designacion-card-actions .btn,
+.designaciones-month-actions .btn,
+.designaciones-email-form .btn,
+.designaciones-assign-btn {
+    min-height: 44px;
+}
+
+.designacion-staff-heading {
+    margin: 1rem 0 0.45rem;
+    font-size: 0.95rem;
+}
+
+.designacion-staff-list {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.designacion-staff-function {
+    display: block;
+    margin-top: 0.15rem;
+    color: var(--text-secondary);
+}
+
+.designaciones-remove-btn {
+    min-height: 40px;
+    flex: 0 0 auto;
+}
+
+.designaciones-assign-form {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) auto;
+    align-items: end;
+    gap: 0.65rem;
+    margin-top: 0.85rem;
+    padding-top: 0.85rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.designaciones-assign-form .form-group {
+    min-width: 0;
+    margin: 0;
+}
+
+.designaciones-assign-form label,
+.designaciones-email-form label {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.designaciones-assign-form select,
+.designaciones-assign-form input,
+.designaciones-email-form input {
+    box-sizing: border-box;
+}
+
+.designaciones-write-only[hidden],
+[data-write-only][hidden] {
+    display: none !important;
+}
+
+@media (max-width: 760px) {
+    .designaciones-toolbar {
+        align-items: stretch;
+        padding: 0.75rem;
+    }
+
+    .designaciones-month-actions,
+    .designacion-card-actions {
+        width: 100%;
+    }
+
+    .designaciones-month-actions .btn,
+    .designacion-card-actions .btn {
+        flex: 1 1 100%;
+    }
+
+    .designaciones-email-form,
+    .designaciones-assign-form {
+        grid-template-columns: 1fr;
+    }
+
+    .designaciones-email-form .btn,
+    .designaciones-assign-btn {
+        width: 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .designaciones-mail-panel,
+    .designacion-card,
+    .designacion-card * {
+        scroll-behavior: auto;
+        transition-duration: 0.01ms !important;
+    }
+}
+
