@@ -32,7 +32,8 @@ const DB_NAME = 'ControlAutomovilismoDB';
 // IndexedDB". Al subir a V18 el navegador ejecuta OBLIGATORIAMENTE esta
 // actualización (oldVersion 17 < 18) y el guard con .contains() garantiza la
 // creación física del store /autorizaciones/{id}.
-const DB_VERSION = 20;
+// V21: stores separados para designaciones de staff y destinatarios de correo.
+const DB_VERSION = 21;
 
 let dbInstance = null;
 
@@ -648,6 +649,16 @@ function openDB() {
             // Personal por competencia (costos laborales)
             if (!db.objectStoreNames.contains('personalCompetencia')) {
                 db.createObjectStore('personalCompetencia', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Designaciones del staff por competencia, independientes del módulo de costos.
+            if (!db.objectStoreNames.contains('designacionesPersonal')) {
+                db.createObjectStore('designacionesPersonal', { keyPath: 'id', autoIncrement: true });
+            }
+
+            // Destinatarios persistentes de los resúmenes de designaciones.
+            if (!db.objectStoreNames.contains('listaCorreosDesignaciones')) {
+                db.createObjectStore('listaCorreosDesignaciones', { keyPath: 'id', autoIncrement: true });
             }
 
             // Tabla de Alojamientos
@@ -1583,7 +1594,7 @@ async function sincronizarLocalAFirebase() {
 async function importarTodo(datos) {
     limpiarCacheCompleto(); // limpiar todo el caché antes de importar
     const db = await openDB();
-    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'alojamientos', 'ubicacionesInventario', 'tiposMovimiento', 'penalidades', 'tiposSancion', 'pilotos', 'autorizaciones'];
+    const stores = ['categorias', 'circuitos', 'staff', 'competencias', 'gastos', 'rendiciones', 'detalleGastos', 'adjuntos', 'proveedores', 'campeonatos', 'categoriasInventario', 'subcategoriasInventario', 'talles', 'articulos', 'articuloTalles', 'movimientosInventario', 'entregasInventario', 'detalleEntregas', 'imagenesArticulo', 'personalCompetencia', 'designacionesPersonal', 'listaCorreosDesignaciones', 'alojamientos', 'ubicacionesInventario', 'tiposMovimiento', 'penalidades', 'tiposSancion', 'pilotos', 'autorizaciones'];
     
     for (const storeName of stores) {
         if (datos[storeName]) {

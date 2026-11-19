@@ -12,8 +12,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script type="module" crossorigin src="./assets/index-CfjSSvf-.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-xu3b6NmB.css">
+  <script type="module" crossorigin src="./assets/index-BtGZqKeo.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-CL-Np4FO.css">
 </head>
 <body>
 
@@ -262,6 +262,60 @@
                     <button type="button" class="cal-mes-btn active" data-mes="todos" onclick="filtrarCalendarioPorMes(null)">Todos</button>
                 </div>
                 <div id="calendario-anual-grid"></div>
+            </section>
+
+            <!-- VIEW: DESIGNACIÓN DE PERSONAL -->
+            <section id="view-designaciones-personal" class="view">
+                <header class="designaciones-header">
+                    <div>
+                        <h1 class="page-title">Designación de Personal</h1>
+                        <p class="page-subtitle">Asignaciones de staff por competencia y período</p>
+                    </div>
+                </header>
+
+                <div class="designaciones-toolbar">
+                    <div class="form-group">
+                        <label for="designaciones-mes">Mes / Año</label>
+                        <input id="designaciones-mes" type="month" aria-label="Filtrar designaciones por mes y año">
+                    </div>
+                    <div class="form-group">
+                        <label for="designaciones-competencia">Competencia</label>
+                        <select id="designaciones-competencia" aria-label="Filtrar por competencia">
+                            <option value="todas">Todas las competencias</option>
+                        </select>
+                    </div>
+                    <div class="designaciones-month-actions" data-write-only hidden>
+                        <span class="designaciones-action-label">Enviar Copia Mensual:</span>
+                        <button type="button" class="btn btn-secondary" data-action="mail-month">
+                            <i class="fa-solid fa-envelope"></i> Abrir en Cliente de Correo
+                        </button>
+                        <button type="button" class="btn btn-secondary" data-action="copy-month">
+                            <i class="fa-solid fa-copy"></i> Copiar Resumen Mensual
+                        </button>
+                    </div>
+                </div>
+
+                <details class="designaciones-mail-panel" data-write-only hidden>
+                    <summary><i class="fa-solid fa-address-book"></i> Lista de Correo y Notificaciones</summary>
+                    <div class="designaciones-mail-content">
+                        <form id="designaciones-email-form" class="designaciones-email-form" novalidate>
+                            <div class="form-group">
+                                <label for="designaciones-email">Dirección de email</label>
+                                <input id="designaciones-email" type="email" maxlength="254" autocomplete="email" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="designaciones-email-label">Nombre / etiqueta (opcional)</label>
+                                <input id="designaciones-email-label" type="text" maxlength="80">
+                            </div>
+                            <button type="submit" class="btn"><i class="fa-solid fa-plus"></i> Agregar destinatario</button>
+                        </form>
+                        <ul id="designaciones-email-list" class="designaciones-email-list" aria-live="polite"></ul>
+                    </div>
+                </details>
+
+                <div id="designaciones-list" class="designaciones-list" aria-live="polite">
+                    <p class="designaciones-empty">Cargando competencias...</p>
+                </div>
             </section>
 
             <!-- VIEW: COMPETENCIAS -->
@@ -3226,7 +3280,7 @@
     -->
     <!-- SheetJS (CDN): lectura nativa de archivos .xlsx/.xls sin convertir a HTML -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="db.js?v=mwknkccz"></script>
-    <script src="app.js?v=mwknkccz"></script>
+    <script src="db.js?v=mwnhtmkt"></script>
+    <script src="app.js?v=mwnhtmkt"></script>
 </body>
 </html>
