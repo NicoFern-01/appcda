@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script type="module" crossorigin src="./assets/index-BtGZqKeo.js"></script>
+  <script type="module" crossorigin src="./assets/index-glSay-6U.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/index-CL-Np4FO.css">
 </head>
 <body>
@@ -137,7 +137,7 @@
                             <i class="fa-solid fa-chart-line"></i>
                         </div>
                     </div>
-                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" role="link" tabindex="0" onclick="navegarDesdeDashboard('gastos')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('gastos')" title="Ir a Control de Gastos">
+                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" data-target-view="gastos" role="link" tabindex="0" onclick="navegarDesdeDashboard('gastos')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('gastos')" title="Ir a Control de Gastos">
                         <div class="stat-info">
                             <h3 id="stat-gasto-total-label">Gasto Total Anual</h3>
                             <p id="stat-gasto-total">$0.00</p>
@@ -147,7 +147,7 @@
                             <i class="fa-solid fa-dollar-sign"></i>
                         </div>
                     </div>
-                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" role="link" tabindex="0" onclick="navegarDesdeDashboard('competencias')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('competencias')" title="Ir al Calendario de Competencias">
+                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" data-target-view="competencias" role="link" tabindex="0" onclick="navegarDesdeDashboard('competencias')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('competencias')" title="Ir al Calendario de Competencias">
                         <div class="stat-info">
                             <h3>Competencias</h3>
                             <p id="stat-competencias-count">0</p>
@@ -156,7 +156,7 @@
                             <i class="fa-solid fa-trophy"></i>
                         </div>
                     </div>
-                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" role="link" tabindex="0" onclick="navegarDesdeDashboard('staff')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('staff')" title="Ir al Staff">
+                    <div class="stat-card dashboard-link-card card--elevado card--interactivo card--entrada" data-target-view="staff" role="link" tabindex="0" onclick="navegarDesdeDashboard('staff')" onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('staff')" title="Ir al Staff">
                         <div class="stat-info">
                             <h3>Staff Registrado</h3>
                             <p id="stat-staff-count">0</p>
@@ -325,12 +325,10 @@
                         <h1 class="page-title">Calendario de Competencias</h1>
                         <p class="page-subtitle">Planificación de carreras y categorías asociadas</p>
                     </div>
-                    <div class="editor-only">
-                        <div style="display:flex;gap:0.5rem;align-items:center;">
-                                <button id="btn-toggle-calendario" class="btn btn-secondary" onclick="toggleCalendarioView()"><i class="fa-solid fa-list"></i> Ver lista</button>
-                                <button id="btn-toggle-filtros" class="btn btn-secondary" onclick="toggleCalendarioFilters()" title="Mostrar/ocultar filtros"><i class="fa-solid fa-filter"></i> Filtros</button>
-                            <button class="btn" onclick="openModalCompetencia()"><i class="fa-solid fa-plus"></i> Agregar Carrera</button>
-                        </div>
+                    <div style="display:flex;gap:0.5rem;align-items:center;">
+                        <button id="btn-toggle-calendario" class="btn btn-secondary" onclick="toggleCalendarioView()"><i class="fa-solid fa-list"></i> Ver lista</button>
+                        <button id="btn-toggle-filtros" class="btn btn-secondary" onclick="toggleCalendarioFilters()" title="Mostrar/ocultar filtros"><i class="fa-solid fa-filter"></i> Filtros</button>
+                        <button class="btn editor-only" data-permission-actions="crear" onclick="openModalCompetencia()"><i class="fa-solid fa-plus"></i> Agregar Carrera</button>
                     </div>
                 </header>
 
@@ -371,7 +369,7 @@
                         <h1 class="page-title">Control de Gastos</h1>
                         <p class="page-subtitle">Detalle de costos asociados por carrera y categoría</p>
                     </div>
-                    <div class="editor-only">
+                    <div class="editor-only" data-permission-actions="crear">
                         <button class="btn" onclick="openModalGasto()"><i class="fa-solid fa-plus"></i> Cargar Gasto</button>
                     </div>
                 </header>
@@ -404,7 +402,7 @@
                                     <th>Costo Personal</th>
                                     <th>Total</th>
                                     <th>Monto a Facturar</th>
-                                    <th class="editor-only" style="text-align: right;">Acciones</th>
+                                    <th style="text-align: right;">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody id="gastos-table-body"></tbody>
@@ -420,7 +418,7 @@
                         <h1 class="page-title">Carga Detallada de Gastos</h1>
                         <p class="page-subtitle">Rendición detallada con desglose de impuestos y adjuntos</p>
                     </div>
-                    <div class="editor-only" style="display:flex;gap:0.5rem;align-items:center;">
+                    <div class="editor-only" data-permission-actions="crear" style="display:flex;gap:0.5rem;align-items:center;">
                         <button class="btn" onclick="nuevaRendicion()"><i class="fa-solid fa-plus"></i> Nueva Rendición</button>
                     </div>
                 </header>
@@ -451,7 +449,7 @@
                                     <th>Gastos</th>
                                     <th>Total</th>
                                     <th>Estado</th>
-                                    <th class="editor-only" style="text-align:right;">Acciones</th>
+                                    <th style="text-align:right;">Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody id="rendiciones-table-body"></tbody>
@@ -591,9 +589,9 @@
                         <h1 class="page-title">Personal por Competencia</h1>
                         <p class="page-subtitle">Costos laborales de personal asociados a una competencia</p>
                     </div>
-                    <div class="editor-only" style="display:flex;gap:0.5rem;">
-                        <button class="btn" onclick="exportarPersonalCompetenciaExcel()"><i class="fa-solid fa-file-excel"></i> Descargar Excel</button>
-                        <button class="btn" onclick="guardarPersonalCompetencia()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
+                    <div style="display:flex;gap:0.5rem;">
+                        <button class="btn btn-secondary" onclick="exportarPersonalCompetenciaExcel()"><i class="fa-solid fa-file-excel"></i> Descargar Excel</button>
+                        <button class="btn editor-only" data-permission-actions="editar" onclick="guardarPersonalCompetencia()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
                     </div>
                 </header>
 
@@ -652,8 +650,8 @@
                         <h1 class="page-title">Dashboard de Inventario</h1>
                         <p class="page-subtitle">Monitoreo general de artículos, stock y movimientos</p>
                     </div>
-                    <div class="editor-only inv-quick-actions">
-                        <button class="btn" onclick="openModalArticulo()"><i class="fa-solid fa-plus"></i> Nuevo Artículo</button>
+                    <div class="editor-only inv-quick-actions" data-permission-actions="crear">
+                        <button class="btn editor-only" data-permission-actions="crear" onclick="openModalArticulo()"><i class="fa-solid fa-plus"></i> Nuevo Artículo</button>
                         <button class="btn btn-secondary" onclick="openModalMovimiento()"><i class="fa-solid fa-arrows-spin"></i> Registrar Movimiento</button>
                     </div>
                 </header>
@@ -733,8 +731,8 @@
                         <h1 class="page-title">Artículos del Inventario</h1>
                         <p class="page-subtitle">Administración completa de todos los artículos</p>
                     </div>
-                    <div class="editor-only" style="display:flex;gap:0.5rem;align-items:center;">
-                        <button class="btn" onclick="openModalArticulo()"><i class="fa-solid fa-plus"></i> Nuevo Artículo</button>
+                    <div style="display:flex;gap:0.5rem;align-items:center;">
+                        <button class="btn editor-only" data-permission-actions="crear" onclick="openModalArticulo()"><i class="fa-solid fa-plus"></i> Nuevo Artículo</button>
                         <button class="btn btn-secondary" onclick="exportarArticulosExcel()"><i class="fa-solid fa-file-excel"></i> Exportar</button>
                     </div>
                 </header>
@@ -777,7 +775,7 @@
                                     <th>Stock Total</th>
                                     <th>Estado</th>
                                     <th>UBICACIÓN</th>
-                                    <th class="editor-only" style="text-align:right;">Acciones</th>
+                                    <th style="text-align:right;">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody id="articulos-table-body"></tbody>
@@ -793,7 +791,7 @@
                         <h1 class="page-title">Movimientos de Inventario</h1>
                         <p class="page-subtitle">Historial completo de ingresos, egresos y ajustes</p>
                     </div>
-                    <div class="editor-only">
+                    <div class="editor-only" data-permission-actions="crear">
                         <button class="btn" onclick="openModalMovimiento()"><i class="fa-solid fa-plus"></i> Nuevo Movimiento</button>
                     </div>
                 </header>
@@ -833,7 +831,7 @@
                         <h1 class="page-title">Categorías de Inventario</h1>
                         <p class="page-subtitle">Administración de categorías, subcategorías y talles</p>
                     </div>
-                    <div class="editor-only" style="display:flex;gap:0.5rem;align-items:center;">
+                    <div class="editor-only" data-permission-actions="crear" style="display:flex;gap:0.5rem;align-items:center;">
                         <button class="btn" onclick="openModalCategoriaInventario()"><i class="fa-solid fa-plus"></i> Nueva Categoría</button>
                         <button class="btn btn-secondary" onclick="openModalTalle()"><i class="fa-solid fa-plus"></i> Nuevo Talle</button>
                     </div>
@@ -882,7 +880,7 @@
                 <div class="table-card">
                     <div class="table-header-tools">
                         <h3>Subcategorías</h3>
-                        <button class="btn btn-secondary editor-only" onclick="openModalSubcategoria()"><i class="fa-solid fa-plus"></i> Nueva Subcategoría</button>
+                        <button class="btn btn-secondary editor-only" data-permission-actions="crear" onclick="openModalSubcategoria()"><i class="fa-solid fa-plus"></i> Nueva Subcategoría</button>
                     </div>
                     <div class="table-responsive">
                         <table>
@@ -906,7 +904,7 @@
                         <h1 class="page-title">Entregas de Indumentaria</h1>
                         <p class="page-subtitle">Registro de entregas de prendas al personal</p>
                     </div>
-                    <div class="editor-only">
+                    <div class="editor-only" data-permission-actions="crear">
                         <button class="btn" onclick="openModalEntrega()"><i class="fa-solid fa-plus"></i> Nueva Entrega</button>
                     </div>
                 </header>
@@ -943,7 +941,7 @@
                     <div style="display:flex;gap:0.5rem;align-items:center;">
                         <button class="btn btn-secondary report-print-btn" onclick="imprimirListadoPersonal()"><i class="fa-solid fa-print"></i> Imprimir Listado</button>
                         <button class="btn btn-secondary report-print-btn" onclick="exportarPDFListadoPersonal()"><i class="fa-solid fa-file-pdf"></i> Guardar PDF</button>
-                        <div class="editor-only">
+                        <div class="editor-only" data-permission-actions="crear">
                             <button class="btn" onclick="openModalStaff()"><i class="fa-solid fa-plus"></i> Agregar Personal</button>
                         </div>
                     </div>
@@ -1081,7 +1079,7 @@
                 <!-- FILA 1: KPIs (reutiliza .stats-grid / .stat-card del Dashboard General) -->
                 <div class="stats-grid">
                     <!-- ÍTEM 1: Total de pilotos (scorecard) -->
-                    <div class="stat-card dashboard-link-card" role="link" tabindex="0"
+                    <div class="stat-card dashboard-link-card" data-target-view="listado-pilotos" role="link" tabindex="0"
                          onclick="navegarDesdeDashboard('listado-pilotos')"
                          onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('listado-pilotos')"
                          title="Ir al Listado de Pilotos" aria-controls="pilotos-categorias-card">
@@ -1098,7 +1096,7 @@
                     </div>
 
                     <!-- Acompañante: sanciones vigentes (contexto del panel de sancionados) -->
-                    <div class="stat-card dashboard-link-card" role="link" tabindex="0"
+                    <div class="stat-card dashboard-link-card" data-target-view="penalidades" role="link" tabindex="0"
                          onclick="navegarDesdeDashboard('penalidades')"
                          onkeydown="if(event.key==='Enter' || event.key===' ') navegarDesdeDashboard('penalidades')"
                          title="Ir a Penalidades" aria-controls="pilotos-sancionados-card">
@@ -1202,7 +1200,7 @@
                     </div>
                 </header>
                 <!-- Formulario de alta/edición manual (id = clave primaria /pilotos/{id}) -->
-                <form id="form-piloto" class="form-card editor-only" onsubmit="guardarPilotoOEdicion(event)">
+                <form id="form-piloto" class="form-card editor-only" data-permission-actions="crear,editar" onsubmit="guardarPilotoOEdicion(event)">
                     <input type="hidden" id="piloto-id">
                     <div class="form-title"><i class="fa-solid fa-id-card"></i> Nuevo Piloto</div>
                     <div class="form-grid">
@@ -1291,7 +1289,7 @@
                 </header>
 
                 <!-- Planilla de carga (solo usuarios con permiso de edición) -->
-                <form id="form-penalidad" class="form-card editor-only" onsubmit="guardarPenalidadForm(event)">
+                <form id="form-penalidad" class="form-card editor-only" data-permission-actions="crear" onsubmit="guardarPenalidadForm(event)">
                     <div class="form-title"><i class="fa-solid fa-gavel"></i> Nueva Penalidad</div>
                     <div class="form-grid">
                         <div class="form-group">
@@ -1387,7 +1385,7 @@
                 </header>
 
                 <!-- Planilla de carga (solo usuarios con permiso de edición) -->
-                <form id="form-autorizacion" class="form-card editor-only" onsubmit="guardarAutorizacionForm(event)">
+                <form id="form-autorizacion" class="form-card editor-only" data-permission-actions="crear" onsubmit="guardarAutorizacionForm(event)">
                     <div class="form-title"><i class="fa-solid fa-file-signature"></i> Nueva Autorización</div>
                     <div class="form-grid">
                         <div class="form-group">
@@ -1402,7 +1400,7 @@
                             <label for="autorizacion-categoria">Categoría *</label>
                             <div class="input-con-gear">
                                 <input type="text" id="autorizacion-categoria" placeholder="Ej: TC2000" autocomplete="off" required list="categorias-autorizacion">
-                                <button type="button" class="action-btn gear-btn" onclick="abrirModalCategoriasAuth()" title="Gestionar categorías"><i class="fa-solid fa-gear"></i></button>
+                                <button type="button" class="action-btn gear-btn editor-only" data-permission-actions="crear,editar,eliminar" onclick="abrirModalCategoriasAuth()" title="Gestionar categorías"><i class="fa-solid fa-gear"></i></button>
                             </div>
                             <datalist id="categorias-autorizacion"></datalist>
                         </div>
@@ -1449,11 +1447,11 @@
                     <div>
                         <h1 class="page-title">Inscripciones de Karting</h1>
                         <p class="page-subtitle">Gestión de pilotos y concurrentes por categoría</p>
-                        <div class="editor-only" style="display:flex;gap:0.5rem;align-items:center;">
+                        <div class="editor-only" data-permission-actions="crear" style="display:flex;gap:0.5rem;align-items:center;">
                             <button class="btn" onclick="openModalInscripcion()"><i class="fa-solid fa-plus"></i> Nueva Inscripción</button>
                             <button class="btn btn-secondary" style="display:none" onclick="exportarPlanillaInscripciones()"><i class="fa-solid fa-file-excel"></i> Exportar</button>
                         </div>
-                        <form id="form-inscripcion" class="form-card editor-only" onsubmit="guardarInscripcion(event)">
+                        <form id="form-inscripcion" class="form-card editor-only" data-permission-actions="crear,editar" onsubmit="guardarInscripcion(event)">
                             <div class="form-title"><i class="fa-solid fa-id-card"></i> Nueva Inscripción</div>
                             <div class="form-grid">
                                 <div class="form-group">
@@ -1558,7 +1556,7 @@
                         <h1 class="page-title">Alojamiento</h1>
                         <p class="page-subtitle">Gestión de hoteles, hosterías y alojamientos para competencias</p>
                     </div>
-                    <div class="editor-only">
+                    <div class="editor-only" data-permission-actions="crear">
                         <button class="btn" onclick="openModalAlojamiento()"><i class="fa-solid fa-plus"></i> Agregar Alojamiento</button>
                     </div>
                 </header>
@@ -1605,7 +1603,7 @@
                     <div class="table-card">
                         <div class="table-header-tools">
                             <h3>Categorías</h3>
-                            <button class="btn btn-secondary editor-only" onclick="openModalCategoria()"><i class="fa-solid fa-plus"></i> Nueva</button>
+                            <button class="btn btn-secondary editor-only" data-permission-actions="crear" onclick="openModalCategoria()"><i class="fa-solid fa-plus"></i> Nueva</button>
                         </div>
                         <div class="table-responsive">
                             <table>
@@ -1624,7 +1622,7 @@
                     <div class="table-card">
                         <div class="table-header-tools">
                             <h3>Autodromos / Kartodromos</h3>
-                            <button class="btn btn-secondary editor-only" onclick="openModalCircuito()"><i class="fa-solid fa-plus"></i> Nuevo</button>
+                            <button class="btn btn-secondary editor-only" data-permission-actions="crear" onclick="openModalCircuito()"><i class="fa-solid fa-plus"></i> Nuevo</button>
                         </div>
                         <div class="table-responsive">
                             <table>
@@ -3280,7 +3278,7 @@
     -->
     <!-- SheetJS (CDN): lectura nativa de archivos .xlsx/.xls sin convertir a HTML -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="db.js?v=mwnhtmkt"></script>
-    <script src="app.js?v=mwnhtmkt"></script>
+    <script src="db.js?v=mwp5gdrf"></script>
+    <script src="app.js?v=mwp5gdrf"></script>
 </body>
 </html>

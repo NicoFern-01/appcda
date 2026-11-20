@@ -428,10 +428,10 @@ function aplicarControlDeAcceso(rol) {
     }
 }
 
-function puedeEditar() {
+function puedeEditar(accion = 'editar', modulo) {
     const v = typeof window !== 'undefined' ? window.__CDA_MODULES__?.vistas : null;
-    if (v && typeof v.puedeEditar === 'function') return v.puedeEditar();
-    return currentUser && (currentUser.rol === 'admin' || currentUser.rol === 'editor');
+    if (v && typeof v.puedeEditar === 'function') return v.puedeEditar(accion, modulo);
+    return false;
 }
 
 function esAdmin() {
@@ -1256,12 +1256,12 @@ async function listarCompetencias() {
             const li = document.createElement('li');
             li.className = 'competition-list-item';
             const codigoHtml = esAdmin() ? comp.codigo : `<span class="blur-readonly" style="display:inline-block;font-family:monospace;font-size:0.85rem;">${comp.codigo || 'SIN CÓDIGO'}</span>`;
-            const puedeEditarComp = puedeEditar() || esSupervisor();
+            const puedeEditarComp = puedeEditar('editar') || puedeEditar('eliminar');
             const accionesHtml = puedeEditarComp ? `
                 <div class="list-actions">
                     <button class="action-btn" onclick="verCompetencia(${comp.id})" title="Ver"><i class="fa-solid fa-eye"></i></button>
-                    <button class="action-btn" onclick="editarCompetencia(${comp.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
-                    <button class="action-btn delete" onclick="eliminarCompetencia(${comp.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                    ${puedeEditar('editar') ? `<button class="action-btn" onclick="editarCompetencia(${comp.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>` : ''}
+                    ${puedeEditar('eliminar') ? `<button class="action-btn delete" onclick="eliminarCompetencia(${comp.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>` : ''}
                 </div>
             ` : `
                 <div class="list-actions">
@@ -1316,16 +1316,16 @@ async function listarCompetencias() {
         }, 0);
         const montoFacturarComp = montoFacturarSinples + montoFacturarDetallado;
 
-        const puedeEditarComp = puedeEditar() || esSupervisor();
+        const puedeEditarComp = puedeEditar('editar') || puedeEditar('eliminar');
         const viewBtn = `<button class="action-btn" onclick="verCompetencia(${comp.id})" title="Ver detalle"><i class="fa-solid fa-eye"></i></button>`;
-        const editActions = puedeEditarComp ? `
-            <button class="action-btn" onclick="editarCompetencia(${comp.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
-            <button class="action-btn delete" onclick="eliminarCompetencia(${comp.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
-        ` : '';
+        const editActions = `
+            ${puedeEditar('editar') ? `<button class="action-btn" onclick="editarCompetencia(${comp.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>` : ''}
+            ${puedeEditar('eliminar') ? `<button class="action-btn delete" onclick="eliminarCompetencia(${comp.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>` : ''}
+        `;
         const editorActions = viewBtn + editActions;
 
-        const puedeEditarTotal = puedeEditar() || esSupervisor();
-        const puedeEditarMontoFacturar = puedeEditar() || esSupervisor();
+        const puedeEditarTotal = puedeEditar('editar');
+        const puedeEditarMontoFacturar = puedeEditar('editar');
 
         const docLink = comp.documentosUrl ? `
             <a href="${comp.documentosUrl}" target="_blank" class="action-btn" title="Ver OneDrive" style="color: var(--accent); display: inline-flex; align-items: center; gap: 6px;">
@@ -1454,7 +1454,7 @@ async function verCompetencia(id) {
     const montoFacturarDisplay = tieneMontoFacturarManual ? Number(comp.montoFacturarManual) : montoFacturarTotal;
     
     let montoFacturarStatCard;
-    if (puedeEditar() || esSupervisor()) {
+    if (puedeEditar('editar')) {
         montoFacturarStatCard = `
             <div class="stat-card" style="padding:1rem;cursor:pointer;" onclick="editarMontoFacturarInplace(${comp.id})" title="Clic para editar">
                 <div class="stat-info"><h3 style="font-size:0.85rem;">Monto a Facturar</h3>
@@ -1474,7 +1474,7 @@ async function verCompetencia(id) {
 
     // Total Gastos en modal Ver (editable si tiene permisos)
     let totalGastosStatCard;
-    if (puedeEditar() || esSupervisor()) {
+    if (puedeEditar('editar')) {
         totalGastosStatCard = `
             <div class="stat-card" style="padding:1rem;cursor:pointer;" onclick="editarTotalCompetenciaInplace(${comp.id})" title="Clic para editar">
                 <div class="stat-info"><h3 style="font-size:0.85rem;">Total Gastos</h3>
@@ -1537,7 +1537,7 @@ async function verCompetencia(id) {
 }
 
 async function openModalCompetencia() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     await actualizarSelectoresFormularios();
     document.getElementById('form-competencia').reset();
     document.getElementById('competencia-id').value = '';
@@ -1557,7 +1557,7 @@ async function openModalCompetencia() {
 }
 
 async function editarCompetencia(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const comp = await obtenerPorId('competencias', id);
     if (!comp) return;
     // Cargar los selectores con las listas más recientes de categorías activas y staff activo
@@ -1593,8 +1593,8 @@ async function editarCompetencia(id) {
 
 async function guardarCompetenciaForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
     const id = document.getElementById('competencia-id').value;
+    if (!puedeEditar(id ? 'editar' : 'crear')) return;
     const categoriasCheckboxes = document.querySelectorAll('#competencia-categorias-checkboxes input:checked');
     const categoriasIds = Array.from(categoriasCheckboxes).map(cb => Number(cb.value));
     if (categoriasIds.length === 0) { mostrarToast('Seleccioná al menos una categoría.', 'error'); return; }
@@ -1639,7 +1639,7 @@ async function guardarCompetenciaForm(e) {
 }
 
 async function eliminarCompetencia(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     if (!confirm('¿Eliminar esta competencia y sus gastos asociados?')) return;
     await eliminar('competencias', id);
     const gastos = await getTodos('gastos');
@@ -1663,7 +1663,7 @@ async function limpiarCompetenciaDeStaff(competenciaId) {
 
 // ==================== EDICIÓN INLINE DEL MONTO A FACTURAR ====================
 async function editarMontoFacturarInplace(compId) {
-    if (!puedeEditar() && !esSupervisor()) return;
+    if (!puedeEditar('editar')) return;
     
     const comp = await obtenerPorId('competencias', compId);
     if (!comp) return;
@@ -1714,7 +1714,7 @@ async function editarMontoFacturarInplace(compId) {
 
 // ==================== EDICIÓN INLINE DEL TOTAL DE COMPETENCIA ====================
 async function editarTotalCompetenciaInplace(compId) {
-    if (!puedeEditar() && !esSupervisor()) return;
+    if (!puedeEditar('editar')) return;
 
     const comp = await obtenerPorId('competencias', compId);
     if (!comp) return;
@@ -1841,7 +1841,7 @@ async function listarGastos() {
     }).sort((a, b) => new Date(b.fechaInicio) - new Date(a.fechaInicio));
 
     if (competenciasFiltradas.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${puedeEditar() ? 8 : 7}" style="text-align:center;color:var(--text-secondary);">No se encontraron competencias.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${puedeEditar('editar') || puedeEditar('eliminar') ? 8 : 7}" style="text-align:center;color:var(--text-secondary);">No se encontraron competencias.</td></tr>`;
         return;
     }
 
@@ -1863,11 +1863,11 @@ async function listarGastos() {
         }, 0);
         const montoFacturarTotal = montoFacturarSinples + montoFacturarDetallado;
 
-        const acciones = puedeEditar() ? `
+        const acciones = puedeEditar('editar') || puedeEditar('eliminar') ? `
             <td style="text-align:right;white-space:nowrap;">
                 <button class="action-btn" onclick="verCompetencia(${comp.id})" title="Ver"><i class="fa-solid fa-eye"></i></button>
-                <button class="action-btn" onclick="editarGastoRapido(${comp.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
-                <button class="action-btn delete" onclick="eliminarCompetencia(${comp.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                ${puedeEditar('editar') ? `<button class="action-btn" onclick="editarGastoRapido(${comp.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>` : ''}
+                ${puedeEditar('eliminar') ? `<button class="action-btn delete" onclick="eliminarCompetencia(${comp.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>` : ''}
             </td>
         ` : `
             <td style="text-align:right;white-space:nowrap;">
@@ -1897,7 +1897,7 @@ async function listarGastos() {
 // Abre el formulario de gastos simples desde la vista Control de Gastos.
 // El botón del HTML mantiene este nombre como punto de entrada público.
 async function openModalGasto() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
 
     const form = document.getElementById('form-gasto');
     if (form) form.reset();
@@ -1990,7 +1990,7 @@ async function cerrarModalGastoExtraordinario() {
 
 // Guarda un nuevo Gasto Extraordinario vinculado a la competencia seleccionada
 async function guardarGastoExtraordinarioNuevo() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
 
     const modal = document.getElementById('modal-agregar-gasto-extraordinario');
     const compId = modal.dataset.compId;
@@ -2035,8 +2035,8 @@ async function guardarGastoExtraordinarioNuevo() {
 
 async function guardarGastoForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
     const id = document.getElementById('gasto-id').value;
+    if (!puedeEditar(id ? 'editar' : 'crear')) return;
     const monto = Number(document.getElementById('gasto-monto').value);
     const categoriaSel = document.getElementById('gasto-categoria');
     const categoriaId = categoriaSel && categoriaSel.value ? categoriaSel.value : 'general';
@@ -2066,7 +2066,7 @@ function cerrarResumenCompetencia() {
 // Abre el modal independiente para editar el Gasto Extraordinario y el Monto a Facturar
 // de una competencia seleccionada en la tabla 'Control de Gastos'.
 async function editarGastoRapido(compId) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
 
     const comp = await obtenerPorId('competencias', compId);
     if (!comp) return;
@@ -2111,7 +2111,7 @@ async function editarGastoRapido(compId) {
 
 // Guarda los cambios del modal de edición rápida
 async function guardarEdicionGastoRapido() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
 
     const modal = document.getElementById('modal-editar-gasto-rapido');
     const compId = modal.dataset.compId;
@@ -2212,15 +2212,15 @@ async function listarStaff() {
     ));
 
     if (filtrado.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${puedeEditar() ? 9 : 8}" style="text-align:center;color:var(--text-secondary);">No hay personal registrado.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${puedeEditar('editar') || puedeEditar('eliminar') ? 9 : 8}" style="text-align:center;color:var(--text-secondary);">No hay personal registrado.</td></tr>`;
         return;
     }
 
     filtrado.forEach(s => {
-        const acciones = puedeEditar() ? `
+        const acciones = puedeEditar('editar') || puedeEditar('eliminar') ? `
             <td style="text-align:right;">
-                <button class="action-btn" onclick="editarStaff(${s.id})"><i class="fa-solid fa-pen-to-square"></i></button>
-                <button class="action-btn delete" onclick="eliminarStaff(${s.id})"><i class="fa-solid fa-trash"></i></button>
+                ${puedeEditar('editar') ? `<button class="action-btn" onclick="editarStaff(${s.id})"><i class="fa-solid fa-pen-to-square"></i></button>` : ''}
+                ${puedeEditar('eliminar') ? `<button class="action-btn delete" onclick="eliminarStaff(${s.id})"><i class="fa-solid fa-trash"></i></button>` : ''}
             </td>
         ` : '';
         const tr = document.createElement('tr');
@@ -2240,7 +2240,7 @@ async function listarStaff() {
 }
 
 async function openModalStaff() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     await actualizarSelectoresFormularios();
     document.getElementById('form-staff').reset();
     document.getElementById('staff-id').value = '';
@@ -2254,7 +2254,7 @@ async function openModalStaff() {
 }
 
 async function editarStaff(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const s = await obtenerPorId('staff', id);
     if (!s) return;
     await actualizarSelectoresFormularios();
@@ -2274,8 +2274,8 @@ async function editarStaff(id) {
 
 async function guardarStaffForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
     const id = document.getElementById('staff-id').value;
+    if (!puedeEditar(id ? 'editar' : 'crear')) return;
     const s = {
         nombre: document.getElementById('staff-nombre').value,
         apellido: document.getElementById('staff-apellido').value,
@@ -2296,7 +2296,7 @@ async function guardarStaffForm(e) {
 }
 
 async function eliminarStaff(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     // Modal de confirmación propio de la app (hereda el CSS y la paleta del
     // sistema) en lugar del confirm() nativo del navegador.
     // Nombre legible de la persona para que la alerta no sea genérica
@@ -2841,7 +2841,7 @@ async function guardarPilotoOEdicion(e) {
 
 async function guardarPilotoForm(e) {
     if (e) e.preventDefault();
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     const nombre = (document.getElementById('piloto-nombre')?.value || '').trim().toUpperCase();
     const apellido = (document.getElementById('piloto-apellido')?.value || '').trim().toUpperCase();
     const dni = String(document.getElementById('piloto-dni')?.value || '').replace(/\D/g, '');
@@ -3096,9 +3096,9 @@ async function listarPilotos() {
 function renderPilotoPagina() {
     const tbody = document.getElementById('pilotos-table-body');
     if (!tbody) return;
-    const esAdmin = currentUser && currentUser.rol === 'admin';
-    const puedeEditarVista = puedeEditar();
-    const cols = puedeEditarVista ? 7 : 6;
+    const puedeEditarVista = puedeEditar('editar');
+    const puedeEliminarVista = puedeEditar('eliminar');
+    const cols = puedeEditarVista || puedeEliminarVista ? 7 : 6;
     const corte = pilotosCache.slice((paginaActual - 1) * registrosPorPagina, paginaActual * registrosPorPagina);
 
     if (corte.length === 0) {
@@ -3116,12 +3116,10 @@ function renderPilotoPagina() {
         const catTxt = escapeHtml(p.categoria || '-');
         const importeTxt = formatearImporteARS(p.importe);
 
-        // Botón Editar: solo Admin
-        const btnEditar = esAdmin
+        const btnEditar = puedeEditarVista
             ? `<button class="action-btn" onclick="editarPiloto('${idTxt}')" title="Editar piloto"><i class="fa-solid fa-pen-to-square"></i></button>`
             : '';
-        // Botón Eliminar: solo si puedeEditar (admin o editor)
-        const btnEliminar = puedeEditarVista
+        const btnEliminar = puedeEliminarVista
             ? `<button class="action-btn delete" onclick="eliminarPiloto('${idTxt}')" title="Eliminar piloto"><i class="fa-solid fa-trash"></i></button>`
             : '';
         const accionesHtml = btnEditar || btnEliminar
@@ -3174,7 +3172,7 @@ function pilotoBuscarDebounced() {
 
 /** Baja de piloto (local + Firestore, vía persistencia genérica). */
 async function eliminarPiloto(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     const clave = String(id || '');
     if (!clave) return;
     let nombrePiloto = 'este piloto';
@@ -3197,7 +3195,7 @@ async function eliminarPiloto(id) {
 
 /** Abre modal de edición de piloto (solo Admin). */
 async function editarPiloto(id) {
-    if (!esAdminUsuario()) return;
+    if (!puedeEditar('editar')) return;
     const piloto = await obtenerPorId('pilotos', id);
     if (!piloto) {
         mostrarToast('No se encontró el piloto.', 'error');
@@ -3225,7 +3223,7 @@ async function editarPiloto(id) {
 
 /** Guarda cambios de edición de piloto (solo Admin). */
 async function guardarEdicionPiloto(id) {
-    if (!esAdminUsuario()) return;
+    if (!puedeEditar('editar')) return;
     const nombre = (document.getElementById('piloto-nombre')?.value || '').trim().toUpperCase();
     const apellido = (document.getElementById('piloto-apellido')?.value || '').trim().toUpperCase();
     const dni = String(document.getElementById('piloto-dni')?.value || '').replace(/\D/g, '');
@@ -4136,7 +4134,7 @@ async function auditarPiloto() {
 // exigir que el admin suba el archivo a mano.
 /** Dispara el selector de archivo oculto del padrón. */
 function dispararImportarPadron() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     document.getElementById('piloto-import-file')?.click();
 }
 
@@ -4292,7 +4290,7 @@ function parsearFilaPadron(celdas) {
 
 /** Lee el archivo del padrón (FileReader UTF-8) y lo importa por lotes. */
 async function importarPadronPilotos(event) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     const input = (event && event.target) || document.getElementById('piloto-import-file');
     const archivo = input && input.files ? input.files[0] : null;
     if (!archivo) return;
@@ -4659,7 +4657,7 @@ async function eliminarTipoSancion(id, label) {
 /** Guarda la penalidad + sus PDFs y refresca el listado. */
 async function guardarPenalidadForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
 
     const nombre = document.getElementById('penalidad-nombre').value.trim();
     const apellido = document.getElementById('penalidad-apellido').value.trim();
@@ -4790,7 +4788,7 @@ function abrirPdfPenalidad(id, indice) {
 
 /** Elimina una penalidad y sus PDFs, con el modal de confirmación de la app. */
 async function eliminarPenalidad(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     const penalidad = await obtenerPorId('penalidades', id);
     const etiqueta = penalidad
         ? `${penalidad.nombre || ''} ${penalidad.apellido || ''}`.trim()
@@ -4818,7 +4816,7 @@ async function eliminarPenalidad(id) {
  * documentación, o corregir cualquier campo). Precarga el registro seleccionado.
  */
 async function editarPenalidad(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const p = await obtenerPorId('penalidades', Number(id));
     if (!p) { mostrarToast('La penalidad seleccionada no existe.', 'error'); return; }
 
@@ -4851,7 +4849,7 @@ async function editarPenalidad(id) {
  * id original; solo sobrescribe los datos editados (incluido el enlace).
  */
 async function guardarEdicionPenalidad() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const modal = document.getElementById('modal-editar-penalidad');
     const id = Number(modal.dataset.penalidadId);
     if (!id) { mostrarToast('No se pudo identificar la penalidad a editar.', 'error'); return; }
@@ -4953,7 +4951,7 @@ async function poblarCategoriasAutorizacion() {
 /** Guarda la autorización (alta manual) y refresca el listado. */
 async function guardarAutorizacionForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
 
     const nombre = document.getElementById('autorizacion-nombre').value.trim();
     const apellido = document.getElementById('autorizacion-apellido').value.trim();
@@ -5093,7 +5091,7 @@ function autorizacionBuscarDebounced() {
 
 /** Elimina una autorización, con el modal de confirmación de la app. */
 async function eliminarAutorizacion(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     const autorizacion = await obtenerPorId('autorizaciones', id);
     const etiqueta = autorizacion
         ? `${autorizacion.nombre || ''} ${autorizacion.apellido || ''}`.trim()
@@ -5118,7 +5116,7 @@ async function eliminarAutorizacion(id) {
  * corregir nombre/apellido/categoría). Precarga el registro seleccionado.
  */
 async function editarAutorizacion(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const a = await obtenerPorId('autorizaciones', Number(id));
     if (!a) { mostrarToast('La autorización seleccionada no existe.', 'error'); return; }
 
@@ -5144,7 +5142,7 @@ async function editarAutorizacion(id) {
  * id original; solo sobrescribe los datos editados (incluido el enlace).
  */
 async function guardarEdicionAutorizacion() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const modal = document.getElementById('modal-editar-autorizacion');
     const id = Number(modal.dataset.autorizacionId);
     if (!id) { mostrarToast('No se pudo identificar la autorización a editar.', 'error'); return; }
@@ -5204,7 +5202,7 @@ const AUTORIZACIONES_BATCH_MAX = 400;
 
 /** Dispara el selector de archivo oculto de autorizaciones. */
 function dispararImportarAutorizaciones() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     document.getElementById('autorizacion-import-file')?.click();
 }
 
@@ -5270,7 +5268,7 @@ function extraerRegistrosAutorizacion(filas) {
 
 /** Lee el archivo elegido y lo importa por lotes (con feedback en el botón). */
 async function importarAutorizacionesPilotos(event) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     const input = (event && event.target) || document.getElementById('autorizacion-import-file');
     const archivo = input && input.files ? input.files[0] : null;
     if (!archivo) return;
@@ -5362,7 +5360,7 @@ let categoriaAuthEditandoId = null;
 
 /** Abre el sub-modal de gestión de categorías (solo usuarios con permiso de edición). */
 async function abrirModalCategoriasAuth() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear') && !puedeEditar('editar') && !puedeEditar('eliminar')) return;
     cancelarEdicionCategoriaAuth();
     await renderizarListaCategoriasAuth();
     openModal('subModalCategoriasAuth');
@@ -5394,23 +5392,28 @@ async function renderizarListaCategoriasAuth() {
         const btns = document.createElement('span');
         btns.style.cssText = 'display:flex;align-items:center;gap:0.3rem;';
 
-        const btnEditar = document.createElement('button');
-        btnEditar.type = 'button';
-        btnEditar.className = 'action-btn';
-        btnEditar.title = 'Editar categoría';
-        btnEditar.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
-        btnEditar.onclick = () => editarCategoriaAuth(c.id);
-        btns.appendChild(btnEditar);
+        if (puedeEditar('editar')) {
+            const btnEditar = document.createElement('button');
+            btnEditar.type = 'button';
+            btnEditar.className = 'action-btn';
+            btnEditar.title = 'Editar categoría';
+            btnEditar.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
+            btnEditar.onclick = () => editarCategoriaAuth(c.id);
+            btns.appendChild(btnEditar);
+        }
 
-        const btnEliminar = document.createElement('button');
-        btnEliminar.type = 'button';
-        btnEliminar.className = 'action-btn';
-        btnEliminar.title = 'Eliminar categoría';
-        btnEliminar.innerHTML = '<i class="fa-solid fa-trash"></i>';
-        btnEliminar.onclick = () => eliminarCategoriaAuth(c.id, c.nombre || '');
-        btns.appendChild(btnEliminar);
+        if (puedeEditar('eliminar')) {
+            const btnEliminar = document.createElement('button');
+            btnEliminar.type = 'button';
+            btnEliminar.className = 'action-btn';
+            btnEliminar.title = 'Eliminar categoría';
+            btnEliminar.innerHTML = '<i class="fa-solid fa-trash"></i>';
+            btnEliminar.onclick = () => eliminarCategoriaAuth(c.id, c.nombre || '');
+            btns.appendChild(btnEliminar);
+        }
 
-        div.appendChild(btns);
+        if (btns.childElementCount > 0) div.appendChild(btns);
+
         container.appendChild(div);
     });
 }
@@ -5430,7 +5433,7 @@ function cancelarEdicionCategoriaAuth() {
 
 /** Pone el sub-modal en modo "Editar" con la categoría precargada en el input. */
 async function editarCategoriaAuth(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const categoria = await obtenerPorId('categorias', Number(id));
     if (!categoria) return;
 
@@ -5449,7 +5452,7 @@ async function editarCategoriaAuth(id) {
 
 /** Alta o edición (según `categoriaAuthEditandoId`) de la categoría en el sub-modal. */
 async function guardarCategoriaAuthModal() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar(categoriaAuthEditandoId === null ? 'crear' : 'editar')) return;
     const input = document.getElementById('nueva-categoria-auth');
     if (!input) return;
 
@@ -5492,7 +5495,7 @@ async function guardarCategoriaAuthModal() {
 
 /** Elimina una categoría del catálogo (con el modal de confirmación de la app). */
 async function eliminarCategoriaAuth(id, label) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     if (typeof id === 'undefined' || id === null) return;
 
     // mostrarConfirmacion() asigna el mensaje con textContent: no hace falta escapar.
@@ -6066,10 +6069,10 @@ async function listarCategoriasCircuitos() {
     if (catBody) {
         catBody.innerHTML = '';
         categorias.forEach(c => {
-            const acciones = puedeEditar() ? `
+            const acciones = puedeEditar('editar') || puedeEditar('eliminar') ? `
                 <td style="text-align:right;">
-                    <button class="action-btn" onclick="editarCategoria(${c.id})"><i class="fa-solid fa-pen-to-square"></i></button>
-                    <button class="action-btn delete" onclick="eliminarCategoria(${c.id})"><i class="fa-solid fa-trash"></i></button>
+                    ${puedeEditar('editar') ? `<button class="action-btn" onclick="editarCategoria(${c.id})"><i class="fa-solid fa-pen-to-square"></i></button>` : ''}
+                    ${puedeEditar('eliminar') ? `<button class="action-btn delete" onclick="eliminarCategoria(${c.id})"><i class="fa-solid fa-trash"></i></button>` : ''}
                 </td>
             ` : '';
             catBody.innerHTML += `
@@ -6086,10 +6089,10 @@ async function listarCategoriasCircuitos() {
     if (circBody) {
         circBody.innerHTML = '';
         circuitos.forEach(c => {
-            const acciones = puedeEditar() ? `
+            const acciones = puedeEditar('editar') || puedeEditar('eliminar') ? `
                 <td style="text-align:right;">
-                    <button class="action-btn" onclick="editarCircuito(${c.id})"><i class="fa-solid fa-pen-to-square"></i></button>
-                    <button class="action-btn delete" onclick="eliminarCircuito(${c.id})"><i class="fa-solid fa-trash"></i></button>
+                    ${puedeEditar('editar') ? `<button class="action-btn" onclick="editarCircuito(${c.id})"><i class="fa-solid fa-pen-to-square"></i></button>` : ''}
+                    ${puedeEditar('eliminar') ? `<button class="action-btn delete" onclick="eliminarCircuito(${c.id})"><i class="fa-solid fa-trash"></i></button>` : ''}
                 </td>
             ` : '';
             circBody.innerHTML += `
@@ -6103,7 +6106,7 @@ async function listarCategoriasCircuitos() {
 }
 
 function openModalCategoria() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     document.getElementById('form-categoria').reset();
     document.getElementById('categoria-id').value = '';
     document.getElementById('categoria-modal-title').innerText = 'Agregar Categoría';
@@ -6111,7 +6114,7 @@ function openModalCategoria() {
 }
 
 async function editarCategoria(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const c = await obtenerPorId('categorias', id);
     if (!c) return;
     document.getElementById('categoria-id').value = c.id;
@@ -6123,8 +6126,8 @@ async function editarCategoria(id) {
 
 async function guardarCategoriaForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
     const id = document.getElementById('categoria-id').value;
+    if (!puedeEditar(id ? 'editar' : 'crear')) return;
     const cat = { nombre: document.getElementById('categoria-nombre').value, descripcion: document.getElementById('categoria-descripcion').value, activo: true };
     if (id) cat.id = Number(id);
     await guardar('categorias', cat);
@@ -6133,14 +6136,14 @@ async function guardarCategoriaForm(e) {
 }
 
 async function eliminarCategoria(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     if (!confirm('¿Eliminar esta categoría?')) return;
     await eliminar('categorias', id);
     listarCategoriasCircuitos();
 }
 
 function openModalCircuito() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     document.getElementById('form-circuito').reset();
     document.getElementById('circuito-id').value = '';
     document.getElementById('circuito-modal-title').innerText = 'Agregar Autódromo';
@@ -6148,7 +6151,7 @@ function openModalCircuito() {
 }
 
 async function editarCircuito(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const c = await obtenerPorId('circuitos', id);
     if (!c) return;
     document.getElementById('circuito-id').value = c.id;
@@ -6160,8 +6163,8 @@ async function editarCircuito(id) {
 
 async function guardarCircuitoForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
     const id = document.getElementById('circuito-id').value;
+    if (!puedeEditar(id ? 'editar' : 'crear')) return;
     const circ = { nombre: document.getElementById('circuito-nombre').value, ubicacion: document.getElementById('circuito-ubicacion').value };
     if (id) circ.id = Number(id);
     await guardar('circuitos', circ);
@@ -6170,7 +6173,7 @@ async function guardarCircuitoForm(e) {
 }
 
 async function eliminarCircuito(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     if (!confirm('¿Eliminar este autódromo?')) return;
     await eliminar('circuitos', id);
     listarCategoriasCircuitos();
@@ -7369,7 +7372,7 @@ async function abrirModalGestorCategorias() {
 
 async function guardarCategoriaRapido(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     const nombre = document.getElementById('quick-categoria-nombre').value.trim();
     if (!nombre) return;
 
@@ -7380,7 +7383,7 @@ async function guardarCategoriaRapido(e) {
 }
 
 async function editarCategoriaGasto(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const cat = await obtenerPorId('categorias', id);
     if (!cat) return;
     const nuevoNombre = prompt('Editar nombre de categoría:', cat.nombre);
@@ -7393,7 +7396,7 @@ async function editarCategoriaGasto(id) {
 }
 
 async function eliminarCategoriaGasto(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     if (!confirm('¿Eliminar esta categoría de gasto?\n\nNota: Los gastos ya cargados con esta categoría pasarán a "General"')) return;
     
     const gastos = await getTodos('gastos');
@@ -7439,7 +7442,7 @@ async function abrirModalGestorConceptos() {
 
 async function guardarConceptoRapido(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     const nombre = document.getElementById('quick-concepto-nombre').value.trim();
     if (!nombre) return;
 
@@ -7450,7 +7453,7 @@ async function guardarConceptoRapido(e) {
 }
 
 async function editarConceptoGasto(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const conc = await obtenerPorId('conceptos', id);
     if (!conc) return;
     const nuevoNombre = prompt('Editar nombre de concepto:', conc.nombre);
@@ -7463,7 +7466,7 @@ async function editarConceptoGasto(id) {
 }
 
 async function eliminarConceptoGasto(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     if (!confirm('¿Eliminar este concepto de gasto?\n\nNota: Los gastos que usen este concepto quedarán sin concepto.')) return;
 
     const gastos = await getTodos('gastos');
@@ -7737,7 +7740,7 @@ function actualizarResumenUsuarioModal() {
 }
 
 async function listarRendiciones() {
-    if (!puedeEditar() && esSupervisor()) {
+    if (!puedeEditar('ver')) {
         document.getElementById('rendiciones-list-container').innerHTML = '<p style="color:var(--text-secondary);">No tenés acceso a este módulo.</p>';
         return;
     }
@@ -7794,11 +7797,9 @@ async function listarRendiciones() {
         const acciones = `
             <td style="text-align:right;white-space:nowrap;">
                 <button class="action-btn" onclick="verRendicion(${r.id})" title="Ver detalle" style="min-width:32px;display:inline-flex;align-items:center;justify-content:center;"><i class="fa-solid fa-eye"></i></button>
-                ${puedeEditar() ? `
-                <button class="action-btn" onclick="editarRendicion(${r.id})" title="Editar" style="display:inline-flex;align-items:center;justify-content:center;"><i class="fa-solid fa-pen-to-square"></i></button>
-                <button class="action-btn" onclick="duplicarRendicionId(${r.id})" title="Duplicar" style="display:inline-flex;align-items:center;justify-content:center;"><i class="fa-solid fa-copy"></i></button>
-                <button class="action-btn delete" onclick="eliminarRendicion(${r.id})" title="Eliminar" style="display:inline-flex;align-items:center;justify-content:center;"><i class="fa-solid fa-trash"></i></button>
-                ` : ''}
+                ${puedeEditar('editar') ? `<button class="action-btn" onclick="editarRendicion(${r.id})" title="Editar" style="display:inline-flex;align-items:center;justify-content:center;"><i class="fa-solid fa-pen-to-square"></i></button>` : ''}
+                ${puedeEditar('crear') ? `<button class="action-btn" onclick="duplicarRendicionId(${r.id})" title="Duplicar" style="display:inline-flex;align-items:center;justify-content:center;"><i class="fa-solid fa-copy"></i></button>` : ''}
+                ${puedeEditar('eliminar') ? `<button class="action-btn delete" onclick="eliminarRendicion(${r.id})" title="Eliminar" style="display:inline-flex;align-items:center;justify-content:center;"><i class="fa-solid fa-trash"></i></button>` : ''}
             </td>
         `;
 
@@ -8057,7 +8058,7 @@ function verAdjuntosRendicion(index) {
 }
 
 async function nuevaRendicion() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     await cargarSelectoresRendicion();
 
     rendicionActual = {
@@ -8198,13 +8199,15 @@ function validarRendicion() {
 }
 
 async function guardarRendicion() {
-    if (!puedeEditar()) return;
+    const id = document.getElementById('rendicion-id').value;
+    if (!puedeEditar(id ? 'editar' : 'crear')) return;
     if (!validarRendicion()) return;
     await ejecutarGuardadoRendicion('completo', true);
 }
 
 async function guardarRendicionBorrador() {
-    if (!puedeEditar()) return;
+    const id = document.getElementById('rendicion-id').value;
+    if (!puedeEditar(id ? 'editar' : 'crear')) return;
     await ejecutarGuardadoRendicion('borrador', true);
 }
 
@@ -8279,7 +8282,7 @@ async function ejecutarGuardadoRendicion(estado, volverAlListado = false) {
 }
 
 async function editarRendicion(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     await cargarSelectoresRendicion();
 
     const rendicion = await obtenerPorId('rendiciones', id);
@@ -8329,7 +8332,7 @@ function cancelarEdicionRendicion() {
 }
 
 async function eliminarRendicion(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     const confirmado = await mostrarConfirmacion(
         'Eliminar rendición',
         '¿Eliminar esta rendición y todos sus gastos asociados? Esta acción no se puede deshacer.',
@@ -8361,7 +8364,7 @@ async function eliminarRendicion(id) {
 }
 
 async function duplicarRendicionId(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     try {
         const orig = await obtenerPorId('rendiciones', id);
         if (!orig) return;
@@ -8930,7 +8933,7 @@ function recalcularTarjetaCombustible(opciones = {}) {
 
 async function guardarDetalleGastoForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
+    if (!puedeEditar(filaEditandoIndex >= 0 ? 'editar' : 'crear')) return;
 
     const conceptoId = document.getElementById('detalle-concepto').value;
     const proveedorId = document.getElementById('detalle-proveedor').value;
@@ -9272,7 +9275,7 @@ async function abrirModalGestorProveedores() {
 
 async function guardarProveedorRapidoModal(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     const nombre = document.getElementById('quick-proveedor-nombre').value.trim();
     if (!nombre) return;
     await guardar('proveedores', { nombre });
@@ -9282,7 +9285,7 @@ async function guardarProveedorRapidoModal(e) {
 }
 
 async function editarProveedorModal(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const prov = await obtenerPorId('proveedores', id);
     if (!prov) return;
     const nuevoNombre = prompt('Editar nombre del proveedor:', prov.nombre);
@@ -9296,7 +9299,7 @@ async function editarProveedorModal(id) {
 }
 
 async function eliminarProveedorModal(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     if (!confirm('¿Eliminar este proveedor permanentemente?')) return;
     const detalles = await getTodos('detalleGastos');
     if (detalles.some(d => Number(d.proveedorId) === Number(id))) {
@@ -10047,13 +10050,13 @@ async function listarArticulos() {
             stockCellHtml = `<span class="stock-badge ${stockBadge}" title="${esBienUso ? 'Total de unidades del bien en todas las ubicaciones' : 'Unidades disponibles'}"><i class="fa-solid fa-cube"></i> ${stock}</span>`;
         }
 
-        const acciones = puedeEditar() ? `
+        const acciones = puedeEditar('editar') || puedeEditar('crear') || puedeEditar('eliminar') ? `
             <td style="text-align:right;white-space:nowrap;">
                 <button class="action-btn" onclick="verArticulo(${art.id})" title="Ver detalle"><i class="fa-solid fa-eye"></i></button>
-                <button class="action-btn" onclick="editarArticulo(${art.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
-                <button class="action-btn" onclick="duplicarArticulo(${art.id})" title="Duplicar"><i class="fa-solid fa-copy"></i></button>
+                ${puedeEditar('editar') ? `<button class="action-btn" onclick="editarArticulo(${art.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>` : ''}
+                ${puedeEditar('crear') ? `<button class="action-btn" onclick="duplicarArticulo(${art.id})" title="Duplicar"><i class="fa-solid fa-copy"></i></button>` : ''}
                 ${esAdmin() ? `<button class="action-btn" onclick="abrirAjusteStockAdmin(${art.id})" title="Ajustar Stock (solo Administrador)"><i class="fa-solid fa-sliders"></i></button>` : ''}
-                ${esAdmin() ? `<button class="action-btn delete" onclick="eliminarArticulo(${art.id})" title="Eliminar (solo Administrador)"><i class="fa-solid fa-trash"></i></button>` : ''}
+                ${puedeEditar('eliminar') ? `<button class="action-btn delete" onclick="eliminarArticulo(${art.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>` : ''}
             </td>
         ` : `
             <td style="text-align:right;white-space:nowrap;">
@@ -10229,7 +10232,7 @@ async function verArticulo(id) {
 }
 
 async function openModalArticulo() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     await cargarSelectoresArticulo();
     document.getElementById('form-articulo').reset();
     document.getElementById('articulo-id').value = '';
@@ -10254,7 +10257,7 @@ async function openModalArticulo() {
 }
 
 async function editarArticulo(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const art = await obtenerPorId('articulos', id);
     if (!art) return;
     await cargarSelectoresArticulo();
@@ -10669,9 +10672,9 @@ function eliminarImagenArticulo(idx) {
 
 async function guardarArticuloForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
-
     const id = document.getElementById('articulo-id').value;
+    if (!puedeEditar(id ? 'editar' : 'crear')) return;
+
     const codigo = document.getElementById('articulo-codigo').value.trim();
     const catId = document.getElementById('articulo-categoria').value;
 
@@ -10971,9 +10974,7 @@ async function guardarAjusteStockAdmin() {
 }
 
 async function eliminarArticulo(id) {
-    // Solo Administradores pueden eliminar artículos (operación destructiva que
-    // además arrastra sus movimientos de stock asociados).
-    if (!esAdmin()) { mostrarToast('Solo un Administrador puede eliminar artículos.', 'error'); return; }
+    if (!puedeEditar('eliminar')) return;
 
     const movimientos = await getTodos('movimientosInventario');
     const movsArt = movimientos.filter(m => Number(m.articuloId) === Number(id));
@@ -11011,7 +11012,7 @@ async function eliminarArticulo(id) {
 }
 
 async function duplicarArticulo(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     const orig = await obtenerPorId('articulos', Number(id));
     if (!orig) return;
 
@@ -11177,8 +11178,8 @@ async function listarMovimientosInventario() {
                 ${mov.ubicacionOrigen || mov.ubicacionDestino ? `<div class="mov-meta">📍 ${escapeHtml([mov.ubicacionOrigen, mov.ubicacionDestino].filter(Boolean).join(' → '))}</div>` : ''}
             </div>
             <div class="mov-qty">${c.signo}${c.cantidad}</div>
-            ${esAdmin() ? `<button class="action-btn mov-edit-btn" onclick="editarMovimientoInventario(${mov.id})" title="Editar movimiento (recalcula el stock)"><i class="fa-solid fa-gear"></i></button>` : ''}
-            ${esAdmin() ? `<button class="action-btn delete mov-delete-btn" onclick="eliminarMovimientoInventario(${mov.id})" title="Eliminar movimiento (revierte el stock)"><i class="fa-solid fa-trash"></i></button>` : ''}
+            ${puedeEditar('editar') ? `<button class="action-btn mov-edit-btn" onclick="editarMovimientoInventario(${mov.id})" title="Editar movimiento (recalcula el stock)"><i class="fa-solid fa-gear"></i></button>` : ''}
+            ${puedeEditar('eliminar') ? `<button class="action-btn delete mov-delete-btn" onclick="eliminarMovimientoInventario(${mov.id})" title="Eliminar movimiento (revierte el stock)"><i class="fa-solid fa-trash"></i></button>` : ''}
         `;
         container.appendChild(item);
     }
@@ -11189,7 +11190,7 @@ async function listarMovimientosInventario() {
 // y recién entonces borra el registro (IndexedDB + Firestore vía eliminar()).
 // Si el rollback no es posible (stock ya movido/gastado), aborta SIN borrar el registro.
 async function eliminarMovimientoInventario(id) {
-    if (!esAdmin()) { mostrarToast('Solo un Administrador puede eliminar movimientos.', 'error'); return; }
+    if (!puedeEditar('eliminar')) return;
     const mov = await obtenerPorId('movimientosInventario', Number(id));
     if (!mov) { mostrarToast('Movimiento no encontrado.', 'error'); return; }
     const tipo = String(mov.tipoMovimiento || '').toLowerCase();
@@ -11298,7 +11299,7 @@ function simularEdicionMovimientoV9(ubicacionesArr, pasos) {
 }
 
 async function editarMovimientoInventario(id) {
-    if (!esAdmin()) { mostrarToast('Solo un Administrador puede editar movimientos.', 'error'); return; }
+    if (!puedeEditar('editar')) return;
     const mov = await obtenerPorId('movimientosInventario', Number(id));
     if (!mov) { mostrarToast('Movimiento no encontrado.', 'error'); return; }
     const art = await obtenerPorId('articulos', Number(mov.articuloId));
@@ -11406,7 +11407,7 @@ function onEditarMovTipoChange() {
 }
 
 async function guardarEdicionMovimientoInventario() {
-    if (!esAdmin()) { mostrarToast('Solo un Administrador puede editar movimientos.', 'error'); return; }
+    if (!puedeEditar('editar')) return;
     const id = Number(window.edicionMovimientoId);
     const mov = await obtenerPorId('movimientosInventario', id);
     if (!mov) { mostrarToast('Movimiento no encontrado.', 'error'); return; }
@@ -11567,7 +11568,7 @@ async function guardarEdicionMovimientoInventario() {
 }
 
 async function openModalMovimiento() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     const articulos = await getTodos('articulos');
     const sel = document.getElementById('movimiento-articulo');
     sel.innerHTML = '<option value="">Seleccione un artículo...</option>';
@@ -11741,7 +11742,7 @@ function onCambioTipoMovimiento() {
 
 async function guardarMovimientoForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
 
     const articuloId = document.getElementById('movimiento-articulo').value;
     const tipo = (document.getElementById('movimiento-tipo') || {}).value || '';
@@ -11944,6 +11945,10 @@ function claveCatalogoInventario(nombre) {
     return String(nombre || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').toLowerCase();
 }
 
+function idInventarioDesdeCampo(valor) {
+    return valor ? JSON.parse(valor) : '';
+}
+
 let consolidacionCatalogosInventarioEnCurso = null;
 let catalogosInventarioConsolidados = false;
 
@@ -11987,7 +11992,7 @@ async function ejecutarConsolidacionCatalogosInventario() {
 
         for (const { duplicado, canonico } of duplicados) {
             await actualizarReferencias(duplicado, canonico);
-            await eliminar(storeName, Number(duplicado.id));
+            await eliminar(storeName, duplicado.id);
         }
         invalidarCache(storeName);
         return true;
@@ -11995,19 +12000,19 @@ async function ejecutarConsolidacionCatalogosInventario() {
 
     let cambio = false;
     cambio = await consolidar(categorias, 'categoriasInventario', async (duplicada, canonica) => {
-        for (const articulo of articulos.filter(a => Number(a.categoriaId) === Number(duplicada.id))) {
-            articulo.categoriaId = Number(canonica.id);
+        for (const articulo of articulos.filter(a => String(a.categoriaId) === String(duplicada.id))) {
+            articulo.categoriaId = canonica.id;
             await guardar('articulos', articulo);
         }
-        for (const subcategoria of subcategorias.filter(s => Number(s.categoriaId) === Number(duplicada.id))) {
-            subcategoria.categoriaId = Number(canonica.id);
+        for (const subcategoria of subcategorias.filter(s => String(s.categoriaId) === String(duplicada.id))) {
+            subcategoria.categoriaId = canonica.id;
             await guardar('subcategoriasInventario', subcategoria);
         }
     }) || cambio;
 
     cambio = await consolidar(talles, 'talles', async (duplicado, canonico) => {
-        for (const fila of articuloTalles.filter(t => Number(t.talleId) === Number(duplicado.id))) {
-            fila.talleId = Number(canonico.id);
+        for (const fila of articuloTalles.filter(t => String(t.talleId) === String(duplicado.id))) {
+            fila.talleId = canonico.id;
             await guardar('articuloTalles', fila);
         }
     }) || cambio;
@@ -12029,10 +12034,10 @@ async function listarCategoriasInventario() {
 
     const catBody = document.getElementById('categorias-inventario-body');
     catBody.innerHTML = categorias.map(c => {
-        const acciones = puedeEditar() ? `
+        const acciones = puedeEditar('editar') || puedeEditar('eliminar') ? `
             <td style="text-align:right;">
-                <button class="action-btn" onclick="editarCategoriaInventario(${c.id})"><i class="fa-solid fa-pen-to-square"></i></button>
-                <button class="action-btn delete" onclick="eliminarCategoriaInventario(${c.id})"><i class="fa-solid fa-trash"></i></button>
+                ${puedeEditar('editar') ? `<button class="action-btn" onclick='editarCategoriaInventario(${JSON.stringify(c.id)})'><i class="fa-solid fa-pen-to-square"></i></button>` : ''}
+                ${puedeEditar('eliminar') ? `<button class="action-btn delete" onclick='eliminarCategoriaInventario(${JSON.stringify(c.id)})'><i class="fa-solid fa-trash"></i></button>` : ''}
             </td>
         ` : '';
         const tallesBadge = c.controlaTalles ? '<span class="badge badge-info">Sí</span>' : '<span class="badge badge-secondary">No</span>';
@@ -12049,10 +12054,10 @@ async function listarCategoriasInventario() {
 
     const talleBody = document.getElementById('talles-body');
     talleBody.innerHTML = talles.map(t => {
-        const acciones = puedeEditar() ? `
+        const acciones = puedeEditar('editar') || puedeEditar('eliminar') ? `
             <td style="text-align:right;">
-                <button class="action-btn" onclick="editarTalle(${t.id})"><i class="fa-solid fa-pen-to-square"></i></button>
-                <button class="action-btn delete" onclick="eliminarTalle(${t.id})"><i class="fa-solid fa-trash"></i></button>
+                ${puedeEditar('editar') ? `<button class="action-btn" onclick='editarTalle(${JSON.stringify(t.id)})'><i class="fa-solid fa-pen-to-square"></i></button>` : ''}
+                ${puedeEditar('eliminar') ? `<button class="action-btn delete" onclick='eliminarTalle(${JSON.stringify(t.id)})'><i class="fa-solid fa-trash"></i></button>` : ''}
             </td>
         ` : '';
         return `<tr>
@@ -12063,14 +12068,14 @@ async function listarCategoriasInventario() {
     }).join('');
 
     const subBody = document.getElementById('subcategorias-inventario-body');
-    const categoriasPorId = new Map(categorias.map(c => [Number(c.id), c]));
+    const categoriasPorId = new Map(categorias.map(c => [String(c.id), c]));
     subBody.innerHTML = subcategorias.map(s => {
-        const cat = categoriasPorId.get(Number(s.categoriaId));
+        const cat = categoriasPorId.get(String(s.categoriaId));
         const catName = cat ? cat.nombre : '-';
-        const acciones = puedeEditar() ? `
+        const acciones = puedeEditar('editar') || puedeEditar('eliminar') ? `
             <td style="text-align:right;">
-                <button class="action-btn" onclick="editarSubcategoria(${s.id})"><i class="fa-solid fa-pen-to-square"></i></button>
-                <button class="action-btn delete" onclick="eliminarSubcategoria(${s.id})"><i class="fa-solid fa-trash"></i></button>
+                ${puedeEditar('editar') ? `<button class="action-btn" onclick='editarSubcategoria(${JSON.stringify(s.id)})'><i class="fa-solid fa-pen-to-square"></i></button>` : ''}
+                ${puedeEditar('eliminar') ? `<button class="action-btn delete" onclick='eliminarSubcategoria(${JSON.stringify(s.id)})'><i class="fa-solid fa-trash"></i></button>` : ''}
             </td>
         ` : '';
         return `<tr>
@@ -12092,7 +12097,7 @@ async function listarCategoriasInventario() {
 }
 
 function openModalCategoriaInventario() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     document.getElementById('form-categoria-inventario').reset();
     document.getElementById('categoria-inv-id').value = '';
     document.getElementById('categoria-inv-tipo-bien').value = '';
@@ -12103,10 +12108,10 @@ function openModalCategoriaInventario() {
 }
 
 async function editarCategoriaInventario(id) {
-    if (!puedeEditar()) return;
-    const c = await obtenerPorId('categoriasInventario', Number(id));
+    if (!puedeEditar('editar')) return;
+    const c = await obtenerPorId('categoriasInventario', id);
     if (!c) return;
-    document.getElementById('categoria-inv-id').value = c.id;
+    document.getElementById('categoria-inv-id').value = JSON.stringify(c.id);
     document.getElementById('categoria-inv-nombre').value = c.nombre;
     document.getElementById('categoria-inv-descripcion').value = c.descripcion || '';
     document.getElementById('categoria-inv-tipo-bien').value = c.tipoBien || 'consumible';
@@ -12118,8 +12123,8 @@ async function editarCategoriaInventario(id) {
 
 async function guardarCategoriaInventarioForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
-    const id = document.getElementById('categoria-inv-id').value;
+    const id = idInventarioDesdeCampo(document.getElementById('categoria-inv-id').value);
+    if (!puedeEditar(id ? 'editar' : 'crear')) return;
     const tipoBien = document.getElementById('categoria-inv-tipo-bien').value;
     if (!tipoBien) {
         mostrarToast('Debe seleccionar un Tipo de Bien.', 'error');
@@ -12141,7 +12146,7 @@ async function guardarCategoriaInventarioForm(e) {
         mostrarToast('Ya existe una categoría con ese nombre.', 'error');
         return;
     }
-    if (id) cat.id = Number(id);
+    if (id) cat.id = id;
     await guardar('categoriasInventario', cat);
     invalidarCache('categoriasInventario');
     closeModal('modal-categoria-inventario');
@@ -12150,9 +12155,9 @@ async function guardarCategoriaInventarioForm(e) {
 }
 
 async function eliminarCategoriaInventario(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     const articulos = await getTodos('articulos');
-    if (articulos.some(a => Number(a.categoriaId) === Number(id))) {
+    if (articulos.some(a => String(a.categoriaId) === String(id))) {
         mostrarToast('No se puede eliminar una categoría con artículos asociados.', 'error');
         return;
     }
@@ -12163,7 +12168,7 @@ async function eliminarCategoriaInventario(id) {
 }
 
 function openModalSubcategoria() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     document.getElementById('form-subcategoria').reset();
     document.getElementById('subcategoria-id').value = '';
     document.getElementById('subcategoria-modal-title').textContent = 'Nueva Subcategoría';
@@ -12181,11 +12186,11 @@ async function cargarSelectSubcategoria() {
 }
 
 async function editarSubcategoria(id) {
-    if (!puedeEditar()) return;
-    const s = await obtenerPorId('subcategoriasInventario', Number(id));
+    if (!puedeEditar('editar')) return;
+    const s = await obtenerPorId('subcategoriasInventario', id);
     if (!s) return;
     await cargarSelectSubcategoria();
-    document.getElementById('subcategoria-id').value = s.id;
+    document.getElementById('subcategoria-id').value = JSON.stringify(s.id);
     document.getElementById('subcategoria-nombre').value = s.nombre;
     document.getElementById('subcategoria-categoria').value = s.categoriaId;
     document.getElementById('subcategoria-modal-title').textContent = 'Editar Subcategoría';
@@ -12194,14 +12199,14 @@ async function editarSubcategoria(id) {
 
 async function guardarSubcategoriaForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
-    const id = document.getElementById('subcategoria-id').value;
+    const id = idInventarioDesdeCampo(document.getElementById('subcategoria-id').value);
+    if (!puedeEditar(id ? 'editar' : 'crear')) return;
     const sub = {
         nombre: document.getElementById('subcategoria-nombre').value.trim(),
-        categoriaId: Number(document.getElementById('subcategoria-categoria').value)
+        categoriaId: document.getElementById('subcategoria-categoria').value
     };
     if (!sub.categoriaId) { mostrarToast('Seleccioná una categoría padre.', 'error'); return; }
-    if (id) sub.id = Number(id);
+    if (id) sub.id = id;
     await guardar('subcategoriasInventario', sub);
     invalidarCache('subcategoriasInventario');
     closeModal('modal-subcategoria');
@@ -12210,7 +12215,7 @@ async function guardarSubcategoriaForm(e) {
 }
 
 async function eliminarSubcategoria(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     if (!(await mostrarConfirmacion('Eliminar Subcategoría', '¿Eliminar esta subcategoría?'))) return;
     await eliminar('subcategoriasInventario', id);
     invalidarCache('subcategoriasInventario');
@@ -12218,7 +12223,7 @@ async function eliminarSubcategoria(id) {
 }
 
 function openModalTalle() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     document.getElementById('form-talle').reset();
     document.getElementById('talle-id').value = '';
     document.getElementById('talle-modal-title').textContent = 'Nuevo Talle';
@@ -12226,10 +12231,10 @@ function openModalTalle() {
 }
 
 async function editarTalle(id) {
-    if (!puedeEditar()) return;
-    const t = await obtenerPorId('talles', Number(id));
+    if (!puedeEditar('editar')) return;
+    const t = await obtenerPorId('talles', id);
     if (!t) return;
-    document.getElementById('talle-id').value = t.id;
+    document.getElementById('talle-id').value = JSON.stringify(t.id);
     document.getElementById('talle-nombre').value = t.nombre;
     document.getElementById('talle-descripcion').value = t.descripcion || '';
     document.getElementById('talle-modal-title').textContent = 'Editar Talle';
@@ -12238,8 +12243,8 @@ async function editarTalle(id) {
 
 async function guardarTalleForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
-    const id = document.getElementById('talle-id').value;
+    const id = idInventarioDesdeCampo(document.getElementById('talle-id').value);
+    if (!puedeEditar(id ? 'editar' : 'crear')) return;
     const talle = {
         nombre: document.getElementById('talle-nombre').value.trim(),
         descripcion: document.getElementById('talle-descripcion').value.trim()
@@ -12254,7 +12259,7 @@ async function guardarTalleForm(e) {
         mostrarToast('Ya existe un talle con ese nombre.', 'error');
         return;
     }
-    if (id) talle.id = Number(id);
+    if (id) talle.id = id;
     await guardar('talles', talle);
     invalidarCache('talles');
     closeModal('modal-talle');
@@ -12263,14 +12268,14 @@ async function guardarTalleForm(e) {
 }
 
 async function eliminarTalle(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     const tallesArt = await getTodos('articuloTalles');
-    if (tallesArt.some(t => Number(t.talleId) === Number(id) && Number(t.stock) > 0)) {
+    if (tallesArt.some(t => String(t.talleId) === String(id) && Number(t.stock) > 0)) {
         mostrarToast('No se puede eliminar un talle que tiene stock asociado.', 'error');
         return;
     }
     if (!(await mostrarConfirmacion('Eliminar Talle', '¿Eliminar este talle?'))) return;
-    for (const t of tallesArt.filter(t => Number(t.talleId) === Number(id))) {
+    for (const t of tallesArt.filter(t => String(t.talleId) === String(id))) {
         await eliminar('articuloTalles', t.id);
     }
     await eliminar('talles', id);
@@ -12366,7 +12371,7 @@ async function listarEntregas() {
         card.innerHTML += `
             <div style="margin-top:0.75rem;padding-top:0.5rem;border-top:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;">
                 <span style="font-size:0.8rem;color:var(--text-secondary);">#${entrega.id}</span>
-                ${puedeEditar() ? `
+                ${puedeEditar('eliminar') ? `
                     <div style="display:flex;gap:0.5rem;">
                         <button class="action-btn delete" onclick="eliminarEntrega(${entrega.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
                     </div>
@@ -12378,7 +12383,7 @@ async function listarEntregas() {
 }
 
 async function openModalEntrega() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     const staff = await getTodos('staff');
     const competencias = await getTodos('competencias');
     const articulos = await getTodos('articulos');
@@ -12525,7 +12530,7 @@ function eliminarFilaEntrega(btn) {
 
 async function guardarEntregaForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
 
     const personaId = document.getElementById('entrega-persona').value;
     if (!personaId) { mostrarToast('Debe seleccionar una persona.', 'error'); return; }
@@ -12697,7 +12702,7 @@ async function guardarEntregaForm(e) {
 }
 
 async function eliminarEntrega(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('eliminar')) return;
     if (!(await mostrarConfirmacion('Eliminar Entrega', '¿Eliminar esta entrega? No se restaurará el stock automáticamente.'))) return;
 
     const detalles = await getTodos('detalleEntregas');
@@ -12973,7 +12978,7 @@ function recalcularPersonalFila(e) {
 
 // Guardar los datos de personal por competencia
 async function guardarPersonalCompetencia() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     const compId = document.getElementById('personal-comp-select').value;
     if (!compId) { mostrarToast('Seleccione una competencia.', 'warning'); return; }
 
@@ -13429,7 +13434,7 @@ async function listarAlojamientos() {
         contenedor.innerHTML = `
             <div class="alojamientos-empty">
                 <i class="fa-solid fa-hotel"></i>
-                <p>No hay alojamientos registrados. ${puedeEditar() ? 'Hacé clic en "Agregar Alojamiento".' : ''}</p>
+                <p>No hay alojamientos registrados. ${puedeEditar('crear') ? 'Hacé clic en "Agregar Alojamiento".' : ''}</p>
             </div>`;
         return;
     }
@@ -13474,10 +13479,10 @@ function renderizarAlojamientos(lista) {
         const accionMaps = `
             <a href="${mapsUrl}" target="_blank" class="action-btn" title="Ver en Google Maps" style="color:var(--accent-green);"><i class="fa-solid fa-map-location-dot"></i></a>
         `;
-        const accionEditar = puedeEditar() ? `
+        const accionEditar = puedeEditar('editar') ? `
             <button class="action-btn" onclick="editarAlojamiento(${a.id})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
         ` : '';
-        const accionEliminar = esAdmin() ? `
+        const accionEliminar = puedeEditar('eliminar') ? `
             <button class="action-btn delete" onclick="eliminarAlojamiento(${a.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
         ` : '';
 
@@ -13512,7 +13517,7 @@ function renderizarAlojamientos(lista) {
 
 // Abrir modal para agregar un nuevo alojamiento
 function openModalAlojamiento() {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('crear')) return;
     document.getElementById('form-alojamiento').reset();
     document.getElementById('alojamiento-id').value = '';
     document.getElementById('alojamiento-modal-title').innerText = 'Agregar Alojamiento';
@@ -13525,7 +13530,7 @@ function openModalAlojamiento() {
 
 // Abrir modal para editar un alojamiento existente (usa caché en lugar de IndexedDB)
 async function editarAlojamiento(id) {
-    if (!puedeEditar()) return;
+    if (!puedeEditar('editar')) return;
     // Buscar en caché primero (mucho más rápido que IndexedDB)
     let a = alojamientosCache.find(x => Number(x.id) === Number(id));
     if (!a) {
@@ -13651,9 +13656,9 @@ function restaurarBtnGuardarAlojamiento(id) {
 // y se notifique al usuario (éxito o error) de forma asíncrona y no bloqueante.
 async function guardarAlojamientoForm(e) {
     e.preventDefault();
-    if (!puedeEditar()) return;
-
     const id = document.getElementById('alojamiento-id').value;
+    if (!puedeEditar(id ? 'editar' : 'crear')) return;
+
     const btnGuardar = document.getElementById('alojamiento-btn-guardar');
     const nombre = document.getElementById('alojamiento-nombre').value.trim();
     const direccion = document.getElementById('alojamiento-direccion').value.trim();
@@ -14015,7 +14020,9 @@ function cerrarModalInscripcion() {
 
 async function guardarInscripcion(e) {
     e.preventDefault();
-    if (!verificarPermiso(currentUser, 'inscripciones', 'crear') && !verificarPermiso(currentUser, 'inscripciones', 'editar')) return;
+    const modal = document.getElementById('modal-inscripcion');
+    const esEdicion = Boolean(modal && modal.dataset.inscripcionId);
+    if (!puedeEditar(esEdicion ? 'editar' : 'crear', 'inscripciones')) return;
 
     const competenciaSel = document.getElementById('inscripcion-competencia');
     const categoriaSel = document.getElementById('inscripcion-categoria');
@@ -14045,8 +14052,6 @@ async function guardarInscripcion(e) {
     const pilotoExiste = pilotos.some(p => String(p.dni) === String(pilotoDni));
     if (!pilotoExiste) { mostrarToast('El DNI ingresado no pertenece a ningún piloto registrado en el padrón.', 'error'); return; }
 
-    const modal = document.getElementById('modal-inscripcion');
-    const esEdicion = modal && modal.dataset.inscripcionId;
     const id = esEdicion ? modal.dataset.inscripcionId : undefined;
 
     const inscripcion = {
